@@ -1,0 +1,14 @@
+version: 1
+
+global:
+  blocked_commands:
+    - git push --force
+    - git reset --hard
+    - rm -rf /
+    - rm -rf ~
+    - sudo rm
+  blocked_paths:
+    - .git/
+    - .computecommander/
+    - /etc/
+    - /usr/

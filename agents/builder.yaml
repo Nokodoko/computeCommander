@@ -1,0 +1,34 @@
+name: builder
+capability: builder
+description: Implementation and code changes
+
+runtime: claude
+model: claude-sonnet-4
+
+tools:
+  allowed:
+    - Read
+    - Write
+    - Edit
+    - Glob
+    - Grep
+    - Bash
+  blocked:
+    - Spawn
+
+constraints:
+  - file_scope_enforced
+  - no_spawn
+  - no_git_push
+
+git:
+  allowed:
+    - add
+    - commit
+    - status
+    - diff
+    - log
+  blocked:
+    - push
+    - force-push
+    - reset --hard

@@ -1,0 +1,34 @@
+name: merger
+capability: merger
+description: Branch merge specialist
+
+runtime: claude
+model: claude-sonnet-4
+
+tools:
+  allowed:
+    - Read
+    - Write
+    - Edit
+    - Glob
+    - Grep
+    - Bash
+  blocked:
+    - Spawn
+
+constraints:
+  - merge_only
+  - no_spawn
+  - no_git_push
+
+git:
+  allowed:
+    - merge
+    - rebase
+    - cherry-pick
+    - status
+    - diff
+    - log
+  blocked:
+    - push
+    - force-push

@@ -1,0 +1,28 @@
+name: lead
+capability: lead
+description: Team coordination, owns a task subtree
+
+runtime: claude
+model: claude-sonnet-4
+
+tools:
+  allowed:
+    - Read
+    - Write
+    - Edit
+    - Glob
+    - Grep
+    - Bash
+    - Spawn
+  blocked: []
+
+constraints:
+  - can_spawn
+
+spawn:
+  limit: 5
+  allowed_capabilities:
+    - scout
+    - builder
+    - reviewer
+    - merger

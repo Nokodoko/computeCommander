@@ -1,0 +1,25 @@
+name: coordinator
+capability: coordinator
+description: Persistent orchestrator — decomposes objectives, dispatches agents
+
+runtime: claude
+model: claude-opus-4
+
+tools:
+  allowed:
+    - Read
+    - Glob
+    - Grep
+    - Bash
+    - Spawn
+  blocked:
+    - Write
+    - Edit
+
+constraints:
+  - read_only
+  - can_spawn
+
+spawn:
+  allowed_capabilities:
+    - lead

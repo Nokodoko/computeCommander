@@ -1,0 +1,93 @@
+version: 1
+project:
+    name: computeCommander
+    root: ""
+    canonical_branch: main
+    quality_gates: []
+database:
+    driver: sqlite
+    postgres:
+        host: localhost
+        port: 5432
+        database: computecommander
+        user: cc
+        password: ""
+        sslmode: disable
+        pool_size: 10
+    sqlite:
+        path: .computecommander/local.db
+zellij:
+    dashboard_layout: "~/.computecommander/layouts/cmdr-dashboard.kdl"
+    layout: default
+    terminal: wezterm
+    session_prefix: cc
+agents:
+    max_concurrent: 10
+    stagger_delay_ms: 2000
+    max_depth: 2
+    max_sessions_per_run: 50
+    max_agents_per_lead: 5
+    base_dir: agents
+worktrees:
+    base_dir: .computecommander/worktrees
+defaults:
+    runtime: claude
+    model_mappings:
+        builder: claude
+        lead: claude
+        merger: claude
+        monitor: claude
+        reviewer: claude
+        scout: gemini
+nudge:
+    soft_timeout: 10m
+    hard_timeout: 30m
+    escalation_enabled: true
+    context_window: 50
+    loop_detection:
+        enabled: true
+        window: 5m
+        threshold: 3
+watchdog:
+    tier0_enabled: true
+    tier0_interval_ms: 30000
+    tier1_enabled: true
+    tier2_enabled: false
+    stale_threshold_ms: 300000
+    zombie_threshold_ms: 1800000
+    nudge_interval_ms: 60000
+merge:
+    ai_resolve_enabled: true
+    reimagine_enabled: false
+    auto_merge: true
+features:
+    distributed: false
+    remote_agents: false
+logging:
+    verbose: false
+    redact_secrets: true
+    format: human
+    level: info
+runtimes:
+    claude:
+        default_model: claude-sonnet-4
+        models:
+            default: claude-sonnet-4
+            fast: claude-haiku-3
+            powerful: claude-opus-4
+    gemini:
+        default_model: gemini-2.5-pro
+        models:
+            default: gemini-2.5-pro
+            fast: gemini-2.0-flash
+    codex:
+        default_model: o3
+        models: {}
+    pi:
+        provider: anthropic
+        model_map:
+            opus: anthropic/claude-opus-4
+            sonnet: anthropic/claude-sonnet-4
+    goose:
+        default_model: claude-sonnet-4
+        models: {}

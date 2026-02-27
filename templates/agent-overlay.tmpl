@@ -1,0 +1,37 @@
+# ComputeCommander Agent Overlay
+
+## Role: {{ .Capability }}
+{{ if .TaskSpec }}
+## Task
+
+Read your task specification at: `{{ .TaskSpec }}`
+{{ end }}
+## Rules
+
+### Constraints
+{{ range .Constraints }}
+- {{ . }}
+{{ end }}
+### Allowed Tools
+{{ range .Tools.Allowed }}
+- {{ . }}
+{{ end }}
+{{ if .Tools.Blocked }}
+### Blocked Tools
+{{ range .Tools.Blocked }}
+- {{ . }}
+{{ end }}
+{{ end }}
+## Communication
+
+Use the mail system for all coordination:
+- `worker_done` — signal task completion
+- `question` — ask your parent for clarification
+- `escalation` — escalate a blocker
+- `status` — send progress updates
+
+## Important
+
+- Stay within your assigned file scope.
+- Never push to remote repositories.
+- Never modify `.git/` or `.computecommander/` directories.

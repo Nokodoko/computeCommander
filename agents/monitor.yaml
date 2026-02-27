@@ -1,0 +1,22 @@
+name: monitor
+capability: monitor
+description: Tier 2 continuous fleet patrol
+
+runtime: claude
+model: claude-haiku-3
+
+tools:
+  allowed:
+    - Read
+    - Glob
+    - Grep
+    - Bash
+  blocked:
+    - Write
+    - Edit
+    - Spawn
+
+constraints:
+  - read_only
+  - no_spawn
+  - no_worktree

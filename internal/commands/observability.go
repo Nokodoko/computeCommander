@@ -1,0 +1,467 @@
+package commands
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+)
+
+// TraceCmd returns the "trace" command for event timeline viewing.
+func TraceCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "trace",
+		Short:   "Event timeline",
+		Long:    "Display the event timeline for a run or agent session.",
+		GroupID: "OBSERVABILITY",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			agentName, _ := cmd.Flags().GetString("agent")
+			runID, _ := cmd.Flags().GetString("run")
+			limit, _ := cmd.Flags().GetInt("limit")
+			jsonOut, _ := cmd.Root().Flags().GetBool("json")
+
+			events, err := queryEvents(cmd.Context(), app, agentName, runID, limit)
+			if err != nil {
+				return fmt.Errorf("query events: %w", err)
+			}
+
+			if jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(events)
+			}
+
+			if len(events) == 0 {
+				fmt.Println("No events found.")
+				return nil
+			}
+
+			fmt.Printf("%-20s %-14s %-14s %-12s %s\n", "TIME", "AGENT", "TYPE", "TOOL", "DATA")
+			for _, e := range events {
+				fmt.Printf("%-20s %-14s %-14s %-12s %s\n",
+					truncate(e.CreatedAt, 20),
+					truncate(e.Agent, 14),
+					truncate(e.EventType, 14),
+					truncate(e.ToolName, 12),
+					truncate(e.Data, 40),
+				)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().String("agent", "", "Filter by agent name")
+	cmd.Flags().String("run", "", "Filter by run ID")
+	cmd.Flags().Int("limit", 50, "Max events to display")
+
+	return cmd
+}
+
+// ErrorsCmd returns the "errors" command for aggregated error viewing.
+func ErrorsCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "errors",
+		Short:   "Aggregated error view",
+		Long:    "Display errors from agent sessions.",
+		GroupID: "OBSERVABILITY",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			limit, _ := cmd.Flags().GetInt("limit")
+			jsonOut, _ := cmd.Root().Flags().GetBool("json")
+
+			events, err := queryEventsByLevel(cmd.Context(), app, "error", limit)
+			if err != nil {
+				return fmt.Errorf("query errors: %w", err)
+			}
+
+			if jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(events)
+			}
+
+			if len(events) == 0 {
+				fmt.Println("No errors found.")
+				return nil
+			}
+
+			for _, e := range events {
+				fmt.Printf("[%s] %s: %s\n", e.CreatedAt, e.Agent, e.Data)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().Int("limit", 50, "Max errors to display")
+
+	return cmd
+}
+
+// ReplayCmd returns the "replay" command for multi-agent replay.
+func ReplayCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "replay",
+		Short:   "Multi-agent replay",
+		Long:    "Replay the timeline of a run, showing agent activity in chronological order.",
+		GroupID: "OBSERVABILITY",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			runID, _ := cmd.Flags().GetString("run")
+
+			events, err := queryEvents(cmd.Context(), app, "", runID, 0)
+			if err != nil {
+				return fmt.Errorf("query events: %w", err)
+			}
+
+			if len(events) == 0 {
+				fmt.Println("No events to replay.")
+				return nil
+			}
+
+			for _, e := range events {
+				fmt.Printf("[%s] %-14s %-14s %s\n", e.CreatedAt, e.Agent, e.EventType, e.Data)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().String("run", "", "Run ID to replay")
+
+	return cmd
+}
+
+// FeedCmd returns the "feed" command for real-time event streaming.
+func FeedCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:     "feed",
+		Short:   "Real-time event stream",
+		Long:    "Stream events in real-time as agents produce them. Use Ctrl+C to stop.",
+		GroupID: "OBSERVABILITY",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			fmt.Println("Event feed: watching for new events (Ctrl+C to stop)...")
+			// The event feed requires a polling loop or change-data-capture mechanism.
+			// For now, display recent events as a one-shot view.
+			events, err := queryEvents(cmd.Context(), app, "", "", 20)
+			if err != nil {
+				return fmt.Errorf("query events: %w", err)
+			}
+			for _, e := range events {
+				fmt.Printf("[%s] %-14s %-14s %s\n", e.CreatedAt, e.Agent, e.EventType, e.Data)
+			}
+			fmt.Println("(Live streaming requires polling implementation)")
+			return nil
+		},
+	}
+}
+
+// LogsCmd returns the "logs" command for querying agent logs.
+func LogsCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "logs",
+		Short:   "Query logs",
+		Long:    "Query event logs from the database, filterable by agent, level, and time.",
+		GroupID: "OBSERVABILITY",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			agentName, _ := cmd.Flags().GetString("agent")
+			level, _ := cmd.Flags().GetString("level")
+			limit, _ := cmd.Flags().GetInt("limit")
+			jsonOut, _ := cmd.Root().Flags().GetBool("json")
+
+			var events []eventRow
+			var err error
+			if level != "" {
+				events, err = queryEventsByLevel(cmd.Context(), app, level, limit)
+			} else {
+				events, err = queryEvents(cmd.Context(), app, agentName, "", limit)
+			}
+			if err != nil {
+				return fmt.Errorf("query logs: %w", err)
+			}
+
+			if jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(events)
+			}
+
+			if len(events) == 0 {
+				fmt.Println("No log entries found.")
+				return nil
+			}
+
+			for _, e := range events {
+				fmt.Printf("[%s] [%s] %s: %s %s\n", e.CreatedAt, e.Level, e.Agent, e.EventType, e.Data)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().String("agent", "", "Filter by agent name")
+	cmd.Flags().String("level", "", "Filter by level (debug, info, warn, error)")
+	cmd.Flags().Int("limit", 100, "Max entries to display")
+
+	return cmd
+}
+
+// CostsCmd returns the "costs" command for token/cost analysis.
+func CostsCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "costs",
+		Short:   "Token/cost analysis",
+		Long:    "Display token usage and estimated costs across agent sessions.",
+		GroupID: "OBSERVABILITY",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			jsonOut, _ := cmd.Root().Flags().GetBool("json")
+
+			metrics, err := queryMetrics(cmd.Context(), app)
+			if err != nil {
+				return fmt.Errorf("query costs: %w", err)
+			}
+
+			if jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(metrics)
+			}
+
+			if len(metrics) == 0 {
+				fmt.Println("No cost data available.")
+				return nil
+			}
+
+			fmt.Printf("%-14s %-12s %-10s %-10s %-10s\n", "AGENT", "MODEL", "INPUT", "OUTPUT", "COST")
+			for _, m := range metrics {
+				fmt.Printf("%-14s %-12s %-10d %-10d $%-9.4f\n",
+					truncate(m.Agent, 14),
+					truncate(m.Model, 12),
+					m.InputTokens,
+					m.OutputTokens,
+					m.EstimatedCost,
+				)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().String("run", "", "Filter by run ID")
+
+	return cmd
+}
+
+// MetricsCmd returns the "metrics" command for session metrics.
+func MetricsCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "metrics",
+		Short:   "Session metrics",
+		Long:    "Display performance metrics for agent sessions.",
+		GroupID: "OBSERVABILITY",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			jsonOut, _ := cmd.Root().Flags().GetBool("json")
+
+			metrics, err := queryMetrics(cmd.Context(), app)
+			if err != nil {
+				return fmt.Errorf("query metrics: %w", err)
+			}
+
+			if jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(metrics)
+			}
+
+			if len(metrics) == 0 {
+				fmt.Println("No metrics data available.")
+				return nil
+			}
+
+			fmt.Printf("%-14s %-12s %-10s %-12s %-10s %-10s\n",
+				"AGENT", "CAPABILITY", "DURATION", "MODEL", "INPUT", "OUTPUT")
+			for _, m := range metrics {
+				fmt.Printf("%-14s %-12s %-10dms %-12s %-10d %-10d\n",
+					truncate(m.Agent, 14),
+					truncate(m.Capability, 12),
+					m.DurationMs,
+					truncate(m.Model, 12),
+					m.InputTokens,
+					m.OutputTokens,
+				)
+			}
+			return nil
+		},
+	}
+
+	return cmd
+}
+
+// RunCmd returns the "run" command for run management.
+func RunCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:     "run",
+		Short:   "Run management",
+		Long:    "List and inspect orchestration runs.",
+		GroupID: "OBSERVABILITY",
+	}
+
+	cmd.AddCommand(runListCmd(app))
+
+	return cmd
+}
+
+func runListCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List runs",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			jsonOut, _ := cmd.Root().Flags().GetBool("json")
+
+			runs, err := queryRuns(cmd.Context(), app)
+			if err != nil {
+				return fmt.Errorf("list runs: %w", err)
+			}
+
+			if jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(runs)
+			}
+
+			if len(runs) == 0 {
+				fmt.Println("No runs found.")
+				return nil
+			}
+
+			fmt.Printf("%-20s %-10s %-8s %-20s\n", "ID", "STATUS", "AGENTS", "STARTED")
+			for _, r := range runs {
+				fmt.Printf("%-20s %-10s %-8d %-20s\n",
+					truncate(r.ID, 20),
+					truncate(r.Status, 10),
+					r.AgentCount,
+					truncate(r.StartedAt, 20),
+				)
+			}
+			return nil
+		},
+	}
+
+	return cmd
+}
+
+// --- DB query helpers for observability commands ---
+
+type eventRow struct {
+	Agent     string `json:"agent"`
+	EventType string `json:"eventType"`
+	ToolName  string `json:"toolName"`
+	Data      string `json:"data"`
+	Level     string `json:"level"`
+	CreatedAt string `json:"createdAt"`
+}
+
+func queryEvents(ctx context.Context, app *App, agent, runID string, limit int) ([]eventRow, error) {
+	query := "SELECT agent_name, event_type, COALESCE(tool_name, ''), COALESCE(data, ''), level, created_at FROM events WHERE 1=1"
+	var qargs []any
+
+	if agent != "" {
+		query += " AND agent_name = ?"
+		qargs = append(qargs, agent)
+	}
+	if runID != "" {
+		query += " AND run_id = ?"
+		qargs = append(qargs, runID)
+	}
+
+	query += " ORDER BY created_at DESC"
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	rows, err := app.DB.Query(ctx, query, qargs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []eventRow
+	for rows.Next() {
+		var e eventRow
+		if err := rows.Scan(&e.Agent, &e.EventType, &e.ToolName, &e.Data, &e.Level, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+func queryEventsByLevel(ctx context.Context, app *App, level string, limit int) ([]eventRow, error) {
+	query := "SELECT agent_name, event_type, COALESCE(tool_name, ''), COALESCE(data, ''), level, created_at FROM events WHERE level = ? ORDER BY created_at DESC"
+	var qargs []any
+	qargs = append(qargs, level)
+
+	if limit > 0 {
+		query += fmt.Sprintf(" LIMIT %d", limit)
+	}
+
+	rows, err := app.DB.Query(ctx, query, qargs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []eventRow
+	for rows.Next() {
+		var e eventRow
+		if err := rows.Scan(&e.Agent, &e.EventType, &e.ToolName, &e.Data, &e.Level, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
+type metricsRow struct {
+	Agent         string  `json:"agent"`
+	Capability    string  `json:"capability"`
+	Model         string  `json:"model"`
+	DurationMs    int     `json:"durationMs"`
+	InputTokens   int64   `json:"inputTokens"`
+	OutputTokens  int64   `json:"outputTokens"`
+	EstimatedCost float64 `json:"estimatedCost"`
+}
+
+func queryMetrics(ctx context.Context, app *App) ([]metricsRow, error) {
+	query := `SELECT agent_name, capability, COALESCE(model_used, ''), COALESCE(duration_ms, 0),
+		input_tokens, output_tokens, COALESCE(estimated_cost_usd, 0.0)
+		FROM metrics ORDER BY started_at DESC LIMIT 100`
+
+	rows, err := app.DB.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var metrics []metricsRow
+	for rows.Next() {
+		var m metricsRow
+		if err := rows.Scan(&m.Agent, &m.Capability, &m.Model, &m.DurationMs,
+			&m.InputTokens, &m.OutputTokens, &m.EstimatedCost); err != nil {
+			return nil, err
+		}
+		metrics = append(metrics, m)
+	}
+	return metrics, rows.Err()
+}
+
+type runRow struct {
+	ID         string `json:"id"`
+	Status     string `json:"status"`
+	AgentCount int    `json:"agentCount"`
+	StartedAt  string `json:"startedAt"`
+}
+
+func queryRuns(ctx context.Context, app *App) ([]runRow, error) {
+	query := "SELECT id, status, agent_count, started_at FROM runs ORDER BY started_at DESC LIMIT 50"
+	rows, err := app.DB.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var runs []runRow
+	for rows.Next() {
+		var r runRow
+		if err := rows.Scan(&r.ID, &r.Status, &r.AgentCount, &r.StartedAt); err != nil {
+			return nil, err
+		}
+		runs = append(runs, r)
+	}
+	return runs, rows.Err()
+}

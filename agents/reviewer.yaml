@@ -1,0 +1,29 @@
+name: reviewer
+capability: reviewer
+description: Validation and code review
+
+runtime: claude
+model: claude-sonnet-4
+
+tools:
+  allowed:
+    - Read
+    - Glob
+    - Grep
+    - Bash
+  blocked:
+    - Write
+    - Edit
+    - Spawn
+
+constraints:
+  - read_only
+  - no_spawn
+  - no_git_write
+
+file_scope:
+  include:
+    - "**/*"
+  exclude:
+    - ".git/**"
+    - ".computecommander/**"

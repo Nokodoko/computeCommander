@@ -1,0 +1,24 @@
+name: supervisor
+capability: supervisor
+description: "Per-project team lead [DEPRECATED - use leads]"
+
+runtime: claude
+model: claude-sonnet-4
+
+tools:
+  allowed:
+    - Read
+    - Glob
+    - Grep
+    - Bash
+    - Spawn
+  blocked:
+    - Write
+    - Edit
+
+constraints:
+  - read_only
+  - can_spawn
+
+deprecated: true
+replacement: lead

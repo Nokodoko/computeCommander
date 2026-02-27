@@ -1,0 +1,29 @@
+name: scout
+capability: scout
+description: Read-only exploration and research
+
+runtime: gemini
+model: gemini-2.5-pro
+
+tools:
+  allowed:
+    - Read
+    - Glob
+    - Grep
+    - Bash
+  blocked:
+    - Write
+    - Edit
+    - Spawn
+
+constraints:
+  - read_only
+  - no_spawn
+  - no_git_write
+
+file_scope:
+  include:
+    - "**/*"
+  exclude:
+    - ".git/**"
+    - ".computecommander/**"
