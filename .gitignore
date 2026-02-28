@@ -1,0 +1,7 @@
+# Runtime state
+.computecommander/local.db
+.computecommander/local.db-journal
+.computecommander/local.db-wal
+
+# Claude Code
+.claude/
