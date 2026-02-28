@@ -12,6 +12,7 @@ import (
 
 	"github.com/noko/computecommander/internal/commands"
 	"github.com/noko/computecommander/internal/config"
+	"github.com/noko/computecommander/internal/platform/db"
 )
 
 var (
@@ -217,6 +218,24 @@ global:
 		return fmt.Errorf("write rules: %w", err)
 	}
 
+	// Create and migrate the local database.
+	var dbPath string
+	if dbDriver == "sqlite" {
+		dbPath = cfg.Database.SQLite.Path
+		if dbPath == "" {
+			dbPath = filepath.Join(dir, "local.db")
+		}
+		database, err := db.NewSQLite(dbPath)
+		if err != nil {
+			return fmt.Errorf("create database: %w", err)
+		}
+		if err := db.Migrate(database, "sqlite"); err != nil {
+			database.Close()
+			return fmt.Errorf("apply database migrations: %w", err)
+		}
+		database.Close()
+	}
+
 	quiet, _ := cmd.Flags().GetBool("quiet")
 	if !quiet {
 		fmt.Printf("Initialized ComputeCommander in %s/\n", dir)
@@ -228,6 +247,9 @@ global:
 		}
 		fmt.Printf("  %s\n", configPath)
 		fmt.Printf("  %s\n", rulesPath)
+		if dbPath != "" {
+			fmt.Printf("  %s (schema applied)\n", dbPath)
+		}
 	}
 
 	return nil
