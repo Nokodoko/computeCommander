@@ -113,17 +113,33 @@ conflict resolution.`,
 					agentCmd = flagAgent
 				}
 
+				// Write agent wrapper script for session-switch support.
+				wrapperPath, wrapErr := zellijPkg.WriteAgentWrapper(wd, agentCmd)
+				if wrapErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not write agent wrapper: %v\n", wrapErr)
+				}
+
 				if writeErr := zellijPkg.WriteLayout(layoutPath, zellijPkg.LayoutOpts{
-					CmdrBinary:    cmdrBin,
-					SessionPrefix: sharedApp.Config.Zellij.SessionPrefix,
-					ProjectDir:    wd,
-					AgentCommand:  agentCmd,
+					CmdrBinary:       cmdrBin,
+					SessionPrefix:    sharedApp.Config.Zellij.SessionPrefix,
+					ProjectDir:       wd,
+					AgentCommand:     agentCmd,
+					AgentWrapperPath: wrapperPath,
 				}); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "Warning: could not write layout file: %v\nFalling back to TUI.\n", writeErr)
 					return sharedApp.RunDashboard(cmd.Context())
 				}
 
 				sessionName := sharedApp.Config.Zellij.SessionPrefix + "-dashboard"
+
+				// Write the lock file with the current PID so that
+				// dashboardStartTime() can use its mtime to filter out
+				// completed agents from previous sessions.
+				lockPath := filepath.Join(".computecommander", "cmdr.lock")
+				if lockErr := os.WriteFile(lockPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o644); lockErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not write lock file: %v\n", lockErr)
+				}
+
 				return zellijPkg.LaunchSession(zellijPkg.SessionOpts{
 					SessionName: sessionName,
 					LayoutPath:  layoutPath,
@@ -228,6 +244,7 @@ conflict resolution.`,
 	// Navigation commands.
 	addAppCmd(root, commands.FpCmd(sharedApp))
 	addAppCmd(root, commands.SessionCmd(sharedApp))
+	addAppCmd(root, commands.SessionsCmd(sharedApp))
 
 	// Infrastructure commands.
 	addAppCmd(root, commands.WorktreeCmd(sharedApp))

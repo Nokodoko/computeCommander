@@ -26,7 +26,7 @@ Provides a unified database abstraction (DB interface) over SQLite and PostgreSQ
 | Function | Signature | Returns | Description |
 |----------|-----------|---------|-------------|
 | `NewDB` | `func NewDB(cfg DatabaseConfig) (DB, error)` | `DB, error` | Factory: dispatches to `NewSQLite` or `NewPostgres` based on driver |
-| `NewSQLite` | `func NewSQLite(path string) (DB, error)` | `DB, error` | Opens SQLite with WAL mode, 1 connection, custom time scanning |
+| `NewSQLite` | `func NewSQLite(path string) (DB, error)` | `DB, error` | Opens SQLite with busy_timeout=5000, WAL mode, foreign_keys=ON, 1 connection, custom time scanning |
 | `NewPostgres` | `func NewPostgres(cfg PostgresConfig) (DB, error)` | `DB, error` | Opens pgxpool from DSN built from config fields |
 | `Migrate` | `func Migrate(database DB, driver string) error` | `error` | Reads embedded SQL files from `migrations/{driver}/` and executes them |
 
@@ -73,7 +73,7 @@ Fields: Driver, Postgres (PostgresConfig), SQLite (SQLiteConfig)
 ## Style Guide
 - Interface-first: `DB` and `Tx` interfaces with two implementations
 - `Rows`/`Row` wrappers to avoid leaking `database/sql` types
-- SQLite uses `database/sql` with `modernc.org/sqlite` driver
+- SQLite uses `database/sql` with `modernc.org/sqlite` driver; PRAGMAs: busy_timeout=5000 (concurrent dashboard panes), WAL mode, foreign_keys=ON
 - Postgres uses `pgx/v5/pgxpool` directly
 - Embedded migrations via `//go:embed migrations/**/*.sql`
 - SQL uses `?` placeholders (SQLite-compatible; Postgres adapter translates)

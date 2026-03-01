@@ -156,10 +156,52 @@ const (
 	ansiMagenta = "\033[35m"
 )
 
+// dashboardStartTime returns the start time of the current dashboard session
+// by reading the modification time of the cmdr.lock file. Returns zero time
+// if the lock file cannot be read.
+func dashboardStartTime() time.Time {
+	lockPath := filepath.Join(".computecommander", "cmdr.lock")
+	info, err := os.Stat(lockPath)
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
+}
+
+// filterPaneSessions removes completed agents from previous dashboard sessions.
+// Agents that completed during the current session (started after dashStart) are
+// kept visible. Agents that were already completed before the dashboard launched
+// are excluded so a fresh session starts with a clean Agents pane.
+func filterPaneSessions(sessions []*agents.AgentSession, dashStart time.Time) []*agents.AgentSession {
+	if dashStart.IsZero() {
+		return sessions
+	}
+	filtered := make([]*agents.AgentSession, 0, len(sessions))
+	for _, s := range sessions {
+		// Keep all non-completed agents (working, booting, stalled, zombie).
+		if s.State != agents.StateCompleted {
+			filtered = append(filtered, s)
+			continue
+		}
+		// Keep completed agents only if they started during or after the current
+		// dashboard session (i.e. they completed during this session).
+		if !s.StartedAt.Before(dashStart) {
+			filtered = append(filtered, s)
+		}
+	}
+	return filtered
+}
+
 // printAgentsPane renders the styled Agents pane matching the dashboard screenshot.
 // It shows the header and column names at the top, then the most recent agents
 // (tail of the list) so the latest activity is always visible without scrolling.
+// Completed agents from previous dashboard sessions are filtered out so a new
+// session starts with a clean pane.
 func printAgentsPane(sessions []*agents.AgentSession) error {
+	// Filter out completed agents from previous dashboard sessions.
+	dashStart := dashboardStartTime()
+	sessions = filterPaneSessions(sessions, dashStart)
+
 	// Count active agents.
 	active := 0
 	for _, s := range sessions {
@@ -183,12 +225,12 @@ func printAgentsPane(sessions []*agents.AgentSession) error {
 		ansiDim, "Name", "Capability", "State", "Duration", "Task", ansiReset)
 
 	// Detect terminal height to show only what fits.
-	// Reserve 3 lines: header, column header, footer.
+	// Reserve 4 lines: header, column header, footer, + zellij pane border.
 	termHeight := terminalHeight()
 	if termHeight <= 0 {
-		termHeight = 20 // sensible fallback for zellij pane
+		termHeight = 15 // conservative fallback for zellij pane
 	}
-	maxRows := termHeight - 3
+	maxRows := termHeight - 4
 	if maxRows < 1 {
 		maxRows = 1
 	}

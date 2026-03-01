@@ -21,23 +21,27 @@ computeCommander/
   cmd/cc/              CLI entry point (Cobra command tree)
   internal/
     agents/            Agent lifecycle: spawn, stop, guards, overlays
+    backup/            Database backup and restore operations
     commands/          CLI command handlers (App DI container)
-    config/            Configuration schema, loading, validation
+    config/            Configuration schema, loading, validation, file watcher
+    export/            Database export to JSON/CSV
     gateway/           HTTP REST API gateway (/api/v1/)
+    keybinds/          Leader-key keybind configuration and action registry
     mail/              Inter-agent mail system with priorities
     merge/             FIFO merge queue + 4-tier conflict resolution
     platform/db/       Database abstraction (SQLite + PostgreSQL)
-    tui/               BubbleTea dashboard (status, mail, costs)
+    tui/               BubbleTea dashboard (status, mail, costs, file picker, sessions)
     watchdog/          3-tier health monitoring daemon
     wezterm/           WezTerm window management
     worktree/          Git worktree lifecycle management
-    zellij/            Zellij pane management
+    zellij/            Zellij pane management + KDL layout generation
   pkg/
     runtimes/          AgentRuntime interface + 5 adapters
     integrations/      GitHub, Linear, Webhook integrations (stubs)
   agents/              YAML agent role definitions
   templates/           Go text/template overlays
   migrations/          Root-level SQL migration mirrors
+  scripts/             Shell scripts (agent wrapper for session-switch support)
   k8s-cluster/         Kubernetes infrastructure (API, WS, HAProxy, K8s manifests)
 ```
 
