@@ -88,6 +88,11 @@ func mergeListCmd(app *App) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(entries)
 			}
 
+			pane, _ := cmd.Flags().GetBool("pane")
+			if pane {
+				return printMergePane(entries)
+			}
+
 			if len(entries) == 0 {
 				fmt.Println("Merge queue is empty.")
 				return nil
@@ -108,8 +113,53 @@ func mergeListCmd(app *App) *cobra.Command {
 	}
 
 	cmd.Flags().String("status", "", "Filter by status (pending, merging, merged, conflict, failed)")
+	cmd.Flags().Bool("pane", false, "Styled output for zellij dashboard pane")
 
 	return cmd
+}
+
+func printMergePane(entries []*merge.MergeEntry) error {
+	pending := 0
+	for _, e := range entries {
+		if e.Status == merge.MergePending {
+			pending++
+		}
+	}
+
+	header := fmt.Sprintf("%s%s── Merge Queue (%d pending) ──%s", ansiBold, ansiCyan, pending, ansiReset)
+	fmt.Println(header)
+
+	if len(entries) == 0 {
+		fmt.Printf("\n  %sQueue empty%s\n", ansiDim, ansiReset)
+		return nil
+	}
+
+	for _, e := range entries {
+		statusIcon, statusColor := mergeStatusStyle(e.Status)
+		fmt.Printf(" %s%s%s%s %s%-20s%s %s\n",
+			statusColor, statusIcon, truncate(string(e.Status), 10), ansiReset,
+			ansiBold, truncate(e.BranchName, 20), ansiReset,
+			truncate(e.AgentName, 12),
+		)
+	}
+	return nil
+}
+
+func mergeStatusStyle(status merge.MergeStatus) (string, string) {
+	switch status {
+	case merge.MergePending:
+		return "◌ ", ansiYellow
+	case merge.MergeMerging:
+		return "● ", ansiCyan
+	case merge.MergeMerged:
+		return "✔ ", ansiGreen
+	case merge.MergeConflict:
+		return "⚠ ", ansiRed
+	case merge.MergeFailed:
+		return "✖ ", ansiRed
+	default:
+		return "○ ", ansiDim
+	}
 }
 
 func mergeStatusCmd(app *App) *cobra.Command {

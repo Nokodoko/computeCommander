@@ -13,12 +13,13 @@ import (
 	"github.com/noko/computecommander/internal/merge"
 )
 
-// viewMode identifies which panel is currently displayed.
+// viewMode identifies which panel is currently displayed in the bottom section.
 type viewMode int
 
 const (
-	viewStatus viewMode = iota
+	viewEvents viewMode = iota
 	viewMail
+	viewMerge
 	viewCosts
 )
 
@@ -31,8 +32,25 @@ type DashboardOpts struct {
 	Interval time.Duration
 }
 
-// Dashboard is the top-level TUI component that composes all sub-views
-// and drives the bubbletea event loop.
+// Dashboard is the top-level TUI component implementing the redesigned layout:
+//
+//	+----------+--------------------------------------------+----------+
+//	|          |                                            |          |
+//	|   FP     |           Agent Session                    |  Agents  |
+//	|  (15%)   |           (center main)                    |  (15%)   |
+//	|          |                                            |          |
+//	|          |                                            |          |
+//	|          +----------+--------+-----------+------------+          |
+//	|          | Event    | Mail   | Merge     | Events     |          |
+//	|          | Log      |        | Queue     |            |          |
+//	+----------+----------+--------+-----------+------------+----------+
+//
+// Left sidebar: FP (file picker) spanning full height (~15% width)
+// Center: Agent Session (top ~80%) + bottom bar (Event Log | Mail | Merge Queue | Events)
+// Right sidebar: Agents list spanning full height (~15% width)
+//
+// The fp and agent_session panes are in the zellij layout;
+// this TUI dashboard handles all panels when running with --tui.
 type Dashboard struct {
 	agents   *AgentTable
 	mail     *MailSummary
@@ -45,6 +63,10 @@ type Dashboard struct {
 	height   int
 	ctx      context.Context
 	err      error
+
+	// leaderActive tracks whether the leader key (Ctrl+Space) has been pressed
+	// and we are waiting for the follow-up key.
+	leaderActive bool
 }
 
 // NewDashboard constructs a Dashboard from the provided options.
@@ -61,7 +83,7 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		costs:    NewCostTracker(theme),
 		interval: interval,
 		theme:    theme,
-		mode:     viewStatus,
+		mode:     viewEvents,
 	}
 }
 
@@ -148,30 +170,97 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return d, nil
 }
 
-// handleKey processes keyboard input.
+// handleKey processes keyboard input, including leader key support.
 func (d *Dashboard) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	key := msg.String()
+
+	// If leader key is active, process the follow-up key.
+	if d.leaderActive {
+		d.leaderActive = false
+		return d.handleLeaderAction(key)
+	}
+
+	// Check for leader key activation (Ctrl+Space).
+	if key == "ctrl+@" || key == "ctrl+ " {
+		d.leaderActive = true
+		return d, nil
+	}
+
+	// Normal key handling.
+	switch key {
 	case "q", "ctrl+c":
 		return d, tea.Quit
-	case "s":
-		d.mode = viewStatus
-	case "m":
+	case "1":
+		d.mode = viewEvents
+	case "2":
 		d.mode = viewMail
-	case "c":
+	case "3":
+		d.mode = viewMerge
+	case "4":
 		d.mode = viewCosts
 	case "j", "down":
 		d.agents.CursorDown()
 	case "k", "up":
 		d.agents.CursorUp()
-	case "n":
-		// Nudge: reserved for future implementation.
-	case "i":
-		// Inspect: reserved for future implementation.
+	case "tab":
+		// Cycle through bottom pane views.
+		d.mode = (d.mode + 1) % 4
 	}
 	return d, nil
 }
 
-// View renders the full dashboard layout.
+// handleLeaderAction processes a key pressed after the leader key.
+func (d *Dashboard) handleLeaderAction(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "q":
+		return d, tea.Quit
+	case "?":
+		// Help: would open floating pane.
+	case "v":
+		// Version: would open floating pane.
+	case "u":
+		// Update: would open floating pane.
+	case "s":
+		// Shell: would open floating pane.
+	case "c":
+		// Clear logs: would open confirmation.
+	case "e":
+		// Export: would open floating pane.
+	case "r":
+		// Restart: would open confirmation.
+	case "b":
+		// Backup: would open confirmation.
+	case "R":
+		// Restore: would open confirmation.
+	case "f":
+		// Feedback: would open browser.
+	case "h":
+		// Support: would open browser.
+	case "t":
+		// Theme: would open picker.
+	case "n":
+		// Notifications: would open settings.
+	case "a":
+		// Analytics: would open dashboard.
+	case "i":
+		// Integrations: would open list.
+	case "m":
+		// Automation: would open builder.
+	case "d":
+		// Toggle file picker pane.
+	}
+	return d, nil
+}
+
+// View renders the redesigned dashboard layout.
+//
+//	+----------+--------------------------------------------+----------+
+//	|          |           Agent Session                     |          |
+//	|   FP     |           (center, ~80% height)            |  Agents  |
+//	|  (15%)   |                                            |  (15%)   |
+//	|          +----------+--------+-----------+------------+          |
+//	|          | EventLog | Mail   | MergeQ    | Events     |          |
+//	+----------+----------+--------+-----------+------------+----------+
 func (d *Dashboard) View() string {
 	var sections []string
 
@@ -179,20 +268,109 @@ func (d *Dashboard) View() string {
 	header := d.theme.Title.Render("ComputeCommander Dashboard")
 	sections = append(sections, header)
 
-	// Main content based on current mode.
-	switch d.mode {
-	case viewStatus:
-		sections = append(sections, d.agents.View())
-	case viewMail:
-		sections = append(sections, d.mail.View())
-	case viewCosts:
-		sections = append(sections, d.costs.View())
+	// Leader key indicator.
+	if d.leaderActive {
+		leaderStyle := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFD700")).
+			Bold(true)
+		sections = append(sections, leaderStyle.Render("  LEADER KEY ACTIVE -- press action key"))
 	}
 
-	// Merge queue compact view (always visible in status mode).
-	if d.mode == viewStatus {
-		sections = append(sections, d.queue.View())
+	// Reserve space for header, status bar, help bar, and error line.
+	reservedLines := 3
+	if d.err != nil {
+		reservedLines++
 	}
+	if d.leaderActive {
+		reservedLines++
+	}
+	bodyHeight := d.height - reservedLines
+	if bodyHeight < 10 {
+		bodyHeight = 10
+	}
+
+	// Column widths: FP (15%), center (70%), agents (15%).
+	fpWidth := d.width * 15 / 100
+	if fpWidth < 10 {
+		fpWidth = 10
+	}
+	agentsWidth := d.width * 15 / 100
+	if agentsWidth < 10 {
+		agentsWidth = 10
+	}
+	centerWidth := d.width - fpWidth - agentsWidth
+	if centerWidth < 20 {
+		centerWidth = 20
+	}
+
+	// --- Left sidebar: File Picker (full height) ---
+	fpStyle := lipgloss.NewStyle().
+		Width(fpWidth).
+		Height(bodyHeight).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#00FFFF"))
+	fpContent := d.theme.Subtitle.Render("FP") + "\n" + "(file picker)"
+
+	// --- Right sidebar: Agents list (full height) ---
+	agentsSidebarStyle := lipgloss.NewStyle().
+		Width(agentsWidth).
+		Height(bodyHeight).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#00FFFF"))
+	agentsSidebarContent := d.agents.View()
+
+	// --- Center section: Agent Session (top) + Bottom bar ---
+	centerTopHeight := bodyHeight * 80 / 100
+	if centerTopHeight < 6 {
+		centerTopHeight = 6
+	}
+	centerBottomHeight := bodyHeight - centerTopHeight
+	if centerBottomHeight < 3 {
+		centerBottomHeight = 3
+	}
+
+	// Center top: Agent Session.
+	sessionStyle := lipgloss.NewStyle().
+		Width(centerWidth).
+		Height(centerTopHeight).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#3B82F6"))
+	sessionContent := d.theme.Subtitle.Render("Agent Session") + "\n" + "(agent workspace)"
+
+	// Center bottom: 4-section bottom bar (Event Log | Mail | Merge Queue | Events).
+	bottomPaneWidth := centerWidth / 4
+	bottomRemainder := centerWidth - (bottomPaneWidth * 4)
+
+	bottomPaneStyle := lipgloss.NewStyle().
+		Height(centerBottomHeight).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#00FFFF"))
+
+	eventLogContent := d.theme.Subtitle.Render("Event Log")
+	mailContent := d.theme.Subtitle.Render("Mail") + "\n" + d.mail.View()
+	mergeContent := d.theme.Subtitle.Render("Merge Queue") + "\n" + d.queue.View()
+	eventsContent := d.theme.Subtitle.Render("Events")
+
+	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top,
+		bottomPaneStyle.Width(bottomPaneWidth).Render(eventLogContent),
+		bottomPaneStyle.Width(bottomPaneWidth).Render(mailContent),
+		bottomPaneStyle.Width(bottomPaneWidth).Render(mergeContent),
+		bottomPaneStyle.Width(bottomPaneWidth+bottomRemainder).Render(eventsContent),
+	)
+
+	// Compose center column vertically.
+	centerColumn := lipgloss.JoinVertical(lipgloss.Left,
+		sessionStyle.Render(sessionContent),
+		bottomRow,
+	)
+
+	// Compose the main body: FP | Center | Agents.
+	body := lipgloss.JoinHorizontal(lipgloss.Top,
+		fpStyle.Render(fpContent),
+		centerColumn,
+		agentsSidebarStyle.Render(agentsSidebarContent),
+	)
+	sections = append(sections, body)
 
 	// Status bar.
 	statusBar := renderStatusBar(
@@ -210,8 +388,13 @@ func (d *Dashboard) View() string {
 		sections = append(sections, errStyle.Render("Error: "+d.err.Error()))
 	}
 
-	// Help bar.
-	sections = append(sections, renderHelpBar(d.theme))
+	// Help bar with leader key hint.
+	sections = append(sections, renderDashHelpBar(d.theme))
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+// renderDashHelpBar renders the updated help bar with leader key info.
+func renderDashHelpBar(theme *Theme) string {
+	return theme.HelpBar.Render("[Ctrl+Space] leader  [1]events  [2]mail  [3]merge  [4]costs  [Tab]cycle  [q]uit")
 }

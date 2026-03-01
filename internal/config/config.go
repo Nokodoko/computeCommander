@@ -82,6 +82,7 @@ type WorktreesConfig struct {
 
 type DefaultsConfig struct {
 	Runtime       string            `yaml:"runtime"`
+	AgentCommand  string            `yaml:"agent_command"`
 	ModelMappings map[string]string `yaml:"model_mappings"`
 }
 
@@ -167,10 +168,10 @@ func DefaultConfig() *Config {
 			},
 		},
 		Zellij: ZellijConfig{
-			Layout:        "default",
-			DashboardLayout: "~/.computecommander/layouts/cmdr-dashboard.kdl",
-			Terminal:      "wezterm",
-			SessionPrefix: "cc",
+			Layout:          "default",
+			DashboardLayout: ".computecommander/layouts/cmdr-dashboard.kdl",
+			Terminal:        "wezterm",
+			SessionPrefix:   "cc",
 		},
 		Agents: AgentsConfig{
 			MaxConcurrent:     10,
@@ -184,7 +185,8 @@ func DefaultConfig() *Config {
 			BaseDir: ".computecommander/worktrees",
 		},
 		Defaults: DefaultsConfig{
-			Runtime: "claude",
+			Runtime:      "claude",
+			AgentCommand: "claude --dangerously-skip-permissions --no-chrome --disallowedTools WebSearch WebFetch NotebookEdit",
 			ModelMappings: map[string]string{
 				"scout":    "gemini",
 				"builder":  "claude",

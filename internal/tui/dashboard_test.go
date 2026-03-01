@@ -67,8 +67,8 @@ func TestNewDashboard(t *testing.T) {
 	if d.interval != time.Second {
 		t.Errorf("expected interval 1s, got %s", d.interval)
 	}
-	if d.mode != viewStatus {
-		t.Errorf("expected initial mode viewStatus, got %d", d.mode)
+	if d.mode != viewEvents {
+		t.Errorf("expected initial mode viewEvents, got %d", d.mode)
 	}
 }
 
@@ -129,8 +129,8 @@ func TestDashboardView(t *testing.T) {
 	if !strings.Contains(view, "ComputeCommander Dashboard") {
 		t.Error("view should contain dashboard title")
 	}
-	if !strings.Contains(view, "[s]tatus") {
-		t.Error("view should contain help bar")
+	if !strings.Contains(view, "[q]uit") || !strings.Contains(view, "leader") {
+		t.Error("view should contain help bar with leader key hint")
 	}
 	if !strings.Contains(view, "[q]uit") {
 		t.Error("view should contain quit hint")
@@ -362,11 +362,14 @@ func TestRenderHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("renderHelpBar", func(t *testing.T) {
+	t.Run("renderDashHelpBar", func(t *testing.T) {
 		theme := DefaultTheme()
-		bar := renderHelpBar(theme)
-		if !strings.Contains(bar, "[s]tatus") {
-			t.Error("help bar should contain keybinding hints")
+		bar := renderDashHelpBar(theme)
+		if !strings.Contains(bar, "leader") {
+			t.Error("help bar should contain leader key hint")
+		}
+		if !strings.Contains(bar, "[q]uit") {
+			t.Error("help bar should contain quit hint")
 		}
 	})
 }

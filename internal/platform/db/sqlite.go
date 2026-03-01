@@ -130,21 +130,24 @@ func NewSQLite(path string) (DB, error) {
 		return nil, fmt.Errorf("sqlite open: %w", err)
 	}
 
+	// Set busy_timeout FIRST so subsequent PRAGMAs wait instead of failing
+	// when multiple processes (dashboard panes) open the DB concurrently.
+	if _, err := conn.Exec("PRAGMA busy_timeout = 5000"); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("sqlite pragma busy_timeout: %w", err)
+	}
 	// WAL mode for concurrent reads.
 	if _, err := conn.Exec("PRAGMA journal_mode = WAL"); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("sqlite pragma journal_mode: %w", err)
-	}
-	if _, err := conn.Exec("PRAGMA busy_timeout = 5000"); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("sqlite pragma busy_timeout: %w", err)
 	}
 	if _, err := conn.Exec("PRAGMA foreign_keys = ON"); err != nil {
 		conn.Close()
 		return nil, fmt.Errorf("sqlite pragma foreign_keys: %w", err)
 	}
 
-	// Single connection for SQLite to avoid locking issues.
+	// Single writer connection for SQLite; WAL mode handles concurrent readers
+	// across separate processes (each dashboard pane is its own process).
 	conn.SetMaxOpenConns(1)
 
 	return &sqliteDB{conn: conn}, nil

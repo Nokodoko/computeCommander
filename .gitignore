@@ -7,7 +7,7 @@
 .claude/
 
 # Compiled binary
-cc
+/cc
 
 # Campaign
 CAMPAIGN.md
