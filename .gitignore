@@ -8,3 +8,9 @@
 
 # Compiled binary
 cc
+
+# Campaign
+CAMPAIGN.md
+
+# Spec (generated)
+SPEC.md
