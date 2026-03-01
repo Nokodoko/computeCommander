@@ -5,3 +5,6 @@
 
 # Claude Code
 .claude/
+
+# Compiled binary
+cc
