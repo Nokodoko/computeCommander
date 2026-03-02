@@ -1,0 +1,48 @@
+{
+  "project_type": "go",
+  "binary_paths": ["./cmdr", "./cc"],
+  "smoke_tests": [
+    {
+      "cmd": ["go", "vet", "./..."],
+      "timeout": 30,
+      "label": "go vet ./..."
+    },
+    {
+      "cmd": ["./cmdr", "--help"],
+      "timeout": 10,
+      "label": "cmdr --help"
+    },
+    {
+      "cmd": ["./cmdr", "dashboard", "--help"],
+      "timeout": 10,
+      "label": "cmdr dashboard --help"
+    },
+    {
+      "cmd": ["./cc", "--help"],
+      "timeout": 10,
+      "label": "cc --help"
+    }
+  ],
+  "config_validators": [
+    {
+      "glob": "**/*.kdl",
+      "validator": "kdl",
+      "label": "KDL layout validation"
+    },
+    {
+      "glob": "**/*.json",
+      "validator": "json",
+      "label": "JSON config validation"
+    },
+    {
+      "glob": "**/*.yaml",
+      "validator": "yaml",
+      "label": "YAML config validation"
+    },
+    {
+      "glob": "**/*.yml",
+      "validator": "yaml",
+      "label": "YAML config validation"
+    }
+  ]
+}
