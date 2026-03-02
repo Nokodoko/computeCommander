@@ -29,12 +29,12 @@ type LayoutOpts struct {
 //	| (10%)|           agent session (65%)            | (25%)  |
 //	|      |              (focused)                   |        |
 //	+------+------------------------------------------+--------+
-//	| Event Log  |    Mail    |  Merge Queue  | Events        |
+//	| Event Log  |    Mail    |  Merge Queue  | Git Status    |
 //	|   (25%)    |   (25%)   |    (25%)      |  (25%)        |
 //	+-------------------------------------------------------------+
 //
 // Top row: 67% height — fp (10%) | agent (65%, borderless) | Agents (25%)
-// Bottom row: 33% height — 4 columns spanning full width
+// Bottom row: 33% height — Event Log | Mail | Merge Queue | Git Status
 //
 // Zellij KDL split_direction semantics:
 //   - "vertical"   = children arranged left-to-right (columns)
@@ -83,9 +83,9 @@ func GenerateLayout(opts LayoutOpts) string {
                     command "%s"
                     args "merge" "list" "--pane"
                 }
-                pane name="Events" size="25%%" {
+                pane name="Git Status" size="25%%" {
                     command "%s"
-                    args "feed" "--pane"
+                    args "git-status" "--pane"
                 }
             }
         }

@@ -28,9 +28,9 @@ layout {
                     command "/home/n0ko/Programs/ai/computeCommander/cmdr"
                     args "merge" "list" "--pane"
                 }
-                pane name="Events" size="25%" {
+                pane name="Git Status" size="25%" {
                     command "/home/n0ko/Programs/ai/computeCommander/cmdr"
-                    args "feed" "--pane"
+                    args "git-status" "--pane"
                 }
             }
         }

@@ -94,6 +94,7 @@ conflict resolution.`,
 	addAppCmd(root, commands.SlingCmd(sharedApp))
 	addAppCmd(root, commands.StopCmd(sharedApp))
 	addAppCmd(root, commands.StatusCmd(sharedApp))
+	addAppCmd(root, commands.GitStatusCmd(sharedApp))
 	addAppCmd(root, commands.DashboardCmd(sharedApp))
 
 	addAppCmd(root, commands.CoordinatorCmd(sharedApp))
