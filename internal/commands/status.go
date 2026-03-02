@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -18,6 +19,7 @@ func StatusCmd(app *App) *cobra.Command {
 		Long:    "Display an overview of all agent sessions and their current state.",
 		GroupID: "CORE",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			paneMode, _ := cmd.Flags().GetBool("pane")
 			capability, _ := cmd.Flags().GetString("capability")
 			state, _ := cmd.Flags().GetString("state")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
@@ -28,6 +30,10 @@ func StatusCmd(app *App) *cobra.Command {
 			}
 			if state != "" {
 				opts.State = agents.SessionState(state)
+			}
+
+			if paneMode {
+				return runStatusPane(cmd, app, opts)
 			}
 
 			sessions, err := app.Spawner.ListSessions(cmd.Context(), opts)
@@ -64,8 +70,65 @@ func StatusCmd(app *App) *cobra.Command {
 
 	cmd.Flags().String("capability", "", "Filter by capability")
 	cmd.Flags().String("state", "", "Filter by state")
+	cmd.Flags().Bool("pane", false, "Run in long-lived pane mode (for zellij dashboard)")
 
 	return cmd
+}
+
+// runStatusPane runs the status command in long-lived pane mode, refreshing periodically.
+func runStatusPane(cmd *cobra.Command, app *App, opts agents.ListOpts) error {
+	ctx := cmd.Context()
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	render := func() {
+		clearScreen()
+		sessions, err := app.Spawner.ListSessions(ctx, opts)
+		if err != nil {
+			fmt.Printf("\033[31mError: %v\033[0m\n", err)
+			return
+		}
+
+		if len(sessions) == 0 {
+			fmt.Println("\033[2mNo active agents.\033[0m")
+			return
+		}
+
+		fmt.Printf("\033[2m%-14s %-12s %-10s %-14s\033[0m\n", "NAME", "CAPABILITY", "STATE", "TASK")
+		for _, s := range sessions {
+			stateColor := "\033[32m" // green for working
+			switch s.State {
+			case agents.StateZombie:
+				stateColor = "\033[31m" // red
+			case agents.StateStalled:
+				stateColor = "\033[33m" // yellow
+			case agents.StateCompleted:
+				stateColor = "\033[2m" // dim
+			case agents.StateBooting:
+				stateColor = "\033[36m" // cyan
+			}
+			fmt.Printf("%-14s %-12s %s%-10s\033[0m %-14s\n",
+				truncate(s.AgentName, 14),
+				truncate(string(s.Capability), 12),
+				stateColor,
+				truncate(string(s.State), 10),
+				truncate(s.TaskID, 14),
+			)
+		}
+		fmt.Printf("\n\033[2mTotal: %d agent(s)\033[0m\n", len(sessions))
+	}
+
+	// Initial render.
+	render()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			render()
+		}
+	}
 }
 
 // truncate shortens a string to maxLen, adding ".." if truncated.

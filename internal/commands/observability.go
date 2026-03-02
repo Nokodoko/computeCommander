@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -128,15 +129,19 @@ func ReplayCmd(app *App) *cobra.Command {
 
 // FeedCmd returns the "feed" command for real-time event streaming.
 func FeedCmd(app *App) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "feed",
 		Short:   "Real-time event stream",
 		Long:    "Stream events in real-time as agents produce them. Use Ctrl+C to stop.",
 		GroupID: "OBSERVABILITY",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			paneMode, _ := cmd.Flags().GetBool("pane")
+
+			if paneMode {
+				return runFeedPane(cmd, app)
+			}
+
 			fmt.Println("Event feed: watching for new events (Ctrl+C to stop)...")
-			// The event feed requires a polling loop or change-data-capture mechanism.
-			// For now, display recent events as a one-shot view.
 			events, err := queryEvents(cmd.Context(), app, "", "", 20)
 			if err != nil {
 				return fmt.Errorf("query events: %w", err)
@@ -147,6 +152,64 @@ func FeedCmd(app *App) *cobra.Command {
 			fmt.Println("(Live streaming requires polling implementation)")
 			return nil
 		},
+	}
+
+	cmd.Flags().Bool("pane", false, "Run in long-lived pane mode (for zellij dashboard)")
+
+	return cmd
+}
+
+// runFeedPane runs the event feed in long-lived pane mode, polling for new events.
+func runFeedPane(cmd *cobra.Command, app *App) error {
+	ctx := cmd.Context()
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	render := func() {
+		clearScreen()
+		events, err := queryEvents(ctx, app, "", "", 20)
+		if err != nil {
+			fmt.Printf("\033[31mError: %v\033[0m\n", err)
+			return
+		}
+
+		if len(events) == 0 {
+			fmt.Println("\033[2mWaiting for events...\033[0m")
+			return
+		}
+
+		for _, e := range events {
+			timeStr := truncate(e.CreatedAt, 19)
+			levelColor := "\033[0m"
+			switch e.Level {
+			case "error":
+				levelColor = "\033[31m"
+			case "warn":
+				levelColor = "\033[33m"
+			case "info":
+				levelColor = "\033[36m"
+			case "debug":
+				levelColor = "\033[2m"
+			}
+			fmt.Printf("%s%-19s\033[0m \033[1m%-12s\033[0m %-12s %s\n",
+				levelColor, timeStr,
+				truncate(e.Agent, 12),
+				truncate(e.EventType, 12),
+				truncate(e.Data, 40),
+			)
+		}
+	}
+
+	// Initial render.
+	render()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			render()
+		}
 	}
 }
 

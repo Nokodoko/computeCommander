@@ -71,7 +71,7 @@ func renderStatusBar(agentCount int, unreadMail int, mergeQueueLen int, totalCos
 
 // renderHelpBar renders the keybinding hints at the bottom of the dashboard.
 func renderHelpBar(theme *Theme) string {
-	return theme.HelpBar.Render("[s]tatus  [m]ail  [n]udge  [i]nspect  [c]osts  [q]uit")
+	return theme.HelpBar.Render("Tab: cycle  1-7: jump  Ctrl+K: palette  q: quit")
 }
 
 // truncate shortens a string to maxLen, appending ".." if truncated.

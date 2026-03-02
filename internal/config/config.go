@@ -74,6 +74,7 @@ type AgentsConfig struct {
 	MaxSessionsPerRun int    `yaml:"max_sessions_per_run"`
 	MaxAgentsPerLead  int    `yaml:"max_agents_per_lead"`
 	BaseDir           string `yaml:"base_dir"`
+	DefaultCommand    string `yaml:"default_command"`
 }
 
 type WorktreesConfig struct {
@@ -179,6 +180,7 @@ func DefaultConfig() *Config {
 			MaxSessionsPerRun: 50,
 			MaxAgentsPerLead:  5,
 			BaseDir:           "agents",
+			DefaultCommand:    "claude --dangerously-skip-permissions --no-chrome --disallowedTools WebSearch WebFetch NotebookEdit",
 		},
 		Worktrees: WorktreesConfig{
 			BaseDir: ".computecommander/worktrees",

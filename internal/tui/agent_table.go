@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/noko/computecommander/internal/agents"
@@ -113,6 +114,36 @@ func (t *AgentTable) View() string {
 	title := fmt.Sprintf("Agents (%d active)", len(t.sessions))
 	table := renderTable(cols, rows, t.theme)
 	return t.theme.Title.Render(title) + "\n" + table
+}
+
+// CompactView renders a compact agent list suitable for the sidebar pane.
+func (t *AgentTable) CompactView(width, height int) string {
+	if len(t.sessions) == 0 {
+		return t.theme.Subtitle.Render("  No agents")
+	}
+
+	var lines []string
+	for i, s := range t.sessions {
+		if height > 0 && i >= height {
+			break
+		}
+		stateStr := t.renderState(s.State)
+		tokens := formatTokens(s.InputTokens + s.OutputTokens)
+		name := truncate(s.AgentName, width-20)
+
+		prefix := "  "
+		if i == t.cursor {
+			prefix = "> "
+		}
+
+		line := fmt.Sprintf("%s%s %s %s", prefix, name, stateStr, tokens)
+		if len(line) > width {
+			line = line[:width]
+		}
+		lines = append(lines, line)
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // renderState applies color-coded styling based on session state.

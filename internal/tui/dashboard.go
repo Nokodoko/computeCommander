@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -13,14 +14,8 @@ import (
 	"github.com/noko/computecommander/internal/merge"
 )
 
-// viewMode identifies which panel is currently displayed.
-type viewMode int
-
-const (
-	viewStatus viewMode = iota
-	viewMail
-	viewCosts
-)
+// DefaultAgentCommand is the fallback agent command when no config or CLI override is set.
+const DefaultAgentCommand = "claude --dangerously-skip-permissions --no-chrome --disallowedTools WebSearch WebFetch NotebookEdit"
 
 // DashboardOpts groups the dependencies for constructing a Dashboard.
 type DashboardOpts struct {
@@ -29,22 +24,32 @@ type DashboardOpts struct {
 	Queue    merge.MergeQueue
 	Config   *config.Config
 	Interval time.Duration
+	AgentCmd string // CLI override for agent command
 }
 
 // Dashboard is the top-level TUI component that composes all sub-views
 // and drives the bubbletea event loop.
 type Dashboard struct {
-	agents   *AgentTable
-	mail     *MailSummary
-	queue    *MergeQueueView
-	costs    *CostTracker
-	interval time.Duration
-	theme    *Theme
-	mode     viewMode
-	width    int
-	height   int
-	ctx      context.Context
-	err      error
+	// Sub-views.
+	filePicker   *FilePicker
+	agentSession *AgentSession
+	agents       *AgentTable
+	eventsPane   *EventsPane
+	mail         *MailSummary
+	queue        *MergeQueueView
+	gitStatus    *GitStatusPane
+	costs        *CostTracker
+	palette      *CommandPalette
+
+	// State.
+	focusedPane PaneID
+	interval    time.Duration
+	theme       *Theme
+	width       int
+	height      int
+	ctx         context.Context
+	err         error
+	agentCmd    string
 }
 
 // NewDashboard constructs a Dashboard from the provided options.
@@ -54,15 +59,39 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 	if interval == 0 {
 		interval = 2 * time.Second
 	}
-	return &Dashboard{
-		agents:   NewAgentTable(opts.Lister, theme),
-		mail:     NewMailSummary(opts.Mail, theme),
-		queue:    NewMergeQueueView(opts.Queue, theme),
-		costs:    NewCostTracker(theme),
-		interval: interval,
-		theme:    theme,
-		mode:     viewStatus,
+
+	// Resolve agent command: CLI flag > config > default.
+	agentCmd := opts.AgentCmd
+	if agentCmd == "" && opts.Config != nil && opts.Config.Agents.DefaultCommand != "" {
+		agentCmd = opts.Config.Agents.DefaultCommand
 	}
+	if agentCmd == "" {
+		agentCmd = DefaultAgentCommand
+	}
+
+	// Determine project root.
+	root, err := os.Getwd()
+	if err != nil {
+		root = "."
+	}
+
+	d := &Dashboard{
+		filePicker:   NewFilePicker(root, theme),
+		agentSession: NewAgentSession(agentCmd, theme),
+		agents:       NewAgentTable(opts.Lister, theme),
+		eventsPane:   NewEventsPane(theme),
+		mail:         NewMailSummary(opts.Mail, theme),
+		queue:        NewMergeQueueView(opts.Queue, theme),
+		gitStatus:    NewGitStatusPane(theme),
+		costs:        NewCostTracker(theme),
+		palette:      NewCommandPalette(theme),
+		focusedPane:  PaneAgentSession,
+		interval:     interval,
+		theme:        theme,
+		agentCmd:     agentCmd,
+	}
+
+	return d
 }
 
 // Run starts the bubbletea program and blocks until the user quits.
@@ -71,13 +100,11 @@ func (d *Dashboard) Run(ctx context.Context) error {
 
 	// Perform an initial refresh before starting.
 	if err := d.Refresh(); err != nil {
-		// Log but don't abort; the dashboard can show an error state.
 		d.err = err
 	}
 
-	p := tea.NewProgram(d, tea.WithAltScreen())
+	p := tea.NewProgram(d, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
-	// Run in a goroutine so we can cancel on context.
 	done := make(chan error, 1)
 	go func() {
 		_, err := p.Run()
@@ -86,9 +113,14 @@ func (d *Dashboard) Run(ctx context.Context) error {
 
 	select {
 	case err := <-done:
+		// Clean up PTY sessions.
+		_ = d.agentSession.Stop()
+		_ = d.filePicker.Stop()
 		return err
 	case <-ctx.Done():
 		p.Quit()
+		_ = d.agentSession.Stop()
+		_ = d.filePicker.Stop()
 		return ctx.Err()
 	}
 }
@@ -111,6 +143,12 @@ func (d *Dashboard) Refresh() error {
 	if err := d.queue.Refresh(); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := d.filePicker.Refresh(); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := d.gitStatus.Refresh(); err != nil {
+		errs = append(errs, err.Error())
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("refresh errors: %s", strings.Join(errs, "; "))
@@ -123,11 +161,33 @@ func (d *Dashboard) Refresh() error {
 // tickMsg triggers a periodic refresh.
 type tickMsg time.Time
 
-// Init sets up the initial command, starting the refresh ticker.
+// ptyOutputMsg signals that a PTY pane has new output ready to render.
+// The bubbletea event loop re-renders immediately when this arrives,
+// rather than waiting for the next tick.
+type ptyOutputMsg struct{}
+
+// Init sets up the initial command, starting the refresh ticker and
+// PTY output listeners.
 func (d *Dashboard) Init() tea.Cmd {
-	return tea.Tick(d.interval, func(t time.Time) tea.Msg {
-		return tickMsg(t)
-	})
+	return tea.Batch(
+		tea.Tick(d.interval, func(t time.Time) tea.Msg {
+			return tickMsg(t)
+		}),
+		d.waitForPTYOutput(),
+	)
+}
+
+// waitForPTYOutput returns a tea.Cmd that blocks until either the
+// agent session or file picker has new PTY output, then sends a
+// ptyOutputMsg to trigger a re-render.
+func (d *Dashboard) waitForPTYOutput() tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case <-d.agentSession.Notify():
+		case <-d.filePicker.Notify():
+		}
+		return ptyOutputMsg{}
+	}
 }
 
 // Update handles messages and key events.
@@ -140,9 +200,13 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, tea.Tick(d.interval, func(t time.Time) tea.Msg {
 			return tickMsg(t)
 		})
+	case ptyOutputMsg:
+		// PTY output arrived — re-render and re-subscribe for the next signal.
+		return d, d.waitForPTYOutput()
 	case tea.WindowSizeMsg:
 		d.width = msg.Width
 		d.height = msg.Height
+		d.updatePaneSizes()
 		return d, nil
 	}
 	return d, nil
@@ -150,51 +214,278 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKey processes keyboard input.
 func (d *Dashboard) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
+	key := msg.String()
+
+	// Command palette takes priority when visible.
+	if d.palette.Visible() {
+		return d.handlePaletteKey(msg)
+	}
+
+	// PTY panes get raw input when focused and running (except control keys).
+	if d.focusedPane == PaneAgentSession && d.agentSession.Running() {
+		return d.forwardToPTY(msg, func(data []byte) { _ = d.agentSession.WriteInput(data) })
+	}
+	if d.focusedPane == PaneFilePicker && d.filePicker.Running() {
+		return d.forwardToPTY(msg, func(data []byte) { _ = d.filePicker.WriteInput(data) })
+	}
+
+	switch key {
 	case "q", "ctrl+c":
 		return d, tea.Quit
-	case "s":
-		d.mode = viewStatus
-	case "m":
-		d.mode = viewMail
-	case "c":
-		d.mode = viewCosts
-	case "j", "down":
-		d.agents.CursorDown()
-	case "k", "up":
-		d.agents.CursorUp()
-	case "n":
-		// Nudge: reserved for future implementation.
-	case "i":
-		// Inspect: reserved for future implementation.
+	case "ctrl+k":
+		d.palette.Open()
+		d.palette.SetSize(d.width, d.height)
+		return d, nil
+	case "tab":
+		d.focusedPane = nextPane(d.focusedPane)
+	case "shift+tab":
+		d.focusedPane = prevPane(d.focusedPane)
+	case "1":
+		d.focusedPane = PaneFilePicker
+	case "2":
+		d.focusedPane = PaneAgentSession
+	case "3":
+		d.focusedPane = PaneAgents
+	case "4":
+		d.focusedPane = PaneEvents
+	case "5":
+		d.focusedPane = PaneMail
+	case "6":
+		d.focusedPane = PaneMergeQueue
+	case "7":
+		d.focusedPane = PaneGitStatus
+	default:
+		d.handleFocusedPaneKey(msg)
 	}
 	return d, nil
 }
 
+// handlePaletteKey routes keys to the command palette.
+func (d *Dashboard) handlePaletteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "ctrl+k":
+		d.palette.Close()
+	case "up", "ctrl+p":
+		d.palette.CursorUp()
+	case "down", "ctrl+n":
+		d.palette.CursorDown()
+	case "backspace":
+		d.palette.Backspace()
+	case "enter":
+		if sel := d.palette.Selected(); sel != nil {
+			d.executePaletteCommand(sel)
+		}
+		d.palette.Close()
+	default:
+		// Type character into search.
+		if len(msg.String()) == 1 {
+			d.palette.TypeChar(rune(msg.String()[0]))
+		}
+	}
+	return d, nil
+}
+
+// executePaletteCommand dispatches a palette command.
+func (d *Dashboard) executePaletteCommand(cmd *PaletteCommand) {
+	switch cmd.Name {
+	case "kill":
+		_ = d.agentSession.Stop()
+	case "background":
+		// Detach focus from the agent session pane so it keeps running
+		// in the background while the user interacts with other panes.
+		if d.focusedPane == PaneAgentSession {
+			d.focusedPane = PaneAgents
+		}
+	case "prompt":
+		// Send a newline to the agent to prompt it, useful for nudging
+		// an agent that is waiting for input.
+		if d.agentSession.Running() {
+			_ = d.agentSession.WriteInput([]byte("\n"))
+		}
+	case "restart":
+		_ = d.agentSession.Stop()
+		w, h := d.agentSessionDimensions()
+		_ = d.agentSession.Start(w, h)
+	}
+	// Other commands can be wired later.
+}
+
+// handleFocusedPaneKey routes keys to the focused pane's internal navigation.
+func (d *Dashboard) handleFocusedPaneKey(msg tea.KeyMsg) {
+	key := msg.String()
+	switch d.focusedPane {
+	case PaneFilePicker:
+		if key == "enter" && !d.filePicker.Running() {
+			w, h := d.filePickerDimensions()
+			if err := d.filePicker.Start(w, h); err != nil {
+				d.filePicker.SetLastError(err.Error())
+			}
+		} else if d.filePicker.Running() {
+			// Forward keystroke to fp process.
+			_ = d.filePicker.WriteInput([]byte(keyToBytes(msg)))
+		}
+	case PaneAgentSession:
+		if key == "enter" && !d.agentSession.Running() {
+			w, h := d.agentSessionDimensions()
+			if err := d.agentSession.Start(w, h); err != nil {
+				d.err = fmt.Errorf("agent start: %w", err)
+			}
+		}
+	case PaneAgents:
+		switch key {
+		case "j", "down":
+			d.agents.CursorDown()
+		case "k", "up":
+			d.agents.CursorUp()
+		}
+	case PaneEvents:
+		switch key {
+		case "j", "down":
+			d.eventsPane.ScrollDown()
+		case "k", "up":
+			d.eventsPane.ScrollUp()
+		}
+	}
+}
+
+// updatePaneSizes recalculates pane dimensions after a window resize.
+// Inner dimensions subtract 2 for the border and 1 for the title row
+// that RenderPane() reserves, giving height-3 usable content rows.
+func (d *Dashboard) updatePaneSizes() {
+	topH, bottomH, fpW, asW, agW, bottomPaneW := d.calculateLayout()
+
+	d.filePicker.SetSize(fpW-2, topH-3)
+	d.agentSession.SetSize(asW-2, topH-3)
+	d.eventsPane.SetSize(bottomPaneW-2, bottomH-3)
+	d.gitStatus.SetSize(bottomPaneW-2, bottomH-3)
+	d.palette.SetSize(d.width, d.height)
+
+	_ = agW // agents pane uses CompactView which gets width/height at render time
+}
+
+// calculateLayout returns the dimensions for each section of the grid.
+// Returns: topRowHeight, bottomRowHeight, filePickerWidth, agentSessionWidth, agentsWidth, bottomPaneWidth
+func (d *Dashboard) calculateLayout() (int, int, int, int, int, int) {
+	w := d.width
+	h := d.height
+	if w < 40 {
+		w = 80
+	}
+	if h < 10 {
+		h = 24
+	}
+
+	// Reserve 2 lines for status/help bars.
+	usableH := h - 2
+
+	topH := usableH * 70 / 100
+	bottomH := usableH - topH
+	if topH < 5 {
+		topH = 5
+	}
+	if bottomH < 3 {
+		bottomH = 3
+	}
+
+	fpW := w * 15 / 100
+	agW := w * 20 / 100
+	asW := w - fpW - agW
+	if fpW < 20 {
+		fpW = 20
+	}
+	if agW < 20 {
+		agW = 20
+	}
+	if asW < 20 {
+		asW = 20
+	}
+
+	bottomPaneW := w / 4
+
+	return topH, bottomH, fpW, asW, agW, bottomPaneW
+}
+
+// agentSessionDimensions returns the inner dimensions of the agent session pane.
+// Subtract 2 for left/right borders from width, and 3 for top/bottom borders
+// plus the title row from height. This matches what RenderPane() provides as
+// usable content area.
+func (d *Dashboard) agentSessionDimensions() (int, int) {
+	topH, _, _, asW, _, _ := d.calculateLayout()
+	return asW - 2, topH - 3
+}
+
+// filePickerDimensions returns the inner dimensions of the file picker pane.
+// Subtract 2 for left/right borders from width, and 3 for top/bottom borders
+// plus the title row from height. This matches what RenderPane() provides as
+// usable content area.
+func (d *Dashboard) filePickerDimensions() (int, int) {
+	topH, _, fpW, _, _, _ := d.calculateLayout()
+	return fpW - 2, topH - 3
+}
+
+// forwardToPTY handles keyboard input for a focused PTY pane. Only a small
+// set of control-key chords are intercepted for dashboard navigation;
+// everything else — including digits, printable characters, and arrow keys
+// — is forwarded verbatim to the PTY via writeFn.
+func (d *Dashboard) forwardToPTY(msg tea.KeyMsg, writeFn func([]byte)) (tea.Model, tea.Cmd) {
+	key := msg.String()
+	switch key {
+	case "ctrl+k":
+		d.palette.Open()
+		d.palette.SetSize(d.width, d.height)
+		return d, nil
+	case "ctrl+c":
+		return d, tea.Quit
+	default:
+		writeFn([]byte(keyToBytes(msg)))
+		return d, nil
+	}
+}
+
 // View renders the full dashboard layout.
 func (d *Dashboard) View() string {
-	var sections []string
+	topH, bottomH, fpW, asW, agW, bottomPaneW := d.calculateLayout()
 
-	// Header.
-	header := d.theme.Title.Render("ComputeCommander Dashboard")
-	sections = append(sections, header)
+	// --- Top Row ---
+	fpContent := d.filePicker.View()
+	fpMeta := paneMetaByID(PaneFilePicker)
+	filePicker := RenderPane(fpContent, fpMeta, d.focusedPane == PaneFilePicker, fpW, topH, d.theme)
 
-	// Main content based on current mode.
-	switch d.mode {
-	case viewStatus:
-		sections = append(sections, d.agents.View())
-	case viewMail:
-		sections = append(sections, d.mail.View())
-	case viewCosts:
-		sections = append(sections, d.costs.View())
+	asContent := d.agentSession.View()
+	asMeta := paneMetaByID(PaneAgentSession)
+	agentSession := RenderPane(asContent, asMeta, d.focusedPane == PaneAgentSession, asW, topH, d.theme)
+
+	agContent := d.agents.CompactView(agW-2, topH-3)
+	agMeta := paneMetaByID(PaneAgents)
+	agentsPane := RenderPane(agContent, agMeta, d.focusedPane == PaneAgents, agW, topH, d.theme)
+
+	topRow := lipgloss.JoinHorizontal(lipgloss.Top, filePicker, agentSession, agentsPane)
+
+	// --- Bottom Row ---
+	evContent := d.eventsPane.View()
+	evMeta := paneMetaByID(PaneEvents)
+	eventsPane := RenderPane(evContent, evMeta, d.focusedPane == PaneEvents, bottomPaneW, bottomH, d.theme)
+
+	mlContent := d.mail.View()
+	mlMeta := paneMetaByID(PaneMail)
+	mailPane := RenderPane(mlContent, mlMeta, d.focusedPane == PaneMail, bottomPaneW, bottomH, d.theme)
+
+	mqContent := d.queue.View()
+	mqMeta := paneMetaByID(PaneMergeQueue)
+	mergePane := RenderPane(mqContent, mqMeta, d.focusedPane == PaneMergeQueue, bottomPaneW, bottomH, d.theme)
+
+	// Last pane gets remaining width.
+	lastPaneW := d.width - (bottomPaneW * 3)
+	if lastPaneW < 10 {
+		lastPaneW = bottomPaneW
 	}
+	gsContent := d.gitStatus.View()
+	gsMeta := paneMetaByID(PaneGitStatus)
+	gitPane := RenderPane(gsContent, gsMeta, d.focusedPane == PaneGitStatus, lastPaneW, bottomH, d.theme)
 
-	// Merge queue compact view (always visible in status mode).
-	if d.mode == viewStatus {
-		sections = append(sections, d.queue.View())
-	}
+	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, eventsPane, mailPane, mergePane, gitPane)
 
-	// Status bar.
+	// --- Status and help bars ---
 	statusBar := renderStatusBar(
 		len(d.agents.Sessions()),
 		d.mail.UnreadCount(),
@@ -202,6 +493,11 @@ func (d *Dashboard) View() string {
 		d.costs.TotalCost(),
 		d.theme,
 	)
+
+	// --- Compose full layout ---
+	var sections []string
+	sections = append(sections, topRow)
+	sections = append(sections, bottomRow)
 	sections = append(sections, statusBar)
 
 	// Error display.
@@ -210,8 +506,91 @@ func (d *Dashboard) View() string {
 		sections = append(sections, errStyle.Render("Error: "+d.err.Error()))
 	}
 
-	// Help bar.
 	sections = append(sections, renderHelpBar(d.theme))
 
-	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+	layout := lipgloss.JoinVertical(lipgloss.Left, sections...)
+
+	// Overlay command palette if visible.
+	if d.palette.Visible() {
+		paletteView := d.palette.View()
+		layout = d.overlayPalette(layout, paletteView)
+	}
+
+	return layout
+}
+
+// overlayPalette centers the command palette over the dashboard.
+func (d *Dashboard) overlayPalette(background, palette string) string {
+	bgLines := strings.Split(background, "\n")
+	palLines := strings.Split(palette, "\n")
+
+	// Center vertically.
+	startY := (len(bgLines) - len(palLines)) / 2
+	if startY < 0 {
+		startY = 0
+	}
+
+	// Center horizontally.
+	palMaxW := 0
+	for _, l := range palLines {
+		if len(l) > palMaxW {
+			palMaxW = len(l)
+		}
+	}
+	startX := (d.width - palMaxW) / 2
+	if startX < 0 {
+		startX = 0
+	}
+
+	// Overlay palette lines onto background.
+	for i, pl := range palLines {
+		y := startY + i
+		if y >= len(bgLines) {
+			break
+		}
+		line := bgLines[y]
+		// Pad line to at least startX + len(pl).
+		for len(line) < startX+len(pl) {
+			line += " "
+		}
+		bgLines[y] = line[:startX] + pl + line[startX+len(pl):]
+	}
+
+	return strings.Join(bgLines, "\n")
+}
+
+// keyToBytes converts a bubbletea key message to raw bytes for PTY forwarding.
+func keyToBytes(msg tea.KeyMsg) string {
+	switch msg.Type {
+	case tea.KeyEnter:
+		return "\r"
+	case tea.KeyBackspace:
+		return "\x7f"
+	case tea.KeyEscape:
+		return "\x1b"
+	case tea.KeyUp:
+		return "\x1b[A"
+	case tea.KeyDown:
+		return "\x1b[B"
+	case tea.KeyRight:
+		return "\x1b[C"
+	case tea.KeyLeft:
+		return "\x1b[D"
+	case tea.KeySpace:
+		return " "
+	case tea.KeyTab:
+		return "\t"
+	default:
+		// For regular characters, use the string representation.
+		s := msg.String()
+		if len(s) == 1 {
+			return s
+		}
+		// Control characters.
+		if strings.HasPrefix(s, "ctrl+") && len(s) == 6 {
+			ch := s[5]
+			return string(rune(ch - 'a' + 1))
+		}
+		return s
+	}
 }
