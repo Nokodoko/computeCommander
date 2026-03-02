@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 
 	"github.com/creack/pty"
 )
@@ -120,10 +121,19 @@ func (fp *FilePicker) Stop() error {
 	return nil
 }
 
-// Refresh is a no-op for the PTY-based picker. The fp process handles
-// its own filesystem watching. This satisfies the dashboard refresh loop.
+// Refresh sends SIGUSR1 to the fp process to trigger an immediate
+// directory rescan. The fp process listens for this signal and re-reads
+// the current directory when it arrives. This is used by the dashboard
+// tick loop to ensure the file picker stays current during swarm runs.
 func (fp *FilePicker) Refresh() error {
-	return nil
+	fp.mu.Lock()
+	running := fp.running
+	fp.mu.Unlock()
+
+	if !running || fp.cmd == nil || fp.cmd.Process == nil {
+		return nil
+	}
+	return fp.cmd.Process.Signal(syscall.SIGUSR1)
 }
 
 // WriteInput sends keyboard input to the fp process.
