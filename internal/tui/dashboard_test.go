@@ -289,7 +289,7 @@ func TestAgentTableSelected(t *testing.T) {
 
 func TestAgentTableView(t *testing.T) {
 	sessions := []*agents.AgentSession{
-		{AgentName: "builder-1", Capability: agents.CapBuilder, State: agents.StateWorking, TaskID: "task-1", Runtime: runtimes.RuntimeClaude},
+		{AgentName: "builder-1", Capability: agents.CapBuilder, State: agents.StateWorking, TaskID: "task-1", Runtime: runtimes.RuntimeClaude, StartedAt: time.Now().Add(-3 * time.Minute)},
 	}
 	theme := DefaultTheme()
 	tbl := NewAgentTable(&mockSessionLister{sessions: sessions}, theme)
@@ -303,22 +303,34 @@ func TestAgentTableView(t *testing.T) {
 		t.Logf("view output:\n%s", view)
 		t.Error("view should contain agent name")
 	}
+	if !strings.Contains(view, "Duration") {
+		t.Logf("view output:\n%s", view)
+		t.Error("view should contain Duration column header")
+	}
+	if !strings.Contains(view, "3m") {
+		t.Logf("view output:\n%s", view)
+		t.Error("view should contain duration value like '3m'")
+	}
 }
 
 func TestAgentTableCompactView(t *testing.T) {
 	sessions := []*agents.AgentSession{
-		{AgentName: "builder-1", State: agents.StateWorking, Runtime: runtimes.RuntimeClaude, InputTokens: 1000, OutputTokens: 500},
+		{AgentName: "builder-1", State: agents.StateWorking, Runtime: runtimes.RuntimeClaude, InputTokens: 1000, OutputTokens: 500, StartedAt: time.Now().Add(-45 * time.Second)},
 	}
 	theme := DefaultTheme()
 	tbl := NewAgentTable(&mockSessionLister{sessions: sessions}, theme)
 	_ = tbl.Refresh(context.Background())
 
-	view := tbl.CompactView(40, 10)
+	view := tbl.CompactView(50, 10)
 	if !strings.Contains(view, "builder-1") {
 		t.Error("compact view should contain agent name")
 	}
 	if !strings.Contains(view, "1.5k") {
 		t.Error("compact view should contain token count")
+	}
+	if !strings.Contains(view, "45s") {
+		t.Logf("compact view output:\n%s", view)
+		t.Error("compact view should contain duration value like '45s'")
 	}
 }
 

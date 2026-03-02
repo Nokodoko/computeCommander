@@ -1,4 +1,5 @@
 layout {
+    cwd "/home/n0ko/Programs/ai/computeCommander"
     tab name="[CMDR] Dashboard" {
         pane split_direction="horizontal" {
             pane split_direction="vertical" size="67%" {

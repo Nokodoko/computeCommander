@@ -82,6 +82,7 @@ func (t *AgentTable) View() string {
 		{Header: "Name", Width: 12},
 		{Header: "Capability", Width: 12},
 		{Header: "State", Width: 10},
+		{Header: "Duration", Width: 10},
 		{Header: "Task", Width: 12},
 		{Header: "Runtime", Width: 8},
 		{Header: "Tokens", Width: 8},
@@ -92,6 +93,7 @@ func (t *AgentTable) View() string {
 		stateStr := t.renderState(s.State)
 		rt := formatRuntimeID(s.Runtime)
 		tokens := formatTokens(s.InputTokens + s.OutputTokens)
+		dur := RuntimeDuration(s.StartedAt)
 
 		// Use a cursor prefix on the name column only.
 		namePrefix := "  "
@@ -103,7 +105,8 @@ func (t *AgentTable) View() string {
 			namePrefix + truncate(s.AgentName, cols[0].Width-2),
 			truncate(string(s.Capability), cols[1].Width),
 			stateStr,
-			truncate(s.TaskID, cols[3].Width),
+			dur,
+			truncate(s.TaskID, cols[4].Width),
 			rt,
 			tokens,
 		}
@@ -129,14 +132,15 @@ func (t *AgentTable) CompactView(width, height int) string {
 		}
 		stateStr := t.renderState(s.State)
 		tokens := formatTokens(s.InputTokens + s.OutputTokens)
-		name := truncate(s.AgentName, width-20)
+		dur := RuntimeDuration(s.StartedAt)
+		name := truncate(s.AgentName, width-28)
 
 		prefix := "  "
 		if i == t.cursor {
 			prefix = "> "
 		}
 
-		line := fmt.Sprintf("%s%s %s %s", prefix, name, stateStr, tokens)
+		line := fmt.Sprintf("%s%s %s %s %s", prefix, name, stateStr, dur, tokens)
 		if len(line) > width {
 			line = line[:width]
 		}
@@ -170,7 +174,11 @@ func formatRuntimeID(rt runtimes.RuntimeID) string {
 }
 
 // RuntimeDuration returns a human-readable duration since started.
+// Returns "-" if the start time is zero (agent not yet started).
 func RuntimeDuration(started time.Time) string {
+	if started.IsZero() {
+		return "-"
+	}
 	d := time.Since(started).Round(time.Second)
 	if d < time.Minute {
 		return fmt.Sprintf("%ds", int(d.Seconds()))

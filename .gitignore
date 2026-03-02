@@ -2,6 +2,8 @@
 .computecommander/local.db
 .computecommander/local.db-journal
 .computecommander/local.db-wal
+.computecommander/local.db-shm
+.computecommander/active-cwd
 
 # Claude Code
 .claude/
@@ -14,3 +16,6 @@ CAMPAIGN.md
 
 # Spec (generated)
 SPEC.md
+
+# Dependencies
+node_modules/
