@@ -27,8 +27,25 @@ type DashboardOpts struct {
 	AgentCmd string // CLI override for agent command
 }
 
-// Dashboard is the top-level TUI component that composes all sub-views
-// and drives the bubbletea event loop.
+// Dashboard is the top-level TUI component implementing the redesigned layout:
+//
+//	+----------+--------------------------------------------+----------+
+//	|          |                                            |          |
+//	|   FP     |           Agent Session                    |  Agents  |
+//	|  (15%)   |           (center main)                    |  (15%)   |
+//	|          |                                            |          |
+//	|          |                                            |          |
+//	|          +----------+--------+-----------+------------+          |
+//	|          | Event    | Mail   | Merge     | Events     |          |
+//	|          | Log      |        | Queue     |            |          |
+//	+----------+----------+--------+-----------+------------+----------+
+//
+// Left sidebar: FP (file picker) spanning full height (~15% width)
+// Center: Agent Session (top ~80%) + bottom bar (Event Log | Mail | Merge Queue | Events)
+// Right sidebar: Agents list spanning full height (~15% width)
+//
+// The fp and agent_session panes are in the zellij layout;
+// this TUI dashboard handles all panels when running with --tui.
 type Dashboard struct {
 	// Sub-views.
 	filePicker   *FilePicker
@@ -212,7 +229,7 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return d, nil
 }
 
-// handleKey processes keyboard input.
+// handleKey processes keyboard input, including leader key support.
 func (d *Dashboard) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	key := msg.String()
 

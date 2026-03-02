@@ -39,7 +39,7 @@ type LayoutOpts struct {
 // Zellij KDL split_direction semantics:
 //   - "vertical"   = children arranged left-to-right (columns)
 //   - "horizontal" = children arranged top-to-bottom (rows)
-//
+
 // Note: pane_frames cannot be set per-layout in zellij. The dashboard
 // command toggles frames on after loading the tab via `zellij action toggle-pane-frames`.
 func GenerateLayout(opts LayoutOpts) string {
@@ -93,6 +93,7 @@ func GenerateLayout(opts LayoutOpts) string {
 }
 `, projectDir, projectDir, agentPane, cmdrBin, cmdrBin, cmdrBin, cmdrBin, cmdrBin)
 }
+
 
 // buildAgentPane returns the KDL block for the center agent session pane.
 // If wrapperPath is set, runs the wrapper script via bash for session-switch support.

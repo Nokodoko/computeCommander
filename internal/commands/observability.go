@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -141,11 +142,12 @@ func FeedCmd(app *App) *cobra.Command {
 				return runFeedPane(cmd, app)
 			}
 
-			fmt.Println("Event feed: watching for new events (Ctrl+C to stop)...")
 			events, err := queryEvents(cmd.Context(), app, "", "", 20)
 			if err != nil {
 				return fmt.Errorf("query events: %w", err)
 			}
+
+			fmt.Println("Event feed: watching for new events (Ctrl+C to stop)...")
 			for _, e := range events {
 				fmt.Printf("[%s] %-14s %-14s %s\n", e.CreatedAt, e.Agent, e.EventType, e.Data)
 			}
@@ -213,18 +215,72 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 	}
 }
 
+func printEventPane(events []eventRow) error {
+	header := fmt.Sprintf("%s%s── Events (%d) ──%s", ansiBold, ansiCyan, len(events), ansiReset)
+	fmt.Println(header)
+
+	if len(events) == 0 {
+		fmt.Printf("\n  %sNo events yet.%s\n", ansiDim, ansiReset)
+		return nil
+	}
+
+	for _, e := range events {
+		ts := shortTime(e.CreatedAt)
+		agentColor := eventAgentColor(e.EventType)
+		fmt.Printf(" %s%s%s %s%s%s %s\n",
+			ansiDim, ts, ansiReset,
+			agentColor, truncate(e.Agent, 16), ansiReset,
+			truncate(e.Data, 40),
+		)
+	}
+	return nil
+}
+
+// shortTime extracts HH:MM:SS from a timestamp string.
+func shortTime(ts string) string {
+	if len(ts) >= 19 {
+		part := ts[11:19]
+		if len(part) == 8 && part[2] == ':' && part[5] == ':' {
+			return part
+		}
+	}
+	if len(ts) > 8 {
+		return ts[:8]
+	}
+	return ts
+}
+
+// eventAgentColor returns an ANSI color based on event type keywords.
+func eventAgentColor(eventType string) string {
+	switch {
+	case strings.Contains(eventType, "completed"), strings.Contains(eventType, "done"):
+		return ansiGreen
+	case strings.Contains(eventType, "error"), strings.Contains(eventType, "fail"):
+		return ansiRed
+	case strings.Contains(eventType, "supervisor"), strings.Contains(eventType, "spawn"):
+		return ansiYellow
+	default:
+		return ansiCyan
+	}
+}
+
 // LogsCmd returns the "logs" command for querying agent logs.
+// Enhanced with --follow and --lines flags.
 func LogsCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "logs",
-		Short:   "Query logs",
-		Long:    "Query event logs from the database, filterable by agent, level, and time.",
+		Short:   "Show DB logs + UI logs",
+		Long:    "Query event logs from the database, filterable by agent, level, and time.\nUse --follow to stream logs in real-time, --lines to control output count.",
 		GroupID: "OBSERVABILITY",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			agentName, _ := cmd.Flags().GetString("agent")
 			level, _ := cmd.Flags().GetString("level")
-			limit, _ := cmd.Flags().GetInt("limit")
+			lines, _ := cmd.Flags().GetInt("lines")
+			follow, _ := cmd.Flags().GetBool("follow")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
+
+			// Use --lines as the limit (defaults to 50).
+			limit := lines
 
 			var events []eventRow
 			var err error
@@ -243,19 +299,51 @@ func LogsCmd(app *App) *cobra.Command {
 
 			if len(events) == 0 {
 				fmt.Println("No log entries found.")
-				return nil
+			} else {
+				for _, e := range events {
+					fmt.Printf("[%s] [%s] %s: %s %s\n", e.CreatedAt, e.Level, e.Agent, e.EventType, e.Data)
+				}
 			}
 
-			for _, e := range events {
-				fmt.Printf("[%s] [%s] %s: %s %s\n", e.CreatedAt, e.Level, e.Agent, e.EventType, e.Data)
+			// Follow mode: poll for new events.
+			if follow {
+				fmt.Println("\n--- Following logs (Ctrl+C to stop) ---")
+				lastCount := len(events)
+				ticker := time.NewTicker(2 * time.Second)
+				defer ticker.Stop()
+
+				for {
+					select {
+					case <-cmd.Context().Done():
+						return nil
+					case <-ticker.C:
+						var newEvents []eventRow
+						if level != "" {
+							newEvents, err = queryEventsByLevel(cmd.Context(), app, level, limit)
+						} else {
+							newEvents, err = queryEvents(cmd.Context(), app, agentName, "", limit)
+						}
+						if err != nil {
+							continue
+						}
+						if len(newEvents) > lastCount {
+							for _, e := range newEvents[lastCount:] {
+								fmt.Printf("[%s] [%s] %s: %s %s\n", e.CreatedAt, e.Level, e.Agent, e.EventType, e.Data)
+							}
+							lastCount = len(newEvents)
+						}
+					}
+				}
 			}
+
 			return nil
 		},
 	}
 
 	cmd.Flags().String("agent", "", "Filter by agent name")
 	cmd.Flags().String("level", "", "Filter by level (debug, info, warn, error)")
-	cmd.Flags().Int("limit", 100, "Max entries to display")
+	cmd.Flags().IntP("lines", "n", 50, "Number of lines to display")
+	cmd.Flags().BoolP("follow", "f", false, "Stream logs in real-time")
 
 	return cmd
 }

@@ -465,7 +465,7 @@ func TestRenderHelpers(t *testing.T) {
 		}
 	})
 
-	t.Run("renderHelpBar", func(t *testing.T) {
+	t.Run("renderDashHelpBar", func(t *testing.T) {
 		theme := DefaultTheme()
 		bar := renderHelpBar(theme)
 		if !strings.Contains(bar, "Tab: cycle") {

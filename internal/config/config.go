@@ -83,6 +83,7 @@ type WorktreesConfig struct {
 
 type DefaultsConfig struct {
 	Runtime       string            `yaml:"runtime"`
+	AgentCommand  string            `yaml:"agent_command"`
 	ModelMappings map[string]string `yaml:"model_mappings"`
 }
 
@@ -168,10 +169,10 @@ func DefaultConfig() *Config {
 			},
 		},
 		Zellij: ZellijConfig{
-			Layout:        "default",
-			DashboardLayout: "~/.computecommander/layouts/cmdr-dashboard.kdl",
-			Terminal:      "wezterm",
-			SessionPrefix: "cc",
+			Layout:          "default",
+			DashboardLayout: ".computecommander/layouts/cmdr-dashboard.kdl",
+			Terminal:        "wezterm",
+			SessionPrefix:   "cc",
 		},
 		Agents: AgentsConfig{
 			MaxConcurrent:     10,
@@ -186,7 +187,8 @@ func DefaultConfig() *Config {
 			BaseDir: ".computecommander/worktrees",
 		},
 		Defaults: DefaultsConfig{
-			Runtime: "claude",
+			Runtime:      "claude",
+			AgentCommand: "claude --dangerously-skip-permissions --no-chrome --disallowedTools WebSearch WebFetch NotebookEdit",
 			ModelMappings: map[string]string{
 				"scout":    "gemini",
 				"builder":  "claude",
@@ -277,6 +279,20 @@ func expandEnvVars(data []byte) []byte {
 	})
 }
 
+// expandTilde replaces a leading "~/" in a path with the user's home directory.
+// Go's os/exec and most libraries do not expand tilde, so paths like
+// "~/.computecommander/layouts/foo.kdl" must be resolved before use.
+func expandTilde(path string) string {
+	if !strings.HasPrefix(path, "~/") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	return filepath.Join(home, path[2:])
+}
+
 // LoadConfig loads a YAML config from path, overlays config.local.yaml if present,
 // and expands environment variables using ${VAR} syntax.
 func LoadConfig(path string) (*Config, error) {
@@ -306,6 +322,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("parse local config %s: %w", localPath, err)
 		}
 	}
+
+	// Expand tilde in path-valued fields. Go does not expand "~/" automatically,
+	// so paths like "~/.computecommander/layouts/foo.kdl" would be passed as
+	// literal strings to exec.Command, causing file-not-found failures.
+	cfg.Zellij.DashboardLayout = expandTilde(cfg.Zellij.DashboardLayout)
+	cfg.Database.SQLite.Path = expandTilde(cfg.Database.SQLite.Path)
+	cfg.Worktrees.BaseDir = expandTilde(cfg.Worktrees.BaseDir)
 
 	return cfg, nil
 }

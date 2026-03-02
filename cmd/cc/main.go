@@ -13,6 +13,9 @@ import (
 
 	"github.com/noko/computecommander/internal/commands"
 	"github.com/noko/computecommander/internal/config"
+	"github.com/noko/computecommander/internal/keybinds"
+	"github.com/noko/computecommander/internal/platform/db"
+	zellijPkg "github.com/noko/computecommander/internal/zellij"
 )
 
 var (
@@ -52,10 +55,20 @@ func appPreRun(cmd *cobra.Command, args []string) error {
 }
 
 func rootCmd() *cobra.Command {
+	var tuiFlag bool
+
 	root := &cobra.Command{
-		Use:   "cc",
-		Short: "ComputeCommander - Multi-agent orchestration for AI coding agents",
-		Long: `ComputeCommander (cc) orchestrates AI coding agent swarms.
+		Use:   "cmdr",
+		Short: "ComputeCommander - Agentic IDE for AI coding agent swarms",
+		Long: `ComputeCommander (cmdr) is an agentic IDE for AI coding agent swarms.
+
+Running cmdr with no subcommand launches a zellij session with the
+multi-pane dashboard layout (FP | Agent Session | Agents + bottom bar).
+Each panel is a native zellij pane.
+
+Use --tui to force the in-process Bubbletea TUI instead of zellij.
+If zellij is not installed or you are already inside a zellij session,
+the Bubbletea TUI is used automatically as a fallback.
 
 Each agent works in an isolated git worktree, communicates through
 a structured messaging system, and merges work back with intelligent
@@ -63,6 +76,80 @@ conflict resolution.`,
 		Version:       fmt.Sprintf("%s (commit: %s)", version, commit),
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			// Only initialize app for the root command's RunE (opening interface)
+			// or for commands that explicitly set their own PersistentPreRunE via addAppCmd.
+			// This allows init, config, and other non-app commands to run without a project.
+			if cmd.Name() == "cmdr" && cmd.RunE != nil {
+				return appPreRun(cmd, args)
+			}
+			return nil
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Check for --tui flag or CC_DASHBOARD_TUI env var.
+			if !tuiFlag {
+				tuiFlag = os.Getenv("CC_DASHBOARD_TUI") == "1"
+			}
+
+			// When --tui is NOT set, try to launch a real zellij session.
+			// Note: we do NOT check IsInsideZellij() here because the user's
+			// terminal IS zellij. LaunchSession clears ZELLIJ env vars to
+			// avoid nesting errors and creates a fresh session.
+			if !tuiFlag && zellijPkg.ZellijAvailable() {
+				layoutPath := sharedApp.Config.Zellij.DashboardLayout
+				if layoutPath == "" {
+					layoutPath = zellijPkg.DefaultLayoutPath()
+				}
+
+				// Always regenerate the layout file to pick up code changes.
+				wd, _ := os.Getwd()
+				cmdrBin, _ := os.Executable()
+				if cmdrBin == "" {
+					cmdrBin = "cmdr"
+				}
+
+				// Determine agent command for the center pane.
+				agentCmd := sharedApp.Config.Defaults.AgentCommand
+				if flagAgent, _ := cmd.Flags().GetString("agent"); flagAgent != "" {
+					agentCmd = flagAgent
+				}
+
+				// Write agent wrapper script for session-switch support.
+				wrapperPath, wrapErr := zellijPkg.WriteAgentWrapper(wd, agentCmd)
+				if wrapErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not write agent wrapper: %v\n", wrapErr)
+				}
+
+				if writeErr := zellijPkg.WriteLayout(layoutPath, zellijPkg.LayoutOpts{
+					CmdrBinary:       cmdrBin,
+					SessionPrefix:    sharedApp.Config.Zellij.SessionPrefix,
+					ProjectDir:       wd,
+					AgentCommand:     agentCmd,
+					AgentWrapperPath: wrapperPath,
+				}); writeErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not write layout file: %v\nFalling back to TUI.\n", writeErr)
+					return sharedApp.RunDashboard(cmd.Context())
+				}
+
+				sessionName := sharedApp.Config.Zellij.SessionPrefix + "-dashboard"
+
+				// Write the lock file with the current PID so that
+				// dashboardStartTime() can use its mtime to filter out
+				// completed agents from previous sessions.
+				lockPath := filepath.Join(".computecommander", "cmdr.lock")
+				if lockErr := os.WriteFile(lockPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o644); lockErr != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not write lock file: %v\n", lockErr)
+				}
+
+				return zellijPkg.LaunchSession(zellijPkg.SessionOpts{
+					SessionName: sessionName,
+					LayoutPath:  layoutPath,
+				})
+			}
+
+			// Fallback: in-process Bubbletea TUI.
+			return sharedApp.RunDashboard(cmd.Context())
+		},
 		PersistentPostRun: func(cmd *cobra.Command, args []string) {
 			if appInitialised {
 				_ = sharedApp.Close()
@@ -70,17 +157,24 @@ conflict resolution.`,
 		},
 	}
 
+	root.Flags().BoolVar(&tuiFlag, "tui", false, "Force in-process Bubbletea TUI (skip zellij session)")
 	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress non-error output")
 	root.PersistentFlags().Bool("json", false, "JSON output")
 	root.PersistentFlags().Bool("timing", false, "Show execution timing")
+	root.PersistentFlags().StringP("agent", "a", "", "Agent command for the main pane (overrides config)")
+	root.PersistentFlags().String("sub-agent", "", "Nested agent focus (Claude Code limitation workaround)")
 
 	root.AddGroup(
+		&cobra.Group{ID: "LIFECYCLE", Title: "Lifecycle:"},
 		&cobra.Group{ID: "CORE", Title: "Core Commands:"},
+		&cobra.Group{ID: "INFO", Title: "Information:"},
+		&cobra.Group{ID: "DATA", Title: "Data:"},
 		&cobra.Group{ID: "COORDINATION", Title: "Coordination:"},
 		&cobra.Group{ID: "MESSAGING", Title: "Messaging:"},
 		&cobra.Group{ID: "MERGE", Title: "Merge:"},
 		&cobra.Group{ID: "GROUPS", Title: "Groups:"},
 		&cobra.Group{ID: "OBSERVABILITY", Title: "Observability:"},
+		&cobra.Group{ID: "SETTINGS", Title: "Settings:"},
 		&cobra.Group{ID: "INFRASTRUCTURE", Title: "Infrastructure:"},
 	)
 
@@ -91,12 +185,34 @@ conflict resolution.`,
 	// Commands that require an initialised project.
 	// Each is built with the shared App pointer whose fields are populated
 	// by PersistentPreRunE before any RunE fires.
+
+	// Lifecycle commands.
+	addAppCmd(root, commands.ShutdownCmd(sharedApp))
+	addAppCmd(root, commands.ResetCmd(sharedApp))
+	addAppCmd(root, commands.RestartCmd(sharedApp))
+
+	// Core commands.
 	addAppCmd(root, commands.SlingCmd(sharedApp))
 	addAppCmd(root, commands.StopCmd(sharedApp))
 	addAppCmd(root, commands.StatusCmd(sharedApp))
 	addAppCmd(root, commands.GitStatusCmd(sharedApp))
 	addAppCmd(root, commands.DashboardCmd(sharedApp))
+	addAppCmd(root, commands.ShellCmd(sharedApp))
+	addAppCmd(root, commands.FeedbackCmd(sharedApp))
+	addAppCmd(root, commands.SupportCmd(sharedApp))
 
+	// Information commands.
+	addAppCmd(root, commands.HelpCmd(sharedApp))
+	addAppCmd(root, commands.DocsCmd(sharedApp))
+	addAppCmd(root, commands.VersionCmd(sharedApp))
+	addAppCmd(root, commands.UpdateCmd(sharedApp))
+
+	// Data commands.
+	addAppCmd(root, commands.ExportCmd(sharedApp))
+	addAppCmd(root, commands.BackupCmd(sharedApp))
+	addAppCmd(root, commands.RestoreCmd(sharedApp))
+
+	// Coordination.
 	addAppCmd(root, commands.CoordinatorCmd(sharedApp))
 	addAppCmd(root, commands.MonitorCmd(sharedApp))
 
@@ -117,6 +233,22 @@ conflict resolution.`,
 	addAppCmd(root, commands.MetricsCmd(sharedApp))
 	addAppCmd(root, commands.RunCmd(sharedApp))
 
+	// Observability: clear logs (distinct from clean).
+	addAppCmd(root, commands.ClearCmd(sharedApp))
+
+	// Settings commands.
+	addAppCmd(root, commands.ThemeCmd(sharedApp))
+	addAppCmd(root, commands.NotificationsCmd(sharedApp))
+	addAppCmd(root, commands.AnalyticsCmd(sharedApp))
+	addAppCmd(root, commands.IntegrationsCmd(sharedApp))
+	addAppCmd(root, commands.AutomationCmd(sharedApp))
+
+	// Navigation commands.
+	addAppCmd(root, commands.FpCmd(sharedApp))
+	addAppCmd(root, commands.SessionCmd(sharedApp))
+	addAppCmd(root, commands.SessionsCmd(sharedApp))
+
+	// Infrastructure commands.
 	addAppCmd(root, commands.WorktreeCmd(sharedApp))
 	addAppCmd(root, commands.WatchCmd(sharedApp))
 	addAppCmd(root, commands.DoctorCmd(sharedApp))
@@ -163,6 +295,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 		filepath.Join(dir, "specs"),
 		filepath.Join(dir, "worktrees"),
 		filepath.Join(dir, "logs"),
+		filepath.Join(dir, "layouts"),
+		filepath.Join(dir, "themes"),
+		filepath.Join(dir, "backups"),
+		filepath.Join(dir, "plugins"),
 	}
 
 	for _, d := range dirs {
@@ -219,6 +355,61 @@ global:
 		return fmt.Errorf("write rules: %w", err)
 	}
 
+	// Generate keybinds.yaml with default leader key mappings.
+	keybindsPath := filepath.Join(dir, "keybinds.yaml")
+	if err := keybinds.WriteDefault(keybindsPath); err != nil {
+		return fmt.Errorf("write keybinds: %w", err)
+	}
+
+	// Generate default theme file.
+	defaultThemeContent := `name: default
+colors:
+  primary: "#7C3AED"
+  secondary: "#10B981"
+  error: "#EF4444"
+  warning: "#F59E0B"
+  info: "#3B82F6"
+  muted: "#6B7280"
+  background: "#1F2937"
+  foreground: "#F9FAFB"
+font:
+  size: 14
+  family: "monospace"
+contrast: "normal"
+`
+	defaultThemePath := filepath.Join(dir, "themes", "default.yaml")
+	if err := os.WriteFile(defaultThemePath, []byte(defaultThemeContent), 0o644); err != nil {
+		return fmt.Errorf("write default theme: %w", err)
+	}
+
+	// Generate KDL dashboard layout.
+	wd, _ := os.Getwd()
+	layoutPath := filepath.Join(dir, "layouts", "cmdr-dashboard.kdl")
+	if err := zellijPkg.WriteLayout(layoutPath, zellijPkg.LayoutOpts{
+		CmdrBinary: "cmdr",
+		ProjectDir: wd,
+	}); err != nil {
+		return fmt.Errorf("write layout: %w", err)
+	}
+
+	// Create and migrate the local database.
+	var dbPath string
+	if dbDriver == "sqlite" {
+		dbPath = cfg.Database.SQLite.Path
+		if dbPath == "" {
+			dbPath = filepath.Join(dir, "local.db")
+		}
+		database, err := db.NewSQLite(dbPath)
+		if err != nil {
+			return fmt.Errorf("create database: %w", err)
+		}
+		if err := db.Migrate(database, "sqlite"); err != nil {
+			database.Close()
+			return fmt.Errorf("apply database migrations: %w", err)
+		}
+		database.Close()
+	}
+
 	quiet, _ := cmd.Flags().GetBool("quiet")
 	if !quiet {
 		fmt.Printf("Initialized ComputeCommander in %s/\n", dir)
@@ -230,6 +421,12 @@ global:
 		}
 		fmt.Printf("  %s\n", configPath)
 		fmt.Printf("  %s\n", rulesPath)
+		fmt.Printf("  %s\n", keybindsPath)
+		fmt.Printf("  %s\n", defaultThemePath)
+		fmt.Printf("  %s\n", layoutPath)
+		if dbPath != "" {
+			fmt.Printf("  %s (schema applied)\n", dbPath)
+		}
 	}
 
 	// Launch the dashboard in-process so the user lands directly in the UI.

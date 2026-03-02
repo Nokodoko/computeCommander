@@ -17,7 +17,7 @@ database:
     sqlite:
         path: .computecommander/local.db
 zellij:
-    dashboard_layout: "~/.computecommander/layouts/cmdr-dashboard.kdl"
+    dashboard_layout: ".computecommander/layouts/cmdr-dashboard.kdl"
     layout: default
     terminal: wezterm
     session_prefix: cc

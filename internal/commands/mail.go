@@ -147,6 +147,11 @@ func mailListCmd(app *App) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(msgs)
 			}
 
+			pane, _ := cmd.Flags().GetBool("pane")
+			if pane {
+				return printMailPane(msgs)
+			}
+
 			if len(msgs) == 0 {
 				fmt.Println("No messages found.")
 				return nil
@@ -230,6 +235,50 @@ func runMailListPane(cmd *cobra.Command, app *App, opts mail.ListOpts) error {
 			render()
 		}
 	}
+}
+
+func printMailPane(msgs []*mail.MailMessage) error {
+	unread := 0
+	for _, m := range msgs {
+		if !m.Read {
+			unread++
+		}
+	}
+
+	header := fmt.Sprintf("%s%s── Mail (%d unread) ──%s", ansiBold, ansiCyan, unread, ansiReset)
+	fmt.Println(header)
+
+	if len(msgs) == 0 {
+		fmt.Printf("\n  %sNo messages.%s\n", ansiDim, ansiReset)
+		return nil
+	}
+
+	for _, m := range msgs {
+		marker := " "
+		markerColor := ansiDim
+		if !m.Read {
+			marker = "*"
+			markerColor = ansiYellow
+		}
+
+		priorityColor := ""
+		if m.Priority == mail.PriorityUrgent || m.Priority == mail.PriorityHigh {
+			priorityColor = ansiRed
+		}
+
+		subj := m.Subject
+		if subj == "" {
+			subj = "(no subject)"
+		}
+
+		fmt.Printf(" %s%s%s %s%s%s -> %s%s%s: %s%s%s\n",
+			markerColor, marker, ansiReset,
+			ansiGreen, truncate(m.From, 12), ansiReset,
+			ansiCyan, truncate(m.To, 12), ansiReset,
+			priorityColor, truncate(subj, 30), ansiReset,
+		)
+	}
+	return nil
 }
 
 func mailReadCmd(app *App) *cobra.Command {

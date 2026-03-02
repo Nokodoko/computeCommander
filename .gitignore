@@ -1,0 +1,16 @@
+# Runtime state
+.computecommander/local.db
+.computecommander/local.db-journal
+.computecommander/local.db-wal
+
+# Claude Code
+.claude/
+
+# Compiled binary
+/cc
+
+# Campaign
+CAMPAIGN.md
+
+# Spec (generated)
+SPEC.md
