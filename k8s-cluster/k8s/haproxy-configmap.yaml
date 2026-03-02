@@ -1,0 +1,61 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: haproxy-config
+  namespace: compute-commander
+  labels:
+    app: haproxy
+    app.kubernetes.io/part-of: compute-commander
+data:
+  haproxy.cfg: |
+    global
+        log stdout format raw local0
+        maxconn 4096
+
+    defaults
+        log     global
+        mode    http
+        option  httplog
+        option  dontlognull
+        option  forwardfor
+        timeout connect 5000ms
+        timeout client  50000ms
+        timeout server  50000ms
+        timeout tunnel  3600000ms
+
+    listen stats
+        bind *:9090
+        mode http
+        stats enable
+        stats uri /stats
+        stats refresh 10s
+        stats show-legends
+
+    frontend http_front
+        bind *:80
+        mode http
+        default_backend api_servers
+        acl is_websocket path_beg /ws
+        acl is_websocket_upgrade hdr(Upgrade) -i websocket
+        use_backend ws_servers if is_websocket or is_websocket_upgrade
+
+    frontend ws_front
+        bind *:8080
+        mode http
+        default_backend ws_servers
+
+    backend api_servers
+        mode http
+        balance leastconn
+        option httpchk GET /health
+        http-check expect status 200
+        server api-1 api-server.compute-commander.svc.cluster.local:3000 check inter 5s fall 3 rise 2
+        server api-2 api-server.compute-commander.svc.cluster.local:3000 check inter 5s fall 3 rise 2
+
+    backend ws_servers
+        mode http
+        balance leastconn
+        option httpchk GET /health
+        http-check expect status 200
+        timeout tunnel 3600s
+        server ws-1 websocket-server.compute-commander.svc.cluster.local:8080 check inter 5s fall 3 rise 2
