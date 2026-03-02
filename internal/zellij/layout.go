@@ -16,6 +16,7 @@ type LayoutOpts struct {
 	ProjectDir       string // project root directory
 	AgentCommand     string // command to run in the agent session pane
 	AgentWrapperPath string // path to generated agent wrapper script (overrides AgentCommand in pane)
+	UseWrapper       bool   // when true, auto-generate a wrapper script for session-switch support
 }
 
 // GenerateLayout creates the KDL layout file for the cmdr dashboard.
@@ -25,19 +26,75 @@ type LayoutOpts struct {
 //	+------+------------------------------------------+--------+
 //	|      |                                          |        |
 //	|  fp  |         (borderless, no header)          | Agents |
-//	| (10%)|           agent session (80%)            | (10%)  |
+//	| (10%)|           agent session (65%)            | (25%)  |
 //	|      |              (focused)                   |        |
 //	+------+------------------------------------------+--------+
-//	| Event Log  |    Mail    |  Merge Queue  | Events        |
+//	| Event Log  |    Mail    |  Merge Queue  | Git Status    |
 //	|   (25%)    |   (25%)   |    (25%)      |  (25%)        |
 //	+-------------------------------------------------------------+
 //
-// Top row: 67% height — fp (10%) | agent (80%, borderless) | Agents (10%)
-// Bottom row: 33% height — 4 columns spanning full width
+// Top row: 67% height — fp (10%) | agent (65%, borderless) | Agents (25%)
+// Bottom row: 33% height — Event Log | Mail | Merge Queue | Git Status
 //
 // Zellij KDL split_direction semantics:
 //   - "vertical"   = children arranged left-to-right (columns)
 //   - "horizontal" = children arranged top-to-bottom (rows)
+
+// Note: pane_frames cannot be set per-layout in zellij. The dashboard
+// command toggles frames on after loading the tab via `zellij action toggle-pane-frames`.
+func GenerateLayout(opts LayoutOpts) string {
+	cmdrBin := opts.CmdrBinary
+	if cmdrBin == "" {
+		cmdrBin = "cmdr"
+	}
+
+	projectDir := opts.ProjectDir
+	if projectDir == "" {
+		projectDir, _ = os.Getwd()
+	}
+
+	agentPane := buildAgentPane(opts.AgentCommand, opts.AgentWrapperPath)
+
+	return fmt.Sprintf(`layout {
+    cwd "%s"
+    tab name="[CMDR] Dashboard" {
+        pane split_direction="horizontal" {
+            pane split_direction="vertical" size="67%%" {
+                pane name="fp" size="10%%" {
+                    command "fp"
+                    args "%s"
+                }
+%s
+                pane name="Agents" size="25%%" {
+                    command "%s"
+                    args "status" "--pane"
+                }
+            }
+            pane split_direction="vertical" size="33%%" {
+                pane name="Event Log" size="25%%" {
+                    command "%s"
+                    args "feed" "--pane"
+                }
+                pane name="Mail" size="25%%" {
+                    command "%s"
+                    args "mail" "list" "--pane"
+                }
+                pane name="Merge Queue" size="25%%" {
+                    command "%s"
+                    args "merge" "list" "--pane"
+                }
+                pane name="Git Status" size="25%%" {
+                    command "%s"
+                    args "git-status" "--pane"
+                }
+            }
+        }
+    }
+}
+`, projectDir, projectDir, agentPane, cmdrBin, cmdrBin, cmdrBin, cmdrBin, cmdrBin)
+}
+
+
 // buildAgentPane returns the KDL block for the center agent session pane.
 // If wrapperPath is set, runs the wrapper script via bash for session-switch support.
 // Falls back to running agentCmd directly, or a plain shell pane if both are empty.
@@ -148,111 +205,18 @@ done
 	return scriptPath, nil
 }
 
-func GenerateLayout(opts LayoutOpts) string {
-	cmdrBin := opts.CmdrBinary
-	if cmdrBin == "" {
-		cmdrBin = "cmdr"
-	}
-
-	projectDir := opts.ProjectDir
-	if projectDir == "" {
-		projectDir, _ = os.Getwd()
-	}
-
-	agentPane := buildAgentPane(opts.AgentCommand, opts.AgentWrapperPath)
-
-	return fmt.Sprintf(`keybinds clear-defaults=true {
-    shared_except "locked" {
-        bind "Ctrl Space" {
-            SwitchToMode "tmux"
-        }
-    }
-    normal clear-defaults=true {}
-    locked clear-defaults=true {}
-    tmux clear-defaults=true {
-        bind "Esc" "Ctrl Space" {
-            SwitchToMode "normal"
-        }
-        bind "s" "S" {
-            Run "%s" "sessions" {
-                floating true
-                close_on_exit true
-            }
-            SwitchToMode "normal"
-        }
-    }
-    pane clear-defaults=true {
-        bind "Esc" { SwitchToMode "normal"; }
-    }
-    tab clear-defaults=true {
-        bind "Esc" { SwitchToMode "normal"; }
-    }
-    resize clear-defaults=true {
-        bind "Esc" { SwitchToMode "normal"; }
-    }
-    move clear-defaults=true {
-        bind "Esc" { SwitchToMode "normal"; }
-    }
-    scroll clear-defaults=true {
-        bind "Esc" { SwitchToMode "normal"; }
-    }
-    search clear-defaults=true {
-        bind "Esc" { SwitchToMode "normal"; }
-    }
-    session clear-defaults=true {
-        bind "Esc" { SwitchToMode "normal"; }
-    }
-}
-
-layout {
-    tab name="[CMDR] Dashboard" {
-        pane split_direction="horizontal" {
-            pane split_direction="vertical" size="67%%" {
-                pane name="fp" size="10%%" {
-                    command "fp"
-                    args "%s"
-                }
-%s
-                pane name="Agents" size="25%%" {
-                    command "%s"
-                    args "status" "--pane"
-                }
-            }
-            pane split_direction="vertical" size="33%%" {
-                pane name="Event Log" size="25%%" {
-                    command "%s"
-                    args "feed" "--pane"
-                }
-                pane name="Mail" size="25%%" {
-                    command "%s"
-                    args "mail" "list" "--pane"
-                }
-                pane name="Merge Queue" size="25%%" {
-                    command "%s"
-                    args "merge" "list" "--pane"
-                }
-                pane name="Events" size="25%%" {
-                    command "%s"
-                    args "feed" "--pane"
-                }
-            }
-        }
-    }
-}
-`, cmdrBin, projectDir, agentPane, cmdrBin, cmdrBin, cmdrBin, cmdrBin, cmdrBin)
-}
-
 // WriteLayout generates and writes the KDL layout file to the given path.
-// If opts.AgentCommand is set and opts.AgentWrapperPath is empty, it generates
-// the agent wrapper script and sets AgentWrapperPath automatically.
+// When opts.UseWrapper is true and opts.AgentCommand is set, it generates
+// a wrapper script for session-switch support and uses that in the layout.
+// Otherwise the agent command is embedded directly in the KDL layout.
 func WriteLayout(path string, opts LayoutOpts) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("create layout directory: %w", err)
 	}
 
-	// Generate the agent wrapper script when an agent command is configured.
-	if opts.AgentCommand != "" && opts.AgentWrapperPath == "" {
+	// Only generate the wrapper script when explicitly requested.
+	if opts.UseWrapper && opts.AgentCommand != "" && opts.AgentWrapperPath == "" {
 		projectDir := opts.ProjectDir
 		if projectDir == "" {
 			projectDir, _ = os.Getwd()
@@ -286,16 +250,13 @@ type SessionOpts struct {
 	WorkDir     string // working directory
 }
 
-// LaunchSession opens the cmdr dashboard layout as a new zellij session.
+// LaunchSession opens the cmdr dashboard layout in zellij.
 //
-// Always creates a new zellij session — even when already inside zellij
-// (the normal case: wezterm always runs zellij). We use the
-// --new-session-with-layout flag which forces a new session regardless of
-// context, and strip ZELLIJ env vars to avoid nesting detection.
+// When already inside zellij (the normal case: wezterm runs zellij),
+// adds a new tab to the EXISTING session via `zellij action new-tab`.
+// This avoids nesting and lets the user's keybinds work normally.
 //
-// Note: --layout alone would add a tab when inside an existing session
-// (and silently drop layout keybinds). --new-session-with-layout is the
-// correct flag to always start a fresh session with layout keybinds applied.
+// When outside zellij, creates a standalone session with --layout.
 func LaunchSession(opts SessionOpts) error {
 	zellijBin, err := exec.LookPath("zellij")
 	if err != nil {
@@ -306,26 +267,23 @@ func LaunchSession(opts SessionOpts) error {
 		opts.SessionName = "cc-dashboard"
 	}
 
-	// Strip ZELLIJ env vars so we can start a new session even when
-	// already running inside zellij (wezterm's default).
-	env := filteredEnv()
+	// Inside zellij: add a tab in the current session (no nesting).
+	if IsInsideZellij() {
+		cmd := exec.Command(zellijBin, "action", "new-tab", "--layout", opts.LayoutPath)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		return cmd.Run()
+	}
 
-	// Clean up any stale session with this name.
-	kill := exec.Command(zellijBin, "kill-session", opts.SessionName)
-	kill.Env = env
-	_ = kill.Run()
-	del := exec.Command(zellijBin, "delete-session", opts.SessionName)
-	del.Env = env
-	_ = del.Run()
-
-	cmd := exec.Command(zellijBin, "--session", opts.SessionName, "--new-session-with-layout", opts.LayoutPath)
+	// Outside zellij: create a new session.
+	cmd := exec.Command(zellijBin, "--session", opts.SessionName, "--layout", opts.LayoutPath)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if opts.WorkDir != "" {
 		cmd.Dir = opts.WorkDir
 	}
-	cmd.Env = env
 
 	return cmd.Run()
 }
@@ -339,29 +297,4 @@ func IsInsideZellij() bool {
 func ZellijAvailable() bool {
 	_, err := exec.LookPath("zellij")
 	return err == nil
-}
-
-// filteredEnv returns the current environment with ZELLIJ-related variables removed.
-func filteredEnv() []string {
-	skip := map[string]bool{
-		"ZELLIJ":              true,
-		"ZELLIJ_SESSION_NAME": true,
-		"ZELLIJ_PANE_ID":      true,
-	}
-	var env []string
-	for _, e := range os.Environ() {
-		key := e
-		if idx := len(e); idx > 0 {
-			for i, c := range e {
-				if c == '=' {
-					key = e[:i]
-					break
-				}
-			}
-		}
-		if !skip[key] {
-			env = append(env, e)
-		}
-	}
-	return env
 }

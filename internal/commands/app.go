@@ -164,9 +164,26 @@ func (a *App) NewDashboard() *tui.Dashboard {
 	})
 }
 
+// NewDashboardWithCmd creates a TUI Dashboard with a CLI-overridden agent command.
+func (a *App) NewDashboardWithCmd(agentCmd string) *tui.Dashboard {
+	return tui.NewDashboard(tui.DashboardOpts{
+		Lister:   a.Spawner,
+		Mail:     a.MailStore,
+		Queue:    a.MergeQueue,
+		Config:   a.Config,
+		AgentCmd: agentCmd,
+	})
+}
+
 // RunDashboard launches the TUI dashboard and blocks until exit.
 func (a *App) RunDashboard(ctx context.Context) error {
 	dash := a.NewDashboard()
+	return dash.Run(ctx)
+}
+
+// RunDashboardWithCmd launches the TUI dashboard with an optional agent command override.
+func (a *App) RunDashboardWithCmd(ctx context.Context, agentCmd string) error {
+	dash := a.NewDashboardWithCmd(agentCmd)
 	return dash.Run(ctx)
 }
 

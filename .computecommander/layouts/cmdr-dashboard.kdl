@@ -1,0 +1,38 @@
+layout {
+    tab name="[CMDR] Dashboard" {
+        pane split_direction="horizontal" {
+            pane split_direction="vertical" size="67%" {
+                pane name="fp" size="10%" {
+                    command "fp"
+                    args "/home/n0ko/Programs/ai/computeCommander"
+                }
+                pane size="65%" focus=true borderless=true {
+                    command "claude"
+                    args "--dangerously-skip-permissions" "--no-chrome" "--disallowedTools" "WebSearch" "WebFetch" "NotebookEdit"
+                }
+                pane name="Agents" size="25%" {
+                    command "/home/n0ko/Programs/ai/computeCommander/cmdr"
+                    args "status" "--pane"
+                }
+            }
+            pane split_direction="vertical" size="33%" {
+                pane name="Event Log" size="25%" {
+                    command "/home/n0ko/Programs/ai/computeCommander/cmdr"
+                    args "feed" "--pane"
+                }
+                pane name="Mail" size="25%" {
+                    command "/home/n0ko/Programs/ai/computeCommander/cmdr"
+                    args "mail" "list" "--pane"
+                }
+                pane name="Merge Queue" size="25%" {
+                    command "/home/n0ko/Programs/ai/computeCommander/cmdr"
+                    args "merge" "list" "--pane"
+                }
+                pane name="Git Status" size="25%" {
+                    command "/home/n0ko/Programs/ai/computeCommander/cmdr"
+                    args "git-status" "--pane"
+                }
+            }
+        }
+    }
+}

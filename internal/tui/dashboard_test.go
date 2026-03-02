@@ -67,8 +67,8 @@ func TestNewDashboard(t *testing.T) {
 	if d.interval != time.Second {
 		t.Errorf("expected interval 1s, got %s", d.interval)
 	}
-	if d.mode != viewEvents {
-		t.Errorf("expected initial mode viewEvents, got %d", d.mode)
+	if d.focusedPane != PaneAgentSession {
+		t.Errorf("expected initial focusedPane PaneAgentSession, got %d", d.focusedPane)
 	}
 }
 
@@ -80,6 +80,29 @@ func TestNewDashboardDefaultInterval(t *testing.T) {
 	})
 	if d.interval != 2*time.Second {
 		t.Errorf("expected default interval 2s, got %s", d.interval)
+	}
+}
+
+func TestNewDashboardAgentCmdPrecedence(t *testing.T) {
+	// CLI flag overrides config.
+	d := NewDashboard(DashboardOpts{
+		Lister:   &mockSessionLister{},
+		Mail:     &mockMailStore{},
+		Queue:    &mockMergeQueue{},
+		AgentCmd: "custom-agent --flag",
+	})
+	if d.agentCmd != "custom-agent --flag" {
+		t.Errorf("expected CLI override, got %q", d.agentCmd)
+	}
+
+	// Default when nothing set.
+	d2 := NewDashboard(DashboardOpts{
+		Lister: &mockSessionLister{},
+		Mail:   &mockMailStore{},
+		Queue:  &mockMergeQueue{},
+	})
+	if d2.agentCmd != DefaultAgentCommand {
+		t.Errorf("expected default agent command, got %q", d2.agentCmd)
 	}
 }
 
@@ -124,16 +147,83 @@ func TestDashboardView(t *testing.T) {
 		Queue:    &mockMergeQueue{},
 		Interval: time.Second,
 	})
+	d.width = 120
+	d.height = 40
 
 	view := d.View()
-	if !strings.Contains(view, "ComputeCommander Dashboard") {
-		t.Error("view should contain dashboard title")
+	if !strings.Contains(view, "File Picker") {
+		t.Error("view should contain File Picker pane title")
 	}
-	if !strings.Contains(view, "[q]uit") || !strings.Contains(view, "leader") {
-		t.Error("view should contain help bar with leader key hint")
+	if !strings.Contains(view, "Agent Session") {
+		t.Error("view should contain Agent Session pane title")
 	}
-	if !strings.Contains(view, "[q]uit") {
-		t.Error("view should contain quit hint")
+	if !strings.Contains(view, "Agents") {
+		t.Error("view should contain Agents pane title")
+	}
+	if !strings.Contains(view, "Tab: cycle") {
+		t.Error("view should contain updated help bar")
+	}
+	if !strings.Contains(view, "Ctrl+K: palette") {
+		t.Error("view should contain palette hint")
+	}
+}
+
+func TestPaneNavigation(t *testing.T) {
+	// Test Tab cycling.
+	current := PaneFilePicker
+	current = nextPane(current)
+	if current != PaneAgentSession {
+		t.Errorf("expected PaneAgentSession after Tab from FilePicker, got %d", current)
+	}
+	current = nextPane(current)
+	if current != PaneAgents {
+		t.Errorf("expected PaneAgents after Tab from AgentSession, got %d", current)
+	}
+
+	// Test Shift+Tab.
+	current = prevPane(current)
+	if current != PaneAgentSession {
+		t.Errorf("expected PaneAgentSession after Shift+Tab from Agents, got %d", current)
+	}
+
+	// Test wrap-around.
+	current = PaneGitStatus
+	current = nextPane(current)
+	if current != PaneFilePicker {
+		t.Errorf("expected wrap to FilePicker, got %d", current)
+	}
+
+	current = PaneFilePicker
+	current = prevPane(current)
+	if current != PaneGitStatus {
+		t.Errorf("expected wrap to GitStatus, got %d", current)
+	}
+}
+
+func TestPaneMetaByID(t *testing.T) {
+	meta := paneMetaByID(PaneAgentSession)
+	if meta.Title != "Agent Session" {
+		t.Errorf("expected 'Agent Session', got %q", meta.Title)
+	}
+	if meta.FocusKey != "2" {
+		t.Errorf("expected focus key '2', got %q", meta.FocusKey)
+	}
+}
+
+func TestRenderPane(t *testing.T) {
+	theme := DefaultTheme()
+	meta := PaneMeta{ID: PaneEvents, Title: "Events", FocusKey: "4"}
+
+	// Focused.
+	focused := RenderPane("hello\nworld", meta, true, 30, 10, theme)
+	if !strings.Contains(focused, "Events") {
+		t.Error("focused pane should contain title")
+	}
+
+	// Unfocused.
+	unfocused := RenderPane("hello\nworld", meta, false, 30, 10, theme)
+	if !strings.Contains(unfocused, "Events") {
+		t.Error("unfocused pane should contain title")
 	}
 }
 
@@ -209,11 +299,26 @@ func TestAgentTableView(t *testing.T) {
 	if !strings.Contains(view, "Agents (1 active)") {
 		t.Error("view should show agent count")
 	}
-	// The lipgloss Width() may pad text with spaces. Check for the name
-	// without relying on exact formatting by looking for key substrings.
 	if !strings.Contains(view, "builder") {
 		t.Logf("view output:\n%s", view)
 		t.Error("view should contain agent name")
+	}
+}
+
+func TestAgentTableCompactView(t *testing.T) {
+	sessions := []*agents.AgentSession{
+		{AgentName: "builder-1", State: agents.StateWorking, Runtime: runtimes.RuntimeClaude, InputTokens: 1000, OutputTokens: 500},
+	}
+	theme := DefaultTheme()
+	tbl := NewAgentTable(&mockSessionLister{sessions: sessions}, theme)
+	_ = tbl.Refresh(context.Background())
+
+	view := tbl.CompactView(40, 10)
+	if !strings.Contains(view, "builder-1") {
+		t.Error("compact view should contain agent name")
+	}
+	if !strings.Contains(view, "1.5k") {
+		t.Error("compact view should contain token count")
 	}
 }
 
@@ -228,7 +333,6 @@ func TestAgentTableStateColors(t *testing.T) {
 	_ = tbl.Refresh(context.Background())
 
 	view := tbl.View()
-	// States should appear in the rendered output (with ANSI codes around them).
 	if !strings.Contains(view, "working") {
 		t.Error("view should contain 'working' state")
 	}
@@ -252,7 +356,6 @@ func TestMailSummaryView(t *testing.T) {
 	}
 
 	if ms.UnreadCount() != 2 {
-		// Both are returned by the unread List call since the mock returns all.
 		t.Errorf("expected 2 from mock, got %d", ms.UnreadCount())
 	}
 
@@ -364,12 +467,12 @@ func TestRenderHelpers(t *testing.T) {
 
 	t.Run("renderDashHelpBar", func(t *testing.T) {
 		theme := DefaultTheme()
-		bar := renderDashHelpBar(theme)
-		if !strings.Contains(bar, "leader") {
-			t.Error("help bar should contain leader key hint")
+		bar := renderHelpBar(theme)
+		if !strings.Contains(bar, "Tab: cycle") {
+			t.Error("help bar should contain Tab hint")
 		}
-		if !strings.Contains(bar, "[q]uit") {
-			t.Error("help bar should contain quit hint")
+		if !strings.Contains(bar, "Ctrl+K: palette") {
+			t.Error("help bar should contain palette hint")
 		}
 	})
 }
@@ -397,5 +500,108 @@ func TestThemeNotNil(t *testing.T) {
 	theme := DefaultTheme()
 	if theme == nil {
 		t.Fatal("DefaultTheme() returned nil")
+	}
+	// Verify new fields exist.
+	_ = theme.FocusedBorder
+	_ = theme.UnfocusedBorder
+	_ = theme.PaneTitle
+	_ = theme.PaneTitleFocused
+	_ = theme.EventLog
+	_ = theme.EventState
+	_ = theme.EventError
+	_ = theme.EventMail
+	_ = theme.GitStaged
+	_ = theme.GitUnstaged
+	_ = theme.GitUntracked
+	_ = theme.GitBranch
+	_ = theme.FileDir
+	_ = theme.FileRegular
+	_ = theme.FileCursor
+}
+
+func TestEventsPane(t *testing.T) {
+	theme := DefaultTheme()
+	ep := NewEventsPane(theme)
+
+	if view := ep.View(); !strings.Contains(view, "No events") {
+		t.Error("empty events pane should show 'No events'")
+	}
+
+	ep.AddEvent(Event{
+		Time:    time.Now(),
+		Source:  "builder-1",
+		Type:    "state",
+		Message: "working",
+	})
+
+	view := ep.View()
+	if !strings.Contains(view, "builder-1") {
+		t.Error("events pane should show event source")
+	}
+	if !strings.Contains(view, "working") {
+		t.Error("events pane should show event message")
+	}
+}
+
+func TestGitStatusPane(t *testing.T) {
+	theme := DefaultTheme()
+	gs := NewGitStatusPane(theme)
+
+	// Refresh should not fail even outside git repo.
+	_ = gs.Refresh()
+
+	view := gs.View()
+	if !strings.Contains(view, "Branch:") {
+		t.Error("git status pane should show Branch label")
+	}
+}
+
+func TestCommandPalette(t *testing.T) {
+	theme := DefaultTheme()
+	cp := NewCommandPalette(theme)
+
+	if cp.Visible() {
+		t.Error("palette should start hidden")
+	}
+
+	cp.Open()
+	if !cp.Visible() {
+		t.Error("palette should be visible after Open")
+	}
+
+	cp.TypeChar('s')
+	sel := cp.Selected()
+	if sel == nil {
+		t.Error("should have a selected command after typing")
+	}
+
+	cp.Close()
+	if cp.Visible() {
+		t.Error("palette should be hidden after Close")
+	}
+}
+
+func TestShellSplit(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected []string
+	}{
+		{"echo hello", []string{"echo", "hello"}},
+		{"echo 'hello world'", []string{"echo", "hello world"}},
+		{`echo "hello world"`, []string{"echo", "hello world"}},
+		{"claude --flag1 --flag2", []string{"claude", "--flag1", "--flag2"}},
+	}
+
+	for _, tt := range tests {
+		got := shellSplit(tt.input)
+		if len(got) != len(tt.expected) {
+			t.Errorf("shellSplit(%q) = %v, want %v", tt.input, got, tt.expected)
+			continue
+		}
+		for i := range got {
+			if got[i] != tt.expected[i] {
+				t.Errorf("shellSplit(%q)[%d] = %q, want %q", tt.input, i, got[i], tt.expected[i])
+			}
+		}
 	}
 }

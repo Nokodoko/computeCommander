@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -119,20 +120,25 @@ func mailListCmd(app *App) *cobra.Command {
 		Use:   "list",
 		Short: "List messages",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			paneMode, _ := cmd.Flags().GetBool("pane")
 			agent, _ := cmd.Flags().GetString("agent")
 			from, _ := cmd.Flags().GetString("from")
 			unread, _ := cmd.Flags().GetBool("unread")
 			limit, _ := cmd.Flags().GetInt("limit")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
 
-			opts := mail.ListOpts{
+			listOpts := mail.ListOpts{
 				Agent:  agent,
 				From:   from,
 				Unread: unread,
 				Limit:  limit,
 			}
 
-			msgs, err := app.MailStore.List(opts)
+			if paneMode {
+				return runMailListPane(cmd, app, listOpts)
+			}
+
+			msgs, err := app.MailStore.List(listOpts)
 			if err != nil {
 				return fmt.Errorf("list mail: %w", err)
 			}
@@ -168,9 +174,67 @@ func mailListCmd(app *App) *cobra.Command {
 	cmd.Flags().String("from", "", "Filter by sender")
 	cmd.Flags().Bool("unread", false, "Show only unread messages")
 	cmd.Flags().Int("limit", 0, "Max messages (0 = no limit)")
-	cmd.Flags().Bool("pane", false, "Styled output for zellij dashboard pane")
+	cmd.Flags().Bool("pane", false, "Run in long-lived pane mode (for zellij dashboard)")
 
 	return cmd
+}
+
+// runMailListPane runs mail list in long-lived pane mode, refreshing periodically.
+func runMailListPane(cmd *cobra.Command, app *App, opts mail.ListOpts) error {
+	ctx := cmd.Context()
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	render := func() {
+		clearScreen()
+		msgs, err := app.MailStore.List(opts)
+		if err != nil {
+			fmt.Printf("\033[31mError: %v\033[0m\n", err)
+			return
+		}
+
+		if len(msgs) == 0 {
+			fmt.Println("\033[2mNo messages.\033[0m")
+			return
+		}
+
+		for _, m := range msgs {
+			readMark := " "
+			if !m.Read {
+				readMark = "\033[33m*\033[0m"
+			}
+			typeColor := "\033[36m"
+			switch m.Type {
+			case mail.TypeError, mail.TypeMergeFailed:
+				typeColor = "\033[31m"
+			case mail.TypeEscalation:
+				typeColor = "\033[35m"
+			case mail.TypeDispatch, mail.TypeAssign:
+				typeColor = "\033[33m"
+			}
+			fmt.Printf("%s %s%-8s\033[0m \033[1m%-10s\033[0m -> %-10s %s\n",
+				readMark,
+				typeColor,
+				truncate(string(m.Type), 8),
+				truncate(m.From, 10),
+				truncate(m.To, 10),
+				truncate(m.Subject, 30),
+			)
+		}
+		fmt.Printf("\n\033[2m%d message(s)\033[0m\n", len(msgs))
+	}
+
+	// Initial render.
+	render()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			render()
+		}
+	}
 }
 
 func printMailPane(msgs []*mail.MailMessage) error {

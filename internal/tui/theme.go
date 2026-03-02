@@ -14,6 +14,12 @@ type Theme struct {
 	StatusBar   lipgloss.Style
 	HelpBar     lipgloss.Style
 
+	// Pane border styles for focused/unfocused states.
+	FocusedBorder   lipgloss.Style
+	UnfocusedBorder lipgloss.Style
+	PaneTitle       lipgloss.Style
+	PaneTitleFocused lipgloss.Style
+
 	// State colours for agent status rendering.
 	StateWorking   lipgloss.Style
 	StateBooting   lipgloss.Style
@@ -27,6 +33,23 @@ type Theme struct {
 	MergeMerged   lipgloss.Style
 	MergeConflict lipgloss.Style
 	MergeFailed   lipgloss.Style
+
+	// Event type colours.
+	EventLog   lipgloss.Style
+	EventState lipgloss.Style
+	EventError lipgloss.Style
+	EventMail  lipgloss.Style
+
+	// Git status colours.
+	GitStaged    lipgloss.Style
+	GitUnstaged  lipgloss.Style
+	GitUntracked lipgloss.Style
+	GitBranch    lipgloss.Style
+
+	// File picker styles.
+	FileDir      lipgloss.Style
+	FileRegular  lipgloss.Style
+	FileCursor   lipgloss.Style
 }
 
 // DefaultTheme returns the standard ComputeCommander colour scheme.
@@ -38,6 +61,8 @@ func DefaultTheme() *Theme {
 	white := lipgloss.Color("#FFFFFF")
 	gray := lipgloss.Color("#808080")
 	magenta := lipgloss.Color("#FF00FF")
+	dimGray := lipgloss.Color("#555555")
+	blue := lipgloss.Color("#5588FF")
 
 	return &Theme{
 		Title: lipgloss.NewStyle().
@@ -64,6 +89,22 @@ func DefaultTheme() *Theme {
 		HelpBar: lipgloss.NewStyle().
 			Foreground(gray).
 			Padding(0, 1),
+
+		// Pane border styles.
+		FocusedBorder: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(cyan),
+		UnfocusedBorder: lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(dimGray),
+		PaneTitle: lipgloss.NewStyle().
+			Foreground(gray).
+			Padding(0, 1),
+		PaneTitleFocused: lipgloss.NewStyle().
+			Bold(true).
+			Foreground(cyan).
+			Padding(0, 1),
+
 		StateWorking: lipgloss.NewStyle().
 			Foreground(green).
 			Bold(true),
@@ -90,5 +131,37 @@ func DefaultTheme() *Theme {
 		MergeFailed: lipgloss.NewStyle().
 			Foreground(red).
 			Bold(true),
+
+		// Event type colours.
+		EventLog: lipgloss.NewStyle().
+			Foreground(gray),
+		EventState: lipgloss.NewStyle().
+			Foreground(cyan),
+		EventError: lipgloss.NewStyle().
+			Foreground(red).
+			Bold(true),
+		EventMail: lipgloss.NewStyle().
+			Foreground(yellow),
+
+		// Git status colours.
+		GitStaged: lipgloss.NewStyle().
+			Foreground(green),
+		GitUnstaged: lipgloss.NewStyle().
+			Foreground(yellow),
+		GitUntracked: lipgloss.NewStyle().
+			Foreground(red),
+		GitBranch: lipgloss.NewStyle().
+			Foreground(cyan).
+			Bold(true),
+
+		// File picker styles.
+		FileDir: lipgloss.NewStyle().
+			Foreground(blue).
+			Bold(true),
+		FileRegular: lipgloss.NewStyle().
+			Foreground(white),
+		FileCursor: lipgloss.NewStyle().
+			Background(lipgloss.Color("#333355")).
+			Foreground(white),
 	}
 }

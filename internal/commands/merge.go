@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -70,16 +71,21 @@ func mergeListCmd(app *App) *cobra.Command {
 		Use:   "list",
 		Short: "List merge queue entries",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			paneMode, _ := cmd.Flags().GetBool("pane")
 			statusFilter, _ := cmd.Flags().GetString("status")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
 
-			opts := merge.ListOpts{}
+			listOpts := merge.ListOpts{}
 			if statusFilter != "" {
 				s := merge.MergeStatus(statusFilter)
-				opts.Status = &s
+				listOpts.Status = &s
 			}
 
-			entries, err := app.MergeQueue.List(opts)
+			if paneMode {
+				return runMergeListPane(cmd, app, listOpts)
+			}
+
+			entries, err := app.MergeQueue.List(listOpts)
 			if err != nil {
 				return fmt.Errorf("list merge queue: %w", err)
 			}
@@ -113,9 +119,65 @@ func mergeListCmd(app *App) *cobra.Command {
 	}
 
 	cmd.Flags().String("status", "", "Filter by status (pending, merging, merged, conflict, failed)")
-	cmd.Flags().Bool("pane", false, "Styled output for zellij dashboard pane")
+	cmd.Flags().Bool("pane", false, "Run in long-lived pane mode (for zellij dashboard)")
 
 	return cmd
+}
+
+// runMergeListPane runs merge list in long-lived pane mode, refreshing periodically.
+func runMergeListPane(cmd *cobra.Command, app *App, opts merge.ListOpts) error {
+	ctx := cmd.Context()
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	render := func() {
+		clearScreen()
+		entries, err := app.MergeQueue.List(opts)
+		if err != nil {
+			fmt.Printf("\033[31mError: %v\033[0m\n", err)
+			return
+		}
+
+		if len(entries) == 0 {
+			fmt.Println("\033[2mMerge queue empty.\033[0m")
+			return
+		}
+
+		fmt.Printf("\033[2m%-28s %-12s %-10s %-6s\033[0m\n", "BRANCH", "AGENT", "STATUS", "FILES")
+		for _, e := range entries {
+			statusColor := "\033[0m"
+			switch e.Status {
+			case merge.MergePending:
+				statusColor = "\033[33m"
+			case merge.MergeMerging:
+				statusColor = "\033[36m"
+			case merge.MergeMerged:
+				statusColor = "\033[32m"
+			case merge.MergeConflict, merge.MergeFailed:
+				statusColor = "\033[31m"
+			}
+			fmt.Printf("%-28s %-12s %s%-10s\033[0m %-6d\n",
+				truncate(e.BranchName, 28),
+				truncate(e.AgentName, 12),
+				statusColor,
+				truncate(string(e.Status), 10),
+				len(e.FilesModified),
+			)
+		}
+		fmt.Printf("\n\033[2m%d entry(ies)\033[0m\n", len(entries))
+	}
+
+	// Initial render.
+	render()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			render()
+		}
+	}
 }
 
 func printMergePane(entries []*merge.MergeEntry) error {

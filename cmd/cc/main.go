@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -194,6 +195,7 @@ conflict resolution.`,
 	addAppCmd(root, commands.SlingCmd(sharedApp))
 	addAppCmd(root, commands.StopCmd(sharedApp))
 	addAppCmd(root, commands.StatusCmd(sharedApp))
+	addAppCmd(root, commands.GitStatusCmd(sharedApp))
 	addAppCmd(root, commands.DashboardCmd(sharedApp))
 	addAppCmd(root, commands.ShellCmd(sharedApp))
 	addAppCmd(root, commands.FeedbackCmd(sharedApp))
@@ -427,7 +429,14 @@ contrast: "normal"
 		}
 	}
 
-	return nil
+	// Launch the dashboard in-process so the user lands directly in the UI.
+	// We exec into ourselves with "dashboard" so the newly written config
+	// is picked up fresh by appPreRun.
+	self, err := os.Executable()
+	if err != nil {
+		self = os.Args[0]
+	}
+	return syscall.Exec(self, []string{self, "dashboard"}, os.Environ())
 }
 
 // --- config command (no App required) ---
