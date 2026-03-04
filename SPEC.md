@@ -55,24 +55,26 @@ The redesign touches ~20 commands on the existing data model and UI layer. This 
 
 ### cmdr-dashboard.kdl (Redesigned Layout)
 
-The KDL layout defines a 3-column split: FP left sidebar (15%), center section with agent session + bottom bar (70%), and agents right sidebar (15%). The bottom bar sits between the two sidebars and has 4 sections: Event Log, Mail, Merge Queue, Events.
+The KDL layout defines a 3-column split: FP left sidebar (15%), center section with agent session + bottom bar (77%), and agents right sidebar (8%). The bottom bar sits between the two sidebars and has 4 sections: Event Log, Mail, Merge Queue, Git Status.
 
 ```
-┌─────────┬─────────────────────────────────────────────┬──────────┐
-│         │                                             │          │
-│         │           Agent Session                     │          │
-│   FP    │           (i.e. Claude Code)                │  Agents  │
-│         │                                             │          │
-│         │                                             │          │
-│         │                                             │          │
-│         │                                             │          │
-│         │                                             │          │
-│         │                                             │          │
-│         ├───────────┬─────────┬─────────────┬─────────┤          │
-│         │  Event    │  Mail   │   Merge     │ Events  │          │
-│         │  Log      │         │   Queue     │         │          │
-└─────────┴───────────┴─────────┴─────────────┴─────────┴──────────┘
+┌─────────┬──────────────────────────────────────────────────────┬──────┐
+│<Project>│                                                      │      │
+│         │              Agent Session                            │Agents│
+│   FP    │              (i.e. Claude Code)                       │      │
+│         │                                                      │      │
+│         │                                                      │      │
+│         │                                                      │      │
+│         │                                                      │      │
+│         │                                                      │      │
+│         │                                                      │      │
+│         ├────────────┬──────────┬──────────────┬───────────────┤      │
+│         │  Event     │  Mail    │   Merge      │  Git          │      │
+│         │  Log       │          │   Queue      │ Status        │      │
+└─────────┴────────────┴──────────┴──────────────┴───────────────┴──────┘
 ```
+
+> The FP pane's zellij frame title is dynamic — it displays the active session's `displayName` (e.g., `<Project>` = "computeCommander"). See [Session Change Protocol](#session-change-protocol) for update mechanics.
 
 ```kdl
 layout {
@@ -83,8 +85,11 @@ layout {
         pane name="fp" size="15%" {
             // File picker — directory navigation + session launcher
             // User browses directories, selects one to start/switch agent sessions
+            // Frame title is dynamically set to the active session's displayName
+            // e.g., "computeCommander" — updated via `zellij action rename-pane`
+            // on every session switch (see SessionFocusManager)
         }
-        pane size="70%" {
+        pane size="77%" {
             pane name="agent_session" size="80%" focus=true {
                 // Embedded orchestrator agent session
                 // User interacts with the swarm here
@@ -100,13 +105,18 @@ layout {
                 pane name="merge_queue" size="25%" {
                     // Merge queue status / pending PRs
                 }
-                pane name="events" size="25%" {
-                    // Activity feed
+                pane name="git_status" size="25%" {
+                    command "lazygit"
+                    args "-p" "{session_dir}"
+                    // lazygit launched in active session's project directory
+                    // Restarted with new -p path on session switch
                 }
             }
         }
-        pane name="agents" size="15%" {
-            // Agent list / management — right sidebar
+        pane name="agents" size="8%" {
+            // Agent roster — right sidebar (cross-project)
+            // Aggregates agents from ALL active sessions, color-coded by project
+            // See "Agents Pane (Right Sidebar)" under Integration
         }
     }
 }
@@ -283,6 +293,72 @@ interface DirectorySession {
   // Lifecycle
   createdAt: string;              // ISO 8601
   stoppedAt?: string;             // ISO 8601, set when session is stopped
+}
+```
+
+### SessionFocusManager
+
+```typescript
+interface SessionFocusManager {
+  // State
+  activeSessionId: string;            // ID of the currently focused DirectorySession
+  sessions: DirectorySession[];       // All registered sessions (active and stopped)
+  listeners: SessionChangeListener[]; // Panes that react to session changes
+  paneIds: PaneIdMap;                 // Zellij pane IDs for coupled panes (captured from $ZELLIJ_PANE_ID at launch)
+
+  // Operations
+  switchTo(sessionId: string): void;  // Set active session, notify all listeners, write active-session file
+  onSessionChange(listener: SessionChangeListener): void;  // Register a listener
+  getActiveSession(): DirectorySession;
+  getMRUOrder(): DirectorySession[];  // Most-recently-used ordering for session list
+}
+
+// Zellij pane ID mapping for frame title updates and cross-process coordination
+interface PaneIdMap {
+  fp: string;              // FP pane's $ZELLIJ_PANE_ID
+  agentWorkspace: string;  // Agent Workspace pane's $ZELLIJ_PANE_ID
+  gitStatus: string;       // Git Status pane's $ZELLIJ_PANE_ID
+}
+
+interface SessionChangeListener {
+  // Called when the active session changes
+  onSessionFocusChanged(newSession: DirectorySession, previousSession: DirectorySession): void;
+}
+```
+
+The `SessionFocusManager` is the central coordinator for session-scoped panes. When the active session changes (via FP selection or `cmdr session switch`), it broadcasts to all registered listeners so that the FP pane, Agent Workspace pane, and Git Status pane update simultaneously. For in-process panes (FP, Agent Workspace), the broadcast uses Go interface callbacks. For the Git Status pane (lazygit), the `SessionFocusManager` kills the running lazygit process and restarts it with `lazygit -p <new_directory>` to scope it to the new session's project directory. The `active-session.path` file is still written for any future cross-process consumers. Each pane's zellij pane ID is captured at launch from the `$ZELLIJ_PANE_ID` environment variable and stored in `paneIds` so that frame title updates can target the correct pane via `zellij action rename-pane --pane-id <id> "<title>"`.
+
+### PTYManager
+
+```typescript
+interface PTYManager {
+  // State
+  ptys: Map<string, PTYProcess>;      // sessionId -> PTYProcess
+  maxConcurrent: number;              // From config.yaml (default: 8)
+
+  // Operations
+  spawn(session: DirectorySession): PTYProcess;   // Create PTY for session
+  attach(sessionId: string): PTYProcess;           // Get PTY for rendering
+  detach(sessionId: string): void;                 // Stop rendering (PTY keeps running)
+  kill(sessionId: string): void;                   // Terminate PTY process
+  getScrollback(sessionId: string): string[];      // Recent output lines
+}
+
+interface PTYProcess {
+  // Identity
+  sessionId: string;                  // Owning DirectorySession ID
+  pid: number;                        // OS process ID
+  runtime: string;                    // Runtime command (e.g., "claude")
+
+  // State
+  running: boolean;                   // Whether the process is alive
+  attached: boolean;                  // Whether output is being rendered to a pane
+  scrollbackBuffer: string[];         // Circular buffer of recent output (configurable size)
+  scrollbackSize: number;             // Max lines in scrollback (default: 10000)
+
+  // Lifecycle
+  createdAt: string;                  // ISO 8601
+  lastOutputAt: string;               // ISO 8601, updated on each PTY write
 }
 ```
 
@@ -463,6 +539,11 @@ cmdr session switch <id|path>          Switch agent_session pane to a different 
   --create                             Create a new session if none exists for this directory
 
 cmdr session stop <id|path>            Stop a directory session (does not close cmdr)
+
+cmdr git-status                        Show git status for the active session's directory
+  --json                               JSON output
+                                       Note: the dashboard git_status pane uses lazygit directly
+                                       (not this command). This CLI command is for scripting only.
 ```
 
 ### Existing Commands (Preserved)
@@ -600,6 +681,18 @@ Implementation:
 3. Signal dashboard TUI to refresh theme/settings via `tea.Msg`
 4. If validation fails: log error, keep current config, show error in status bar
 
+### Cross-Process Session Notification
+
+Panes running as separate OS processes (e.g., lazygit in the git_status pane) cannot receive Go interface callbacks from the `SessionFocusManager`. Cross-process IPC uses a file-based mechanism combined with process restart:
+
+1. **Write**: On session change, `SessionFocusManager` atomically writes the active session's directory path to `.computecommander/active-session.path` (write to temp file, then `os.Rename`)
+2. **Watch**: External pane processes watch this file via `fsnotify`
+3. **Read**: On `fsnotify.Write` event, the external process reads the new directory path and updates its state
+4. **Startup**: On initial launch, the external process reads the current value of `active-session.path` (if it exists) rather than waiting for a change event
+5. **Cleanup**: `cmdr stop` removes `active-session.path` alongside `cmdr.lock`
+
+This pattern is consistent with the existing `SIGUSR1`-based file picker refresh (commit `6e8cbe3`) but uses `fsnotify` for more reliable cross-process notification without requiring PID tracking. For the git_status pane (lazygit), the `SessionFocusManager` uses direct process restart (kill + relaunch with new `-p` path) rather than file watching, since lazygit does not natively watch `active-session.path`.
+
 ### Atomic Backup/Restore
 
 1. Backup: `sqlite3 .backup` command writes to temp file, rename to final path
@@ -617,7 +710,7 @@ Implementation:
 | Reset | No reset command exists | `cmdr reset` (confirmation-gated) |
 | Restart | No restart command exists | `cmdr restart` (confirmation-gated) |
 | Agent picker pane | 54% width, top-left | Replaced by agent session pane (80% height) |
-| Events/Mail/Merge | Separate panes, mixed layout | 4-section bottom bar (Event Log, Mail, Merge Queue, Events) between sidebars |
+| Events/Mail/Merge/Git | Separate panes, mixed layout | 4-section bottom bar (Event Log, Mail, Merge Queue, lazygit) between sidebars |
 | Keybinds | Single-key in TUI (`s`, `m`, `c`) | Leader key `Ctrl+Space` + action key |
 | Help | `--help` flag only | `cmdr help` + floating pane + `?` keybind |
 | Config edit | `cc config edit` | `cmdr config edit` + hot-reload |
@@ -626,6 +719,7 @@ Implementation:
 | Binary name | `cc` (Use field) | `cmdr` (Use field) |
 | `--agent` flag | Not available | Global flag on all commands |
 | `--sub-agent` flag | Not available | Global flag for nested agent focus |
+| FP pane frame title | Static label ("fp") | Dynamic — shows active session's `displayName` via `zellij action rename-pane` |
 
 ### Migration Steps
 
@@ -648,11 +742,11 @@ The top 80% of the dashboard is now an embedded agent session. When `cmdr` launc
 1. The zellij layout creates the `agent_session` pane
 2. cmdr spawns the default orchestrator runtime (from `defaults.runtime` config) in that pane
 3. The user interacts with the orchestrator directly — typing prompts, receiving responses
-4. All spawned sub-agents appear in the events pane (bottom) as they are created
+4. All spawned sub-agents appear in the event log pane (bottom) as they are created
 
 ### File Picker (fp) Pane
 
-The left 20% of the dashboard is a file picker / directory navigator. Behavior:
+The left 15% of the dashboard is a file picker / directory navigator. Behavior:
 
 1. On launch, the fp pane shows the project root directory tree (cwd where `cmdr` was invoked)
 2. User navigates directories using arrow keys / j/k / Enter
@@ -663,6 +757,71 @@ The left 20% of the dashboard is a file picker / directory navigator. Behavior:
 7. Sessions persist until explicitly stopped (`cmdr session stop`) or until `cmdr stop` terminates everything
 8. The fp pane maintains a history of recently accessed directories (MRU ordering) for quick switching
 9. Navigation supports going up (`..`) to parent directories and breadcrumb-style path display at the top of the pane
+10. The zellij frame title for the FP pane dynamically displays the active session's `displayName` from `DirectorySession`. When the user switches sessions, the frame title is updated via `zellij action rename-pane --pane-id <id> "<displayName>"` to reflect the newly active project name (e.g., "computeCommander"). The pane ID is captured at FP pane launch from the `$ZELLIJ_PANE_ID` environment variable (zellij injects this into every pane's environment) and stored in `SessionFocusManager.paneIds.fp`. This gives the user an at-a-glance indicator of which project is currently focused.
+
+### Session Scoping and Cross-Pane Coupling
+
+Panes are divided into two scoping categories: **session-scoped** (reflecting the active project session) and **cross-project** (aggregating data from all running sessions).
+
+#### Cross-Project vs Session-Scoped Pane Behavior
+
+| Pane | Scope | Behavior |
+|------|-------|----------|
+| Agents (right sidebar) | Cross-project | Shows agents from ALL active sessions, color-coded by project |
+| Event Log (bottom bar) | Cross-project | Events from all projects, tagged with project name |
+| Mail (bottom bar) | Cross-project | Messages from all projects, tagged with project name |
+| Merge Queue (bottom bar) | Cross-project | Merge operations from all projects |
+| FP (left sidebar) | Session-scoped | Shows directory tree rooted at the active session's directory |
+| Agent Workspace (center) | Session-scoped | Displays the active session's agent PTY |
+| Git Status (bottom bar) | Session-scoped | lazygit scoped to the active session's directory (restarted on session switch) |
+
+#### Active Session Concept
+
+Exactly one `DirectorySession` has `active: true` at any time. This is the "active session." All session-scoped panes reflect this session.
+
+#### Session Change Protocol
+
+When the active session changes (via FP pane selection or `cmdr session switch`):
+
+1. The `SessionFocusManager` sets the new session as `active: true` and the previous session as `active: false`
+2. The `SessionFocusManager` broadcasts the change via two mechanisms:
+   - **(a) In-process broadcast**: Sends a `SessionFocusChanged` event to all registered `SessionChangeListener` instances (Go interface callbacks for FP and Agent Workspace panes)
+   - **(b) Cross-process broadcast**: Writes the new session's `directory` path to `.computecommander/active-session.path` (atomic write via temp file + rename). This file is the IPC channel for panes running as separate OS processes. For the git_status pane, the `SessionFocusManager` kills the current lazygit process and restarts it with `-p <new_session_directory>`
+3. Each session-scoped pane reacts:
+   - **FP pane** (in-process): Updates its root directory to the new session's `directory` path and renames its zellij frame title to the new session's `displayName` via `zellij action rename-pane --pane-id <id>` (pane ID from `SessionFocusManager.paneIds.fp`, originally captured from `$ZELLIJ_PANE_ID` at pane launch)
+   - **Agent Workspace pane** (in-process): Re-attaches to the new session's PTY (via `PTYManager.attach()`)
+   - **Git Status pane** (managed process): The `SessionFocusManager` kills the running lazygit process in the git_status pane and restarts it with `lazygit -p <new_directory>` scoped to the new session's project directory
+4. Cross-project panes (Agents, Event Log, Mail, Merge Queue) are **not affected** by session changes — they always show aggregated data
+
+#### Session Fallback Behavior
+
+When the active session is stopped (`cmdr session stop`):
+- The next most-recently-used (MRU) session becomes active
+- If no other sessions exist, the FP pane returns to the project root and the Agent Workspace shows an empty state with instructions to start a new session
+- The `SessionFocusManager.getMRUOrder()` determines fallback priority based on `lastAccessedAt` timestamps
+
+### Agents Pane (Right Sidebar)
+
+The right 8% of the dashboard is the agent roster. This pane operates in **cross-project** mode:
+
+1. Aggregates agents from ALL running `DirectorySession` instances, not just the active session
+2. Each agent row displays: agent name, status (running/idle/stopped), runtime duration, and parent project name
+3. Agents are color-coded by their parent project session (each `DirectorySession` is assigned a unique color from the theme palette)
+4. Selecting an agent in this pane shows agent details (expanded row or floating pane) but does **NOT** switch the session focus — the FP, Agent Workspace, and Git Status panes remain on the current active session
+5. To switch to an agent's parent project, the user must use the FP pane or `cmdr session switch`
+6. The pane auto-refreshes as agents are spawned or terminated across any session
+
+### PTY Swapping Mechanics
+
+Each `DirectorySession` owns a PTY process managed by the `PTYManager`. The PTY lifecycle:
+
+1. **Spawn**: When a session is created (via FP selection or `cmdr session switch --create`), the `PTYManager` spawns a new PTY running the configured runtime (e.g., `claude --dangerously-skip-permissions`). The PTY runs in the session's `directory`.
+2. **Background execution**: When the user switches away from a session, its PTY continues running in the background. It is **not** suspended or killed. Output continues to be captured into the scrollback buffer.
+3. **Re-attachment**: When the user switches back to a session, the Agent Workspace pane re-attaches to that session's PTY via `PTYManager.attach()`. The pane renders the scrollback buffer first (so the user sees recent activity), then streams live output.
+4. **Scrollback**: Each PTY maintains a circular scrollback buffer (default: 10,000 lines, configurable via `config.yaml` key `pty.scrollback_lines`). This ensures the user sees recent activity when switching back to a session.
+5. **Kill**: When a session is stopped (`cmdr session stop`), the PTY process is killed via `SIGTERM` (with `SIGKILL` fallback after 5 seconds). The scrollback buffer is discarded.
+6. **Max concurrent**: The maximum number of concurrent PTY processes is configurable (default: 8) via `config.yaml` key `pty.max_concurrent`. When the limit is reached, starting a new session returns an error: "Maximum concurrent sessions (8) reached. Stop an existing session first."
+7. **Crash recovery**: If a PTY process dies unexpectedly (non-zero exit), the session remains in the session list with a "crashed" status indicator. The user can restart it by selecting the session in the FP pane and pressing Enter.
 
 ### Zellij Floating Panes
 
@@ -713,6 +872,7 @@ cmdr restore                   # Ctrl+Space -> R (capital)
 cmdr fp                        # Ctrl+Space -> d (toggle file picker pane)
 cmdr session list              # (no keybind -- CLI only)
 cmdr session switch <path>     # (triggered via fp pane Enter key)
+lazygit -p <dir>               # (runs in bottom bar Git Status pane, no keybind — managed by SessionFocusManager)
 cmdr feedback                  # Ctrl+Space -> f
 cmdr support                   # Ctrl+Space -> h
 cmdr theme                     # Ctrl+Space -> t
@@ -737,6 +897,8 @@ cmdr status --agent my-builder --json
 ```
 
 ### Hooks Integration
+
+> **Note:** This section documents existing agentic infrastructure behavior for context. No changes are required by this spec. Authoritative source: AGENTIC-SPEC.md.
 
 ```json
 {
@@ -771,7 +933,7 @@ Explicitly out of scope (keep it minimal):
 - **No new runtimes.** The pluggable runtime system (claude, gemini, codex, pi, goose) is unchanged. The agent session pane uses the existing runtime spawning infrastructure.
 - **No remote/distributed mode.** The `features.distributed` and `features.remote_agents` flags remain false. This redesign is local-only.
 - **No custom merge drivers.** Merge queue operations are unchanged.
-- **No new agent capabilities.** The 8 capabilities (scout, builder, reviewer, lead, merger, coordinator, supervisor, monitor) are unchanged.
+- **No new agent capabilities.** The 8 capabilities (scout, builder, reviewer, lead, merger, coordinator, supervisor, monitor) are unchanged. (Reference only -- see AGENTIC-SPEC.md for authoritative agent capability definitions.)
 - **No plugin implementation.** The plugin system is a *consideration* — the architecture is plugin-ready (data-driven command/keybind registry) but no plugin loading, sandboxing, or marketplace is implemented in this phase.
 - **No automation engine.** `cmdr automation` is a consideration placeholder — the command exists but the workflow builder is a future phase.
 - **No analytics backend.** `cmdr analytics` shows local metrics from the existing `metrics` table. No telemetry, no external analytics service.
@@ -792,6 +954,7 @@ Explicitly out of scope (keep it minimal):
 | File Watching | fsnotify/fsnotify | Go-native, for config hot-reload |
 | Clipboard | atotto/clipboard | Go-native, for export copy-to-clipboard |
 | Browser Open | pkg/browser | Go-native, for docs/feedback/support URLs |
+| Git UI | lazygit | Proven terminal git UI, eliminates need for custom git status rendering |
 | Testing | go test (stdlib) | Existing test infrastructure |
 | Linting | golangci-lint | Existing CI pipeline |
 | Build | Makefile + ldflags | Existing build system |
@@ -815,6 +978,8 @@ computeCommander/
       utility.go                      # NEW: shell, feedback, support commands
       settings.go                     # NEW: theme, notifications, analytics, integrations, automation
       clear.go                        # NEW: clear logs command
+      gitstatus.go                    # NEW: git-status pane command
+      session.go                      # NEW: session list/switch/stop commands
       sling.go                        # Unchanged
       stop.go                         # Unchanged (agent stop, not cmdr stop)
       status.go                       # Enhanced: includes UI status
@@ -834,6 +999,10 @@ computeCommander/
       dashboard.go                    # Updated: new pane layout
       keybinds.go                     # NEW: leader key handler + action dispatch
       floating.go                     # NEW: floating pane renderer (help, version, confirm)
+      filepicker.go                   # NEW: file picker / directory navigator
+      session_manager.go              # NEW: session switching logic
+      session_focus.go                # NEW: SessionFocusManager (cross-pane session coupling)
+      pty_manager.go                  # NEW: PTYManager (concurrent PTY lifecycle)
       theme.go                        # Enhanced: theme loading + switching
       agent_table.go                  # Unchanged (used in bottom pane now)
       mail_summary.go                 # Unchanged (used in bottom pane now)
@@ -899,7 +1068,7 @@ Bump via: edit `Makefile` VERSION, `make build` injects via ldflags.
 - `cmdr theme`, `cmdr notifications`, `cmdr analytics` (placeholder commands)
 - `cmdr integrations`, `cmdr automation` (placeholder commands)
 - Leader key system: `Ctrl+Space` + action key for all in-UI operations
-- Redesigned dashboard layout: agent session (top 80%) + events/mail/merge (bottom 20%)
+- Redesigned dashboard layout: FP sidebar (15%) + agent session (top 80%) + event log/mail/merge/lazygit (bottom 20%) + agents sidebar (8%)
 - Config hot-reload via fsnotify
 - Database backup and restore
 - Data export (JSON/CSV)
@@ -980,10 +1149,13 @@ clean:
 | Tests for new commands | 6 | ~600 |
 | Tests for keybinds, backup, export | 3 | ~300 |
 | Config/theme files (YAML) | 3 | ~80 |
-| File picker pane (fp) + session manager | 2 | ~450 |
+| File picker pane (fp) + session manager | 2 | ~800 |
 | Session commands (list, switch, stop) | 1 | ~200 |
+| SessionFocusManager | 1 | ~300 |
+| PTYManager | 1 | ~400 |
+| Git status pane (lazygit integration) | 1 | ~150 |
 | Logs enhancement (--follow, --lines flags) | 0 | ~50 |
-| **Total new/modified** | **31** | **~4,200** |
+| **Total new/modified** | **35** | **~5,350** |
 
 ## UI Layout Comparison
 
@@ -1005,32 +1177,32 @@ clean:
 ### Target Layout (7 panels)
 
 ```
-┌─────────┬─────────────────────────────────────────────┬──────────┐
-│         │                                             │          │
-│         │           Agent Session                     │          │
-│   FP    │           (i.e. Claude Code)                │  Agents  │
-│  (15%)  │             (70% width)                     │  (15%)   │
-│         │                                             │          │
-│ Dir nav │  Embedded orchestrator -- user interacts     │ Agent    │
-│ + sess  │  with swarm here. Switches between sessions │ list /   │
-│ launch  │  via fp pane directory selection.            │ mgmt     │
-│         │                                             │          │
-│         ├───────────┬─────────┬─────────────┬─────────┤          │
-│         │  Event    │  Mail   │   Merge     │ Events  │          │
-│         │  Log      │         │   Queue     │         │          │
-└─────────┴───────────┴─────────┴─────────────┴─────────┴──────────┘
+┌─────────┬──────────────────────────────────────────────────────┬──────┐
+│         │                                                      │      │
+│         │              Agent Session                            │Agents│
+│   FP    │              (i.e. Claude Code)                       │      │
+│  (15%)  │                (77% width)                            │ (8%) │
+│         │                                                      │      │
+│ Dir nav │  Embedded orchestrator -- user interacts              │Agent │
+│ + sess  │  with swarm here. Switches between sessions          │list /│
+│ launch  │  via fp pane directory selection.                     │ mgmt │
+│         │                                                      │      │
+│         ├────────────┬──────────┬──────────────┬───────────────┤      │
+│         │  Event     │  Mail    │   Merge      │  Git          │      │
+│         │  Log       │          │   Queue      │ Status        │      │
+└─────────┴────────────┴──────────┴──────────────┴───────────────┴──────┘
 ```
 
 Panels:
-| Panel         | Position      | Description                           |
-|---------------|---------------|---------------------------------------|
-| FP            | Left sidebar  | File picker / navigation (full height)|
-| Agent Session | Center main   | Primary workspace (Claude Code, etc.) |
-| Agents        | Right sidebar | Agent list / management (full height) |
-| Event Log     | Bottom bar    | System events and logs                |
-| Mail          | Bottom bar    | Messages / notifications              |
-| Merge Queue   | Bottom bar    | Pending merges / PRs                  |
-| Events        | Bottom bar    | Activity feed                         |
+| Panel         | Position      | Scope          | Description                                          |
+|---------------|---------------|----------------|------------------------------------------------------|
+| FP            | Left sidebar  | Session-scoped | File picker / navigation (full height)               |
+| Agent Session | Center main   | Session-scoped | Primary workspace (Claude Code, etc.)                |
+| Agents        | Right sidebar | Cross-project  | Agent roster from ALL active sessions (full height)  |
+| Event Log     | Bottom bar    | Cross-project  | System events and logs from all projects             |
+| Mail          | Bottom bar    | Cross-project  | Messages / notifications from all projects           |
+| Merge Queue   | Bottom bar    | Cross-project  | Pending merges / PRs from all projects               |
+| Git Status    | Bottom bar    | Session-scoped | lazygit — full interactive git UI scoped to active project session |
 
 ### Floating Pane Overlay (triggered by leader key)
 
@@ -1047,7 +1219,7 @@ Panels:
 │         │  └────────────────────────────────────────┘  │          │
 │         │                                             │          │
 │         ├───────────┬─────────┬─────────────┬─────────┤          │
-│         │ Event Log │  Mail   │ Merge Queue │ Events  │          │
+│         │ Event Log │  Mail   │ Merge Queue │Git Stat │          │
 └─────────┴───────────┴─────────┴─────────────┴─────────┴──────────┘
 ```
 
@@ -1069,43 +1241,55 @@ Panels:
 | Global flags (--agent, --sub-agent) | `unix-coder` | Cobra persistent flags, propagation |
 | File picker (fp) pane + session manager | `unix-coder` | TUI component, directory tree traversal, session state |
 | Session commands (list, switch, stop) | `unix-coder` | CLI commands for multi-directory agent sessions |
+| Git status pane (lazygit integration) | `unix-coder` | lazygit process lifecycle, session-scoped restart |
+| SessionFocusManager | `unix-coder` | Cross-pane session coupling, MRU fallback |
+| PTYManager | `unix-coder` | Concurrent PTY lifecycle, scrollback buffering |
 | Architecture review | `code-review` | DRY analysis, command registry pattern validation |
 | Security review | `security-review` | Confirmation gates, backup file permissions, clipboard handling |
-| Integration testing | `unix-coder` | End-to-end lifecycle tests |
+| Integration testing | `unix-coder` | End-to-end lifecycle + session-scoping tests |
 
 ## Execution Order
 
+Aligned with the Dependency Graph (Section 16). Four phases plus a final integration phase.
+
 ```
-Phase 1: Foundation
-  +-- Entry point redesign: main.go root command (agent: unix-coder)
-  +-- Global flags: --agent, --sub-agent (agent: unix-coder)
-  +-- Keybind config loading (agent: unix-coder)               [parallel]
+Phase 1: Foundation [parallel]
+  T1  -- Entry point redesign: main.go root command (agent: unix-coder)
+  T3  -- Keybind config loading (agent: unix-coder)
+  T16 -- Add go.mod dependencies (agent: unix-coder)
 
-Phase 2: Core Commands [blocked by Phase 1]
-  +-- Lifecycle commands: stop, reset, restart (agent: unix-coder)
-  +-- Information commands: help, docs, version, update (agent: unix-coder)
-  +-- Data commands: export, backup, restore (agent: unix-coder)     [parallel]
-  +-- Utility commands: shell, feedback, support, clear (agent: unix-coder)  [parallel]
+Phase 2: Core Commands + UI Layer [blocked by Phase 1, parallel within]
+  T2  -- Global flags: --agent, --sub-agent (agent: unix-coder)
+  T4  -- Lifecycle commands: stop, reset, restart (agent: unix-coder)
+  T5  -- Information commands: help, docs, version, update (agent: unix-coder)
+  T6  -- Data commands: export, backup, restore (agent: unix-coder)
+  T7  -- Utility commands: shell, feedback, support, clear (agent: unix-coder)
+  T8  -- Settings commands: theme, notifications, analytics, etc. (agent: unix-coder)
+  T9  -- Dashboard layout restructure (agent: unix-coder)
+  T12 -- Config hot-reload watcher (agent: unix-coder)
+  T21 -- Logs enhancement: --follow, --lines flags (agent: unix-coder)
 
-Phase 3: UI Layer [blocked by Phase 1]
-  +-- Dashboard layout restructure (agent: unix-coder)
-  +-- Floating pane renderer (agent: unix-coder)
-  +-- Leader key handler in TUI (agent: unix-coder)               [parallel]
-  +-- Config hot-reload watcher (agent: unix-coder)               [parallel]
+Phase 3: Advanced UI + Session Management [blocked by Phase 2, parallel within]
+  T10 -- Floating pane renderer (agent: unix-coder)
+  T11 -- Leader key handler in TUI (agent: unix-coder)
+  T13 -- KDL layout generation (agent: unix-coder)
+  T14 -- Status command enhancement (agent: unix-coder)
+  T15 -- Update cmdr init (agent: unix-coder)
+  T19 -- File picker (fp) pane (agent: unix-coder)
+  T20 -- Session commands: list, switch, stop (agent: unix-coder)
+  T23 -- Git status pane: lazygit integration (agent: unix-coder)
+  T24 -- SessionFocusManager (agent: unix-coder)
+  T25 -- PTYManager (agent: unix-coder)
 
-Phase 4: Settings + Placeholders [blocked by Phase 2]
-  +-- Settings commands: theme, notifications, analytics, integrations, automation (agent: unix-coder)
-  +-- Status command enhancement (agent: unix-coder)              [parallel]
+Phase 4: Review [blocked by Phase 3, parallel within]
+  T17 -- Architecture review (agent: code-review)
+  T18 -- Security review (agent: security-review)
 
-Phase 5: Review [blocked by Phases 2, 3, 4]
-  +-- Architecture review (agent: code-review)
-  +-- Security review (agent: security-review)                    [parallel]
-
-Phase 6: Integration [blocked by Phase 5]
-  +-- Integration testing (agent: unix-coder)
+Final: Integration [blocked by Phase 4]
+  T22 -- Integration testing incl. session-scoping tests (agent: unix-coder)
 ```
 
-Recommended directive: `/pai` -- plan-then-implement pipeline. The work is sequential (foundation -> commands -> UI -> review -> integration) with parallelism within each phase.
+Recommended directive: `/pai` -- plan-then-implement pipeline. The work is sequential (foundation -> commands+UI -> advanced UI+sessions -> review -> integration) with parallelism within each phase.
 
 ## Failure Modes
 
@@ -1122,6 +1306,7 @@ Recommended directive: `/pai` -- plan-then-implement pipeline. The work is seque
 | Floating pane spawn fails | `zellij action new-pane --floating` returns error | Fall back to inline output in current pane |
 | $EDITOR not set | `os.Getenv("EDITOR")` returns empty | Default to `vi` (existing behavior) |
 | Browser open fails | `pkg/browser.Open()` returns error | Print URL to stdout, let user copy manually |
+| lazygit not installed | `exec.LookPath("lazygit")` returns error | Fall back to simple `git status` output in the git_status pane |
 | Agent not found for --agent flag | DB query returns no rows | Print "Agent 'X' not found. Run `cmdr status` to see active agents" |
 
 ## 15. Task Manifest
@@ -1136,7 +1321,7 @@ Recommended directive: `/pai` -- plan-then-implement pipeline. The work is seque
 | T6 | unix-coder | Implement data commands: export, backup, restore | internal/platform/db/db.go | internal/commands/data.go, internal/backup/backup.go, internal/export/export.go | T1 | `go test ./internal/backup/... && go test ./internal/export/... && go test ./internal/commands/... -run TestData` |
 | T7 | unix-coder | Implement utility commands: shell, feedback, support, clear | internal/zellij/pane.go | internal/commands/utility.go, internal/commands/clear.go | T1 | `go test ./internal/commands/... -run TestUtility` |
 | T8 | unix-coder | Implement settings commands: theme, notifications, analytics, integrations, automation | internal/config/config.go | internal/commands/settings.go | T1 | `go test ./internal/commands/... -run TestSettings` |
-| T9 | unix-coder | Restructure dashboard layout: agent session (top) + events/mail/merge (bottom) | internal/tui/dashboard.go, internal/tui/agent_table.go, internal/tui/mail_summary.go, internal/tui/merge_view.go | internal/tui/dashboard.go | T1 | `go test ./internal/tui/...` |
+| T9 | unix-coder | Restructure dashboard layout: agent session (top) + event log/mail/merge/git-status (bottom), fp sidebar (left), agents sidebar (right). See Panels table in UI Layout Comparison. | internal/tui/dashboard.go, internal/tui/agent_table.go, internal/tui/mail_summary.go, internal/tui/merge_view.go | internal/tui/dashboard.go | T1 | `go test ./internal/tui/...` |
 | T10 | unix-coder | Implement floating pane renderer for help, version, confirm dialogs | internal/zellij/pane.go | internal/tui/floating.go | T9 | `go test ./internal/tui/... -run TestFloating` |
 | T11 | unix-coder | Implement leader key handler in TUI event loop | internal/tui/dashboard.go, internal/keybinds/keybinds.go | internal/tui/keybinds.go | T3, T9 | `go test ./internal/tui/... -run TestKeybind` |
 | T12 | unix-coder | Implement config hot-reload via fsnotify | internal/config/config.go | internal/config/watcher.go | T1 | `go test ./internal/config/... -run TestWatcher` |
@@ -1149,16 +1334,19 @@ Recommended directive: `/pai` -- plan-then-implement pipeline. The work is seque
 | T19 | unix-coder | Implement fp (file picker) pane: directory navigator + session launcher TUI component | internal/tui/dashboard.go | internal/tui/filepicker.go, internal/tui/session_manager.go | T9 | `go test ./internal/tui/... -run TestFilePicker` |
 | T20 | unix-coder | Implement directory session management: session list, switch, stop commands | internal/commands/app.go, internal/agents/spawner.go | internal/commands/session.go | T1, T19 | `go test ./internal/commands/... -run TestSession` |
 | T21 | unix-coder | Enhance logs command: add --follow and --lines flags to existing LogsCmd | internal/commands/observability.go | internal/commands/observability.go | T1 | `go test ./internal/commands/... -run TestLogs` |
-| T22 | unix-coder | Integration tests: full lifecycle (init -> open -> fp navigate -> session start -> switch -> stop -> restart) | internal/commands/*.go | internal/commands/integration_test.go | T17, T18, T20, T21 | `go test ./internal/commands/... -run TestIntegration` |
+| T22 | unix-coder | Integration tests: full lifecycle (init -> open -> fp navigate -> session start -> switch -> stop -> restart). Must include session-scoping tests: verify FP, Git Status, and Agent Workspace all update when session changes. | internal/commands/*.go | internal/commands/integration_test.go | T17, T18, T20, T21, T23, T24, T25 | `go test ./internal/commands/... -run TestIntegration` |
+| T23 | unix-coder | Configure lazygit integration in git_status pane with session-scoped directory switching. `SessionFocusManager` kills and restarts lazygit with `-p <new_directory>` on session change. Requires `exec.LookPath("lazygit")` check with fallback to simple `git status` output. | internal/commands/app.go, internal/tui/session_focus.go | internal/commands/gitstatus.go | T1, T24 | `go test ./internal/commands/... -run TestGitStatus` |
+| T24 | unix-coder | Implement `SessionFocusManager`: central coordinator for session-scoped panes. Manages active session state, broadcasts `SessionFocusChanged` events to registered listeners (FP, Agent Workspace, Git Status). Includes MRU fallback logic. | internal/tui/dashboard.go, internal/tui/session_manager.go | internal/tui/session_focus.go | T19, T20 | `go test ./internal/tui/... -run TestSessionFocus` |
+| T25 | unix-coder | Implement `PTYManager`: manages concurrent PTY processes for multi-session agent workspace. Handles spawn, attach, detach, kill, scrollback buffering, and max-concurrent enforcement. | internal/tui/agent_session.go, internal/config/config.go | internal/tui/pty_manager.go | T9, T19 | `go test ./internal/tui/... -run TestPTYManager` |
 
 ## 16. Dependency Graph
 
 ```
 Phase 1 (parallel): [T1, T3, T16]
-Phase 2 (after Phase 1): [T2, T4, T5, T6, T7, T8, T9, T12]
-Phase 3 (after Phase 2): [T10, T11, T13, T14, T15, T19, T20]
+Phase 2 (after Phase 1): [T2, T4, T5, T6, T7, T8, T9, T12, T21]
+Phase 3 (after Phase 2): [T10, T11, T13, T14, T15, T19, T20, T23, T24, T25]
 Phase 4 (after Phase 3): [T17, T18]
-Final: [T22] -- integration test
+Final: [T22] -- integration test (depends on T17, T18, T20, T21, T23, T24, T25)
 ```
 
 ## 17. Target State
@@ -1171,11 +1359,14 @@ Files created:
 - `internal/commands/clear.go`
 - `internal/commands/settings.go`
 - `internal/commands/session.go`
+- `internal/commands/gitstatus.go`
 - `internal/commands/integration_test.go`
 - `internal/tui/floating.go`
 - `internal/tui/keybinds.go`
 - `internal/tui/filepicker.go`
 - `internal/tui/session_manager.go`
+- `internal/tui/session_focus.go`
+- `internal/tui/pty_manager.go`
 - `internal/keybinds/keybinds.go`
 - `internal/keybinds/registry.go`
 - `internal/config/watcher.go`
@@ -1195,7 +1386,7 @@ Files deleted: none
 
 ## 18. Verification Plan
 
-Per-task checks: (from Task Manifest verify column -- see T1 through T19)
+Per-task checks: (from Task Manifest verify column -- see T1 through T25)
 
 Integration check:
 ```bash
@@ -1232,8 +1423,12 @@ git stash
 - [ ] `--agent` and `--sub-agent` flags exist on root command (verified by `./cmdr --help`)
 - [ ] File `internal/tui/filepicker.go` exists and contains directory navigation TUI component
 - [ ] File `internal/tui/session_manager.go` exists and contains session switching logic
+- [ ] File `internal/tui/session_focus.go` exists and contains `SessionFocusManager` with `switchTo()`, `onSessionChange()`, and `getMRUOrder()` methods
+- [ ] File `internal/tui/pty_manager.go` exists and contains `PTYManager` with `spawn()`, `attach()`, `detach()`, `kill()` methods
+- [ ] File `internal/commands/gitstatus.go` exists and contains `GitStatusCmd` with lazygit integration (process restart on session switch, fallback when lazygit not installed)
 - [ ] File `internal/commands/session.go` exists and contains `SessionListCmd`, `SessionSwitchCmd`, `SessionStopCmd` functions
-- [ ] `./cmdr help` output contains "session" and "fp" commands
+- [ ] `./cmdr help` output contains "session", "fp", and "git-status" commands
+- [ ] Session switching updates FP, Agent Workspace, and Git Status (lazygit restart) panes simultaneously (integration test)
 - [ ] `go mod tidy` exits 0 (no missing or unused dependencies)
 
 ## Open Questions
