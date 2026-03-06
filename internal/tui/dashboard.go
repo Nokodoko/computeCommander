@@ -12,6 +12,7 @@ import (
 	"github.com/noko/computecommander/internal/config"
 	"github.com/noko/computecommander/internal/mail"
 	"github.com/noko/computecommander/internal/merge"
+	"github.com/noko/computecommander/internal/platform/db"
 )
 
 // DefaultAgentCommand is the fallback agent command when no config or CLI override is set.
@@ -19,12 +20,15 @@ const DefaultAgentCommand = "claude --dangerously-skip-permissions --no-chrome -
 
 // DashboardOpts groups the dependencies for constructing a Dashboard.
 type DashboardOpts struct {
-	Lister   SessionLister
-	Mail     mail.MailStore
-	Queue    merge.MergeQueue
-	Config   *config.Config
-	Interval time.Duration
-	AgentCmd string // CLI override for agent command
+	Lister      SessionLister
+	Mail        mail.MailStore
+	Queue       merge.MergeQueue
+	Config      *config.Config
+	DB          db.DB         // database handle for staleness reaping (nil-safe)
+	Interval    time.Duration
+	AgentCmd    string // CLI override for agent command
+	ProjectName string // display name for the active project (title bar)
+	ProjectID   string // project ID for filtering
 }
 
 // Dashboard is the top-level TUI component implementing the redesigned layout:
@@ -55,18 +59,24 @@ type Dashboard struct {
 	mail         *MailSummary
 	queue        *MergeQueueView
 	gitStatus    *GitStatusPane
+	evals        *EvalsPane
 	costs        *CostTracker
 	palette      *CommandPalette
 
 	// State.
-	focusedPane PaneID
-	interval    time.Duration
-	theme       *Theme
-	width       int
-	height      int
-	ctx         context.Context
-	err         error
-	agentCmd    string
+	focusedPane    PaneID
+	interval       time.Duration
+	theme          *Theme
+	width          int
+	height         int
+	ctx            context.Context
+	err            error
+	agentCmd       string
+	projectName    string
+	projectID      string
+	db             db.DB     // database for staleness reaping (nil-safe)
+	lastReapTime   time.Time // when we last ran the staleness reaper
+	staleThreshold time.Duration
 }
 
 // NewDashboard constructs a Dashboard from the provided options.
@@ -92,20 +102,42 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		root = "."
 	}
 
+	// Resolve project name from opts or config.
+	projectName := opts.ProjectName
+	if projectName == "" && opts.Config != nil {
+		projectName = opts.Config.Project.Name
+	}
+
+	fp := NewFilePicker(root, theme)
+	if projectName != "" {
+		fp.SetProject(projectName, opts.ProjectID)
+	}
+
+	// Resolve stale threshold from config, defaulting to 10 minutes.
+	staleThreshold := 10 * time.Minute
+	if opts.Config != nil && opts.Config.Watchdog.StaleThresholdMs > 0 {
+		staleThreshold = time.Duration(opts.Config.Watchdog.StaleThresholdMs) * time.Millisecond
+	}
+
 	d := &Dashboard{
-		filePicker:   NewFilePicker(root, theme),
-		agentSession: NewAgentSession(agentCmd, theme),
-		agents:       NewAgentTable(opts.Lister, theme),
-		eventsPane:   NewEventsPane(theme),
-		mail:         NewMailSummary(opts.Mail, theme),
-		queue:        NewMergeQueueView(opts.Queue, theme),
-		gitStatus:    NewGitStatusPane(theme),
-		costs:        NewCostTracker(theme),
-		palette:      NewCommandPalette(theme),
-		focusedPane:  PaneAgentSession,
-		interval:     interval,
-		theme:        theme,
-		agentCmd:     agentCmd,
+		filePicker:     fp,
+		agentSession:   NewAgentSession(agentCmd, theme),
+		agents:         NewAgentTable(opts.Lister, theme),
+		eventsPane:     NewEventsPane(theme),
+		mail:           NewMailSummary(opts.Mail, theme),
+		queue:          NewMergeQueueView(opts.Queue, theme),
+		gitStatus:      NewGitStatusPane(theme),
+		evals:          NewEvalsPane(opts.DB, theme),
+		costs:          NewCostTracker(theme),
+		palette:        NewCommandPalette(theme),
+		focusedPane:    PaneAgentSession,
+		interval:       interval,
+		theme:          theme,
+		agentCmd:       agentCmd,
+		projectName:    projectName,
+		projectID:      opts.ProjectID,
+		db:             opts.DB,
+		staleThreshold: staleThreshold,
 	}
 
 	return d
@@ -143,10 +175,21 @@ func (d *Dashboard) Run(ctx context.Context) error {
 }
 
 // Refresh updates all sub-views with the latest data.
+// It also periodically reaps stale sessions from the database -- sessions
+// whose process has died without the SubagentStop hook updating their state.
 func (d *Dashboard) Refresh() error {
 	ctx := d.ctx
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	// Run the staleness reaper every 30 seconds to mark ghost sessions as completed.
+	// This is the safety net for missed SubagentStop hook calls and mirrors the
+	// reaper in internal/commands/status.go's runStatusPane().
+	const reapInterval = 30 * time.Second
+	if d.db != nil && (d.lastReapTime.IsZero() || time.Since(d.lastReapTime) >= reapInterval) {
+		d.reapStaleSessions(ctx)
+		d.lastReapTime = time.Now()
 	}
 
 	var errs []string
@@ -166,11 +209,29 @@ func (d *Dashboard) Refresh() error {
 	if err := d.gitStatus.Refresh(); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := d.evals.Refresh(); err != nil {
+		errs = append(errs, err.Error())
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("refresh errors: %s", strings.Join(errs, "; "))
 	}
 	return nil
+}
+
+// reapStaleSessions marks working/booting sessions as completed when their
+// last_activity exceeds the stale threshold. This prevents ghost entries from
+// lingering when the SubagentStop hook fails to update the database (e.g. the
+// agent process was killed or the hook crashed).
+func (d *Dashboard) reapStaleSessions(ctx context.Context) {
+	if d.db == nil {
+		return
+	}
+	cutoff := time.Now().Add(-d.staleThreshold).UTC().Format("2006-01-02T15:04:05Z")
+	_ = d.db.Exec(ctx,
+		"UPDATE sessions SET state = 'completed', last_activity = $1 WHERE state IN ('working', 'booting') AND last_activity < $2",
+		time.Now().UTC().Format("2006-01-02T15:04:05Z"), cutoff,
+	)
 }
 
 // --- bubbletea.Model implementation ---
@@ -268,8 +329,10 @@ func (d *Dashboard) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "5":
 		d.focusedPane = PaneMail
 	case "6":
-		d.focusedPane = PaneMergeQueue
+		d.focusedPane = PaneEvals
 	case "7":
+		d.focusedPane = PaneMergeQueue
+	case "8":
 		d.focusedPane = PaneGitStatus
 	default:
 		d.handleFocusedPaneKey(msg)
@@ -362,6 +425,15 @@ func (d *Dashboard) handleFocusedPaneKey(msg tea.KeyMsg) {
 		case "k", "up":
 			d.eventsPane.ScrollUp()
 		}
+	case PaneEvals:
+		switch key {
+		case "j", "down":
+			d.evals.ScrollDown()
+		case "k", "up":
+			d.evals.ScrollUp()
+		case "r":
+			_ = d.evals.RunAll()
+		}
 	}
 }
 
@@ -375,6 +447,7 @@ func (d *Dashboard) updatePaneSizes() {
 	d.agentSession.SetSize(asW-2, topH-3)
 	d.eventsPane.SetSize(bottomPaneW-2, bottomH-3)
 	d.gitStatus.SetSize(bottomPaneW-2, bottomH-3)
+	d.evals.SetSize(bottomPaneW-2, bottomH-3)
 	d.palette.SetSize(d.width, d.height)
 
 	_ = agW // agents pane uses CompactView which gets width/height at render time
@@ -417,7 +490,7 @@ func (d *Dashboard) calculateLayout() (int, int, int, int, int, int) {
 		asW = 20
 	}
 
-	bottomPaneW := w / 4
+	bottomPaneW := w / 5
 
 	return topH, bottomH, fpW, asW, agW, bottomPaneW
 }
@@ -487,12 +560,16 @@ func (d *Dashboard) View() string {
 	mlMeta := paneMetaByID(PaneMail)
 	mailPane := RenderPane(mlContent, mlMeta, d.focusedPane == PaneMail, bottomPaneW, bottomH, d.theme)
 
+	evalsContent := d.evals.View()
+	evalsMeta := paneMetaByID(PaneEvals)
+	evalsPane := RenderPane(evalsContent, evalsMeta, d.focusedPane == PaneEvals, bottomPaneW, bottomH, d.theme)
+
 	mqContent := d.queue.View()
 	mqMeta := paneMetaByID(PaneMergeQueue)
 	mergePane := RenderPane(mqContent, mqMeta, d.focusedPane == PaneMergeQueue, bottomPaneW, bottomH, d.theme)
 
-	// Last pane gets remaining width.
-	lastPaneW := d.width - (bottomPaneW * 3)
+	// Git Status pane gets remaining width (last pane in row).
+	lastPaneW := d.width - (bottomPaneW * 4)
 	if lastPaneW < 10 {
 		lastPaneW = bottomPaneW
 	}
@@ -500,10 +577,11 @@ func (d *Dashboard) View() string {
 	gsMeta := paneMetaByID(PaneGitStatus)
 	gitPane := RenderPane(gsContent, gsMeta, d.focusedPane == PaneGitStatus, lastPaneW, bottomH, d.theme)
 
-	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, eventsPane, mailPane, mergePane, gitPane)
+	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, eventsPane, mailPane, evalsPane, mergePane, gitPane)
 
 	// --- Status and help bars ---
-	statusBar := renderStatusBar(
+	statusBar := renderStatusBarWithProject(
+		d.projectName,
 		len(d.agents.Sessions()),
 		d.mail.UnreadCount(),
 		d.queue.PendingCount(),

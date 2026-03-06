@@ -18,6 +18,7 @@ const (
 	PaneMail
 	PaneMergeQueue
 	PaneGitStatus
+	PaneEvals
 )
 
 // PaneMeta holds display metadata for a pane.
@@ -36,8 +37,9 @@ func AllPanes() []PaneMeta {
 		{ID: PaneAgents, Title: "Agents", FocusKey: "3"},
 		{ID: PaneEvents, Title: "Events", FocusKey: "4"},
 		{ID: PaneMail, Title: "Mail", FocusKey: "5"},
-		{ID: PaneMergeQueue, Title: "Merge Queue", FocusKey: "6"},
-		{ID: PaneGitStatus, Title: "Git Status", FocusKey: "7"},
+		{ID: PaneEvals, Title: "Evals", FocusKey: "6"},
+		{ID: PaneMergeQueue, Title: "Merge Queue", FocusKey: "7"},
+		{ID: PaneGitStatus, Title: "Git Status", FocusKey: "8"},
 	}
 }
 
@@ -48,6 +50,7 @@ var paneOrder = []PaneID{
 	PaneAgents,
 	PaneEvents,
 	PaneMail,
+	PaneEvals,
 	PaneMergeQueue,
 	PaneGitStatus,
 }
