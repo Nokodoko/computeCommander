@@ -41,6 +41,8 @@
 
 <div align="center">
   <img src="screenshot.png" alt="computeCommander dashboard" width="90%"/>
+  <br/>
+  <img src="commanderScreenshot.png" alt="computeCommander in action" width="90%"/>
 </div>
 
 ---
