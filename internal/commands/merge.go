@@ -73,9 +73,12 @@ func mergeListCmd(app *App) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			paneMode, _ := cmd.Flags().GetBool("pane")
 			statusFilter, _ := cmd.Flags().GetString("status")
+			projectID, _ := cmd.Flags().GetString("project")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
 
-			listOpts := merge.ListOpts{}
+			listOpts := merge.ListOpts{
+				ProjectID: projectID,
+			}
 			if statusFilter != "" {
 				s := merge.MergeStatus(statusFilter)
 				listOpts.Status = &s
@@ -94,21 +97,20 @@ func mergeListCmd(app *App) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(entries)
 			}
 
-			pane, _ := cmd.Flags().GetBool("pane")
-			if pane {
-				return printMergePane(entries)
-			}
-
 			if len(entries) == 0 {
 				fmt.Println("Merge queue is empty.")
 				return nil
 			}
 
+			// Build agent color resolver for colorized output.
+			colorResolver := app.Spawner.BuildColorResolver(cmd.Context())
+
 			fmt.Printf("%-28s %-12s %-10s %-6s\n", "BRANCH", "AGENT", "STATUS", "FILES")
 			for _, e := range entries {
+				agentName := colorizeAgent(truncate(e.AgentName, 12), colorResolver(e.AgentName))
 				fmt.Printf("%-28s %-12s %-10s %-6d\n",
 					truncate(e.BranchName, 28),
-					truncate(e.AgentName, 12),
+					agentName,
 					truncate(string(e.Status), 10),
 					len(e.FilesModified),
 				)
@@ -119,6 +121,7 @@ func mergeListCmd(app *App) *cobra.Command {
 	}
 
 	cmd.Flags().String("status", "", "Filter by status (pending, merging, merged, conflict, failed)")
+	cmd.Flags().String("project", "", "Filter by project ID")
 	cmd.Flags().Bool("pane", false, "Run in long-lived pane mode (for zellij dashboard)")
 
 	return cmd
@@ -129,6 +132,13 @@ func runMergeListPane(cmd *cobra.Command, app *App, opts merge.ListOpts) error {
 	ctx := cmd.Context()
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
+
+	// Watch the SQLite DB file with fsnotify for instant refresh.
+	// When any process writes merge entries to the DB, fsnotify fires
+	// and we re-render immediately instead of waiting for the ticker.
+	dbChanged := watchDBFile(app)
+
+	watcher := newBinaryWatcher()
 
 	render := func() {
 		clearScreen()
@@ -174,7 +184,13 @@ func runMergeListPane(cmd *cobra.Command, app *App, opts merge.ListOpts) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-dbChanged:
+			// DB file changed (fsnotify) — instant refresh.
+			render()
 		case <-ticker.C:
+			if watcher.check() {
+				watcher.reexec()
+			}
 			render()
 		}
 	}

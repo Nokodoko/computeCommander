@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -38,15 +39,22 @@ var sharedApp = &commands.App{}
 // appInitialised tracks whether we have already initialised the App.
 var appInitialised bool
 
-// appPreRun loads the project config and populates sharedApp's fields.
+// appPreRun loads the system-wide config (with per-project overlay) and populates sharedApp's fields.
 func appPreRun(cmd *cobra.Command, args []string) error {
 	if appInitialised {
 		return nil
 	}
-	configPath := filepath.Join(".computecommander", "config.yaml")
-	real, err := commands.NewApp(configPath, version)
+
+	// v2: Try system-wide config loading first, fall back to per-project.
+	wd, _ := os.Getwd()
+	real, err := commands.NewAppSystemWide(wd, version)
 	if err != nil {
-		return err
+		// Fallback: try loading per-project config directly
+		configPath := filepath.Join(".computecommander", "config.yaml")
+		real, err = commands.NewApp(configPath, version)
+		if err != nil {
+			return err
+		}
 	}
 	// Copy all fields from the real App into the shared pointer.
 	*sharedApp = *real
@@ -56,6 +64,8 @@ func appPreRun(cmd *cobra.Command, args []string) error {
 
 func rootCmd() *cobra.Command {
 	var tuiFlag bool
+	var restoreFlag bool
+	var restoreForceFlag bool
 
 	root := &cobra.Command{
 		Use:   "cmdr",
@@ -86,6 +96,23 @@ conflict resolution.`,
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Restore sessions from saved state if requested.
+			if restoreFlag {
+				if err := sharedApp.RestoreSessionState(restoreForceFlag); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+				} else {
+					sm := commands.GetSessionManager(sharedApp)
+					sessions := sm.ListSessions(false)
+					fmt.Fprintf(os.Stderr, "Restored %d session(s) from saved state.\n", len(sessions))
+				}
+			}
+
+			// Start autosave goroutine (saves every 30s while sessions exist).
+			stopAutosave := commands.GetSessionManager(sharedApp).StartAutosave(
+				sharedApp.SessionStatePath(), 30*time.Second,
+			)
+			defer stopAutosave()
+
 			// Check for --tui flag or CC_DASHBOARD_TUI env var.
 			if !tuiFlag {
 				tuiFlag = os.Getenv("CC_DASHBOARD_TUI") == "1"
@@ -114,18 +141,13 @@ conflict resolution.`,
 					agentCmd = flagAgent
 				}
 
-				// Write agent wrapper script for session-switch support.
-				wrapperPath, wrapErr := zellijPkg.WriteAgentWrapper(wd, agentCmd)
-				if wrapErr != nil {
-					fmt.Fprintf(os.Stderr, "Warning: could not write agent wrapper: %v\n", wrapErr)
-				}
-
 				if writeErr := zellijPkg.WriteLayout(layoutPath, zellijPkg.LayoutOpts{
-					CmdrBinary:       cmdrBin,
-					SessionPrefix:    sharedApp.Config.Zellij.SessionPrefix,
-					ProjectDir:       wd,
-					AgentCommand:     agentCmd,
-					AgentWrapperPath: wrapperPath,
+					CmdrBinary:    cmdrBin,
+					SessionPrefix: sharedApp.Config.Zellij.SessionPrefix,
+					ProjectDir:    wd,
+					AgentCommand:  agentCmd,
+					UseWrapper:    true,
+					Version:       version,
 				}); writeErr != nil {
 					fmt.Fprintf(os.Stderr, "Warning: could not write layout file: %v\nFalling back to TUI.\n", writeErr)
 					return sharedApp.RunDashboard(cmd.Context())
@@ -152,12 +174,18 @@ conflict resolution.`,
 		},
 		PersistentPostRun: func(cmd *cobra.Command, args []string) {
 			if appInitialised {
+				// Save session state before closing.
+				if err := sharedApp.SaveSessionState(); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not save session state: %v\n", err)
+				}
 				_ = sharedApp.Close()
 			}
 		},
 	}
 
 	root.Flags().BoolVar(&tuiFlag, "tui", false, "Force in-process Bubbletea TUI (skip zellij session)")
+	root.Flags().BoolVar(&restoreFlag, "restore", false, "Restore sessions from last saved state")
+	root.Flags().BoolVar(&restoreForceFlag, "restore-force", false, "Restore even if state file is >24h old")
 	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress non-error output")
 	root.PersistentFlags().Bool("json", false, "JSON output")
 	root.PersistentFlags().Bool("timing", false, "Show execution timing")
@@ -181,6 +209,10 @@ conflict resolution.`,
 	// Commands that do NOT require an initialised project.
 	root.AddCommand(initCmd())
 	root.AddCommand(configCmd())
+
+	// v2: Project management and migration commands.
+	addAppCmd(root, commands.ProjectCmd(sharedApp))
+	addAppCmd(root, commands.MigrateCmd(sharedApp))
 
 	// Commands that require an initialised project.
 	// Each is built with the shared App pointer whose fields are populated
@@ -233,6 +265,9 @@ conflict resolution.`,
 	addAppCmd(root, commands.MetricsCmd(sharedApp))
 	addAppCmd(root, commands.RunCmd(sharedApp))
 
+	// Observability: evals.
+	addAppCmd(root, commands.EvalsCmd(sharedApp))
+
 	// Observability: clear logs (distinct from clean).
 	addAppCmd(root, commands.ClearCmd(sharedApp))
 
@@ -255,6 +290,11 @@ conflict resolution.`,
 	addAppCmd(root, commands.CleanCmd(sharedApp))
 	addAppCmd(root, commands.FeatureCmd(sharedApp))
 
+	// Agentic foundation commands (block, blueprint, gate, holdout, isolation).
+	for _, cmd := range commands.AgenticCmd(sharedApp) {
+		addAppCmd(root, cmd)
+	}
+
 	root.SetUsageTemplate(usageTemplate)
 
 	return root
@@ -271,17 +311,26 @@ func addAppCmd(root *cobra.Command, cmd *cobra.Command) {
 func initCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "init",
-		Short:   "Initialize ComputeCommander in a project",
+		Short:   "Initialize ComputeCommander in a project or system-wide",
 		GroupID: "CORE",
 		RunE:    runInit,
 	}
 	cmd.Flags().BoolP("yes", "y", false, "Skip interactive prompts")
 	cmd.Flags().String("name", "", "Project name (default: directory name)")
 	cmd.Flags().String("db", "", "Database backend: postgres|sqlite (default: auto-detect)")
+	cmd.Flags().Bool("system", false, "Initialize system-wide ~/.computecommander/")
+	cmd.Flags().Bool("force", false, "Overwrite existing system config")
 	return cmd
 }
 
 func runInit(cmd *cobra.Command, args []string) error {
+	systemFlag, _ := cmd.Flags().GetBool("system")
+	forceFlag, _ := cmd.Flags().GetBool("force")
+
+	if systemFlag {
+		return runInitSystem(cmd, forceFlag)
+	}
+
 	dir := ".computecommander"
 
 	if _, err := os.Stat(dir); err == nil {
@@ -439,6 +488,83 @@ contrast: "normal"
 	return syscall.Exec(self, []string{self, "dashboard"}, os.Environ())
 }
 
+// runInitSystem initializes the system-wide ~/.computecommander/ directory.
+func runInitSystem(cmd *cobra.Command, force bool) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("get home dir: %w", err)
+	}
+
+	dir := filepath.Join(home, ".computecommander")
+
+	if _, err := os.Stat(dir); err == nil && !force {
+		return fmt.Errorf("%s already exists; use --force to overwrite", dir)
+	}
+
+	dirs := []string{
+		dir,
+		filepath.Join(dir, "layouts"),
+		filepath.Join(dir, "scripts"),
+		filepath.Join(dir, "backups"),
+		filepath.Join(dir, "themes"),
+		filepath.Join(dir, "migrations", "completed"),
+	}
+
+	for _, d := range dirs {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			return fmt.Errorf("create directory %s: %w", d, err)
+		}
+	}
+
+	cfg := config.DefaultConfig()
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, data, 0o644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	// Create the system-wide database.
+	dbPath := filepath.Join(dir, "cc.db")
+	database, err := db.NewSQLite(dbPath)
+	if err != nil {
+		return fmt.Errorf("create system database: %w", err)
+	}
+	if err := db.Migrate(database, "sqlite"); err != nil {
+		database.Close()
+		return fmt.Errorf("apply database migrations: %w", err)
+	}
+	database.Close()
+
+	// Generate default KDL layout.
+	wd, _ := os.Getwd()
+	layoutPath := filepath.Join(dir, "layouts", "cmdr-dashboard.kdl")
+	if err := zellijPkg.WriteLayout(layoutPath, zellijPkg.LayoutOpts{
+		CmdrBinary: "cmdr",
+		ProjectDir: wd,
+	}); err != nil {
+		return fmt.Errorf("write layout: %w", err)
+	}
+
+	quiet, _ := cmd.Flags().GetBool("quiet")
+	if !quiet {
+		fmt.Printf("Initialized system-wide ComputeCommander in %s/\n", dir)
+		fmt.Printf("  Database: %s\n", dbPath)
+		fmt.Printf("  Config: %s\n", configPath)
+		fmt.Printf("  Layout: %s\n", layoutPath)
+		fmt.Println("\nCreated:")
+		for _, d := range dirs {
+			fmt.Printf("  %s/\n", d)
+		}
+	}
+
+	return nil
+}
+
 // --- config command (no App required) ---
 
 func configCmd() *cobra.Command {
@@ -576,10 +702,16 @@ func configEditCmd() *cobra.Command {
 }
 
 func loadProjectConfig() (*config.Config, error) {
-	path := filepath.Join(".computecommander", "config.yaml")
-	cfg, err := config.LoadConfig(path)
+	// v2: Try system-wide config first, fall back to per-project
+	wd, _ := os.Getwd()
+	cfg, err := config.LoadSystemConfig(wd)
 	if err != nil {
-		return nil, fmt.Errorf("load config: %w", err)
+		// Fallback to per-project config
+		path := filepath.Join(".computecommander", "config.yaml")
+		cfg, err = config.LoadConfig(path)
+		if err != nil {
+			return nil, fmt.Errorf("load config: %w", err)
+		}
 	}
 	return cfg, nil
 }

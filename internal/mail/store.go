@@ -53,6 +53,9 @@ type ListOpts struct {
 
 	// Limit caps the number of returned messages. 0 means no limit.
 	Limit int
+
+	// ProjectID filters to messages for this project. Empty means all projects.
+	ProjectID string
 }
 
 // PurgeOpts controls which messages get purged.

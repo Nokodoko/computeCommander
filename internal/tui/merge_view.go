@@ -9,9 +9,10 @@ import (
 
 // MergeQueueView renders the merge queue status.
 type MergeQueueView struct {
-	queue   merge.MergeQueue
-	entries []*merge.MergeEntry
-	theme   *Theme
+	queue         merge.MergeQueue
+	entries       []*merge.MergeEntry
+	theme         *Theme
+	colorResolver AgentColorResolver
 }
 
 // NewMergeQueueView constructs a MergeQueueView.
@@ -20,6 +21,11 @@ func NewMergeQueueView(queue merge.MergeQueue, theme *Theme) *MergeQueueView {
 		queue: queue,
 		theme: theme,
 	}
+}
+
+// SetColorResolver sets the function used to resolve agent colors for agent names.
+func (v *MergeQueueView) SetColorResolver(resolver AgentColorResolver) {
+	v.colorResolver = resolver
 }
 
 // Refresh fetches the latest queue entries.
@@ -73,9 +79,17 @@ func (v *MergeQueueView) View() string {
 		statusStr := v.renderMergeStatus(e.Status)
 		fileCount := fmt.Sprintf("%d", len(e.FilesModified))
 
+		// Color the agent name using their assigned palette color.
+		agentName := truncate(e.AgentName, cols[1].Width)
+		if v.colorResolver != nil {
+			if hex := v.colorResolver(e.AgentName); hex != "" {
+				agentName = AgentColorStyle(hex).Render(agentName)
+			}
+		}
+
 		rows = append(rows, []string{
 			truncate(e.BranchName, cols[0].Width),
-			truncate(e.AgentName, cols[1].Width),
+			agentName,
 			statusStr,
 			fileCount,
 		})

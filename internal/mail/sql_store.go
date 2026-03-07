@@ -82,13 +82,19 @@ func (s *sqlStore) Send(msg *MailMessage) error {
 		if i > 0 {
 			id = fmt.Sprintf("%s-%d", msg.ID, i)
 		}
+		// Pass SQL NULL for empty ProjectID to avoid FK constraint violation.
+		var projectID any
+		if msg.ProjectID != "" {
+			projectID = msg.ProjectID
+		}
 		err := s.db.Exec(ctx,
-			`INSERT INTO mail (id, from_agent, to_agent, subject, body, priority, type, thread_id, payload, read, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+			`INSERT INTO mail (id, from_agent, to_agent, subject, body, priority, type, thread_id, payload, read, created_at, project_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
 			id, msg.From, to, msg.Subject, msg.Body,
 			string(msg.Priority), string(msg.Type),
 			msg.ThreadID, payloadStr,
 			msg.CreatedAt.Format(time.RFC3339),
+			projectID,
 		)
 		if err != nil {
 			return fmt.Errorf("insert mail for %s: %w", to, err)
@@ -157,6 +163,10 @@ func (s *sqlStore) List(opts ListOpts) ([]*MailMessage, error) {
 	}
 	if opts.Unread {
 		clauses = append(clauses, "read = 0")
+	}
+	if opts.ProjectID != "" {
+		clauses = append(clauses, "project_id = ?")
+		args = append(args, opts.ProjectID)
 	}
 
 	query := `SELECT id, from_agent, to_agent, subject, body, priority, type, thread_id, payload, read, created_at

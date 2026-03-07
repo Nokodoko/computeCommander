@@ -12,6 +12,74 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// activeCmdrTab represents a running cmdr dashboard tab discovered via its CWD file.
+type activeCmdrTab struct {
+	Hash       string // 8-char md5 hash (the tab identifier)
+	ProjectDir string // current project directory from the CWD file
+}
+
+// discoverActiveTabs scans /tmp/cmdr-<uid>-*-cwd files to find all running
+// cmdr dashboard tabs. Each tab's agent-wrapper writes a CWD file with a
+// hash derived from its INITIAL_DIR, so we can discover them and write
+// the correct per-tab switch file.
+//
+// Validates liveness by checking if an inotifywait process is watching
+// the CWD file (fp-wrapper and lazygit-wrapper use inotifywait).
+func discoverActiveTabs() []activeCmdrTab {
+	uid := os.Getuid()
+	pattern := fmt.Sprintf("/tmp/cmdr-%d-*-cwd", uid)
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil
+	}
+
+	// The "active-cwd" file is not a tab — skip it.
+	var tabs []activeCmdrTab
+	for _, path := range matches {
+		base := filepath.Base(path)
+		// Format: cmdr-<uid>-<hash>-cwd
+		// Skip the special active-cwd file.
+		if strings.Contains(base, "active-cwd") {
+			continue
+		}
+		// Extract the hash from the filename.
+		prefix := fmt.Sprintf("cmdr-%d-", uid)
+		rest := strings.TrimPrefix(base, prefix)
+		hash := strings.TrimSuffix(rest, "-cwd")
+		if hash == "" || hash == rest {
+			continue
+		}
+		// Read the project dir from the file.
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		projectDir := strings.TrimSpace(string(data))
+		if projectDir == "" {
+			continue
+		}
+		// Validate liveness: check if an inotifywait process is watching this file.
+		// The fp-wrapper and lazygit-wrapper both use inotifywait on the CWD file.
+		if !isTabAlive(path) {
+			continue
+		}
+		tabs = append(tabs, activeCmdrTab{Hash: hash, ProjectDir: projectDir})
+	}
+	return tabs
+}
+
+// isTabAlive checks if a dashboard tab is still running by looking for
+// inotifywait processes watching the given CWD file path.
+func isTabAlive(cwdFilePath string) bool {
+	// Use pgrep to find inotifywait processes, then check if any watch this file.
+	out, err := exec.Command("pgrep", "-a", "inotifywait").Output()
+	if err != nil {
+		// pgrep not found or no matches — assume alive to avoid false negatives.
+		return true
+	}
+	return strings.Contains(string(out), cwdFilePath)
+}
+
 // SessionsCmd returns the "sessions" command for picking and switching Claude sessions.
 func SessionsCmd(app *App) *cobra.Command {
 	return &cobra.Command{
@@ -58,17 +126,70 @@ func SessionsCmd(app *App) *cobra.Command {
 				return fmt.Errorf("session not found: %s", selected)
 			}
 
-			// Write switch file for the agent wrapper.
-			// Use an absolute path so the file lands in the project root's
-			// .computecommander/ directory regardless of CWD (the floating
-			// pane zellij spawns may not inherit the project CWD).
-			wd, wdErr := os.Getwd()
-			if wdErr != nil {
-				return fmt.Errorf("get working directory: %w", wdErr)
+			// Determine which dashboard tab to target.
+			home, homeErr := os.UserHomeDir()
+			if homeErr != nil {
+				return fmt.Errorf("get home directory: %w", homeErr)
 			}
-			switchPath := filepath.Join(wd, ".computecommander", "session-switch")
+			switchDir := filepath.Join(home, ".computecommander")
+			if err := os.MkdirAll(switchDir, 0o755); err != nil {
+				return fmt.Errorf("create switch dir: %w", err)
+			}
 			content := fmt.Sprintf("%s\n%s\n", match.ProjectPath, match.SessionID)
-			if err := os.WriteFile(switchPath, []byte(content), 0o644); err != nil {
+
+			// Discover all active cmdr dashboard tabs.
+			tabs := discoverActiveTabs()
+
+			var targetHash string
+
+			// Best: check CMDR_TAB_HASH env var (set by wrapper scripts,
+			// available when running from a cmdr pane directly).
+			if envHash := os.Getenv("CMDR_TAB_HASH"); envHash != "" {
+				for _, tab := range tabs {
+					if tab.Hash == envHash {
+						targetHash = envHash
+						break
+					}
+				}
+			}
+
+			// One tab: use it directly. Multiple tabs: always show picker.
+			// CWD matching is unreliable (split panes may have a CWD that
+			// matches a different tab), so we don't attempt it.
+			if targetHash == "" && len(tabs) == 1 {
+				targetHash = tabs[0].Hash
+			} else if targetHash == "" && len(tabs) > 1 {
+				tabLines := make([]string, len(tabs))
+				for i, tab := range tabs {
+					tabLines[i] = fmt.Sprintf("[%s] %s", tab.Hash, filepath.Base(tab.ProjectDir))
+				}
+				picked, err := gumFilter(tabLines, "Which dashboard tab?")
+				if err != nil {
+					return fmt.Errorf("tab picker: %w", err)
+				}
+				if picked == "" {
+					return nil // user cancelled
+				}
+				for _, tab := range tabs {
+					label := fmt.Sprintf("[%s] %s", tab.Hash, filepath.Base(tab.ProjectDir))
+					if label == picked {
+						targetHash = tab.Hash
+						break
+					}
+				}
+			}
+
+			// Write the per-tab switch file for the targeted tab.
+			if targetHash != "" {
+				perTabPath := filepath.Join(switchDir, "session-switch-"+targetHash)
+				if err := os.WriteFile(perTabPath, []byte(content), 0o644); err != nil {
+					return fmt.Errorf("write per-tab switch file: %w", err)
+				}
+			}
+
+			// Also write global switch file as fallback.
+			globalSwitchPath := filepath.Join(switchDir, "session-switch")
+			if err := os.WriteFile(globalSwitchPath, []byte(content), 0o644); err != nil {
 				return fmt.Errorf("write switch file: %w", err)
 			}
 

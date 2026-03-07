@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -590,6 +591,248 @@ func TestCommandPalette(t *testing.T) {
 	cp.Close()
 	if cp.Visible() {
 		t.Error("palette should be hidden after Close")
+	}
+}
+
+// --- EvalsPane Tests ---------------------------------------------------------
+
+func TestEvalsPaneEmpty(t *testing.T) {
+	theme := DefaultTheme()
+	ep := NewEvalsPane(nil, theme)
+
+	view := ep.View()
+	if !strings.Contains(view, "No evals registered") {
+		t.Error("empty evals pane should show 'No evals registered'")
+	}
+	if !strings.Contains(view, "[r] Run All") {
+		t.Error("empty evals pane should show key hints")
+	}
+}
+
+func TestEvalsPaneWithData(t *testing.T) {
+	theme := DefaultTheme()
+	ep := NewEvalsPane(nil, theme)
+
+	// Manually inject evals (bypassing DB).
+	passed := true
+	failed := false
+	ep.evals = []EvalRow{
+		{ID: "eval-001", ProjectName: "proj", AgentTask: "unit tests", EvalType: "unit_test", Passed: &passed},
+		{ID: "eval-002", ProjectName: "proj", AgentTask: "build check", EvalType: "build", Passed: &failed, ErrorDetail: "compile error"},
+		{ID: "eval-003", ProjectName: "proj", AgentTask: "lint", EvalType: "lint", Passed: nil},
+	}
+
+	ep.SetSize(80, 20)
+
+	view := ep.View()
+	if !strings.Contains(view, "unit_test") {
+		t.Error("view should contain eval type 'unit_test'")
+	}
+	if !strings.Contains(view, "build") {
+		t.Error("view should contain eval type 'build'")
+	}
+	if !strings.Contains(view, "lint") {
+		t.Error("view should contain eval type 'lint'")
+	}
+}
+
+func TestEvalsPaneCursor(t *testing.T) {
+	theme := DefaultTheme()
+	ep := NewEvalsPane(nil, theme)
+
+	passed := true
+	ep.evals = []EvalRow{
+		{ID: "eval-001", EvalType: "unit_test", Passed: &passed},
+		{ID: "eval-002", EvalType: "build", Passed: &passed},
+		{ID: "eval-003", EvalType: "lint", Passed: &passed},
+	}
+
+	// Initial cursor at 0.
+	if ep.cursor != 0 {
+		t.Errorf("initial cursor should be 0, got %d", ep.cursor)
+	}
+
+	// Move down.
+	ep.ScrollDown()
+	if ep.cursor != 1 {
+		t.Errorf("cursor after ScrollDown should be 1, got %d", ep.cursor)
+	}
+
+	ep.ScrollDown()
+	if ep.cursor != 2 {
+		t.Errorf("cursor after second ScrollDown should be 2, got %d", ep.cursor)
+	}
+
+	// Should clamp at end.
+	ep.ScrollDown()
+	if ep.cursor != 2 {
+		t.Errorf("cursor should clamp at 2, got %d", ep.cursor)
+	}
+
+	// Move up.
+	ep.ScrollUp()
+	if ep.cursor != 1 {
+		t.Errorf("cursor after ScrollUp should be 1, got %d", ep.cursor)
+	}
+
+	ep.ScrollUp()
+	ep.ScrollUp() // Should clamp at 0.
+	if ep.cursor != 0 {
+		t.Errorf("cursor should clamp at 0, got %d", ep.cursor)
+	}
+}
+
+func TestEvalsPaneCounts(t *testing.T) {
+	theme := DefaultTheme()
+	ep := NewEvalsPane(nil, theme)
+
+	passed := true
+	failed := false
+	ep.evals = []EvalRow{
+		{ID: "eval-001", Passed: &passed},
+		{ID: "eval-002", Passed: &passed},
+		{ID: "eval-003", Passed: &failed},
+		{ID: "eval-004", Passed: nil}, // never run
+	}
+
+	if ep.EvalCount() != 4 {
+		t.Errorf("expected EvalCount=4, got %d", ep.EvalCount())
+	}
+	if ep.PassedCount() != 2 {
+		t.Errorf("expected PassedCount=2, got %d", ep.PassedCount())
+	}
+	if ep.FailedCount() != 1 {
+		t.Errorf("expected FailedCount=1, got %d", ep.FailedCount())
+	}
+}
+
+func TestEvalsPaneRefreshNilDB(t *testing.T) {
+	theme := DefaultTheme()
+	ep := NewEvalsPane(nil, theme)
+
+	// Refresh with nil DB should return nil (no-op).
+	if err := ep.Refresh(); err != nil {
+		t.Errorf("Refresh with nil DB should not error: %v", err)
+	}
+}
+
+func TestEvalsPaneRunAllNilDB(t *testing.T) {
+	theme := DefaultTheme()
+	ep := NewEvalsPane(nil, theme)
+
+	// RunAll with nil DB should return nil (no-op).
+	if err := ep.RunAll(); err != nil {
+		t.Errorf("RunAll with nil DB should not error: %v", err)
+	}
+}
+
+func TestEvalsPaneSetSize(t *testing.T) {
+	theme := DefaultTheme()
+	ep := NewEvalsPane(nil, theme)
+
+	ep.SetSize(100, 25)
+	if ep.width != 100 {
+		t.Errorf("expected width 100, got %d", ep.width)
+	}
+	if ep.height != 25 {
+		t.Errorf("expected height 25, got %d", ep.height)
+	}
+}
+
+func TestEvalsPaneViewCursorIndicator(t *testing.T) {
+	theme := DefaultTheme()
+	ep := NewEvalsPane(nil, theme)
+
+	passed := true
+	ep.evals = []EvalRow{
+		{ID: "eval-001", EvalType: "unit_test", AgentTask: "first", Passed: &passed},
+		{ID: "eval-002", EvalType: "build", AgentTask: "second", Passed: &passed},
+	}
+	ep.SetSize(80, 20)
+
+	view := ep.View()
+	if !strings.Contains(view, "> ") {
+		t.Error("view should contain cursor indicator '> ' for selected item")
+	}
+
+	// Move cursor to second item.
+	ep.ScrollDown()
+	view2 := ep.View()
+	lines := strings.Split(view2, "\n")
+	// The second line (index 1) should have the cursor.
+	if len(lines) < 2 {
+		t.Fatal("expected at least 2 lines in view")
+	}
+	if !strings.HasPrefix(lines[1], "> ") {
+		t.Errorf("second line should start with '> ', got %q", lines[1])
+	}
+}
+
+func TestEvalsPaneHeightClamp(t *testing.T) {
+	theme := DefaultTheme()
+	ep := NewEvalsPane(nil, theme)
+
+	passed := true
+	// Add more evals than the pane height allows.
+	for i := 0; i < 20; i++ {
+		ep.evals = append(ep.evals, EvalRow{
+			ID:       fmt.Sprintf("eval-%03d", i),
+			EvalType: "custom",
+			Passed:   &passed,
+		})
+	}
+
+	// Set a small height -- only 5 lines available for content (4 evals + 1 footer).
+	ep.SetSize(80, 5)
+	view := ep.View()
+	lines := strings.Split(view, "\n")
+
+	// Should have at most height lines (4 content + 1 footer = 5).
+	if len(lines) > 5 {
+		t.Errorf("expected at most 5 lines, got %d", len(lines))
+	}
+}
+
+func TestEvalsPaneDefaultDimensions(t *testing.T) {
+	theme := DefaultTheme()
+	ep := NewEvalsPane(nil, theme)
+
+	passed := true
+	ep.evals = []EvalRow{
+		{ID: "eval-001", EvalType: "unit_test", AgentTask: "test", Passed: &passed},
+	}
+
+	// Width and height default to 0; View() should use defaults (60, 10).
+	view := ep.View()
+	if view == "" {
+		t.Error("view should not be empty with default dimensions")
+	}
+}
+
+func TestDashboardEvalsPaneIntegration(t *testing.T) {
+	// Verify that the dashboard creates an evals pane and it renders in the view.
+	d := NewDashboard(DashboardOpts{
+		Lister:   &mockSessionLister{},
+		Mail:     &mockMailStore{},
+		Queue:    &mockMergeQueue{},
+		Interval: time.Second,
+	})
+	d.width = 160
+	d.height = 50
+
+	view := d.View()
+	if !strings.Contains(view, "Evals") {
+		t.Error("dashboard view should contain Evals pane title")
+	}
+}
+
+func TestPaneEvalsFocusKey(t *testing.T) {
+	meta := paneMetaByID(PaneEvals)
+	if meta.Title != "Evals" {
+		t.Errorf("expected Evals pane title, got %q", meta.Title)
+	}
+	if meta.FocusKey != "6" {
+		t.Errorf("expected Evals focus key '6', got %q", meta.FocusKey)
 	}
 }
 

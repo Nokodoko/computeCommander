@@ -28,6 +28,7 @@ type Worktree struct {
 	Branch    string
 	Agent     string
 	TaskID    string
+	ProjectID string
 	CreatedAt time.Time
 	State     WorktreeState
 }
@@ -44,10 +45,11 @@ type WorktreeStatus struct {
 
 // CreateOpts configures worktree creation.
 type CreateOpts struct {
-	Branch  string // branch name for the new worktree
-	Agent   string // agent identifier
-	TaskID  string // task identifier
-	BaseDir string // base directory for worktrees
+	Branch    string // branch name for the new worktree
+	Agent     string // agent identifier
+	TaskID    string // task identifier
+	ProjectID string // project ID for scoping
+	BaseDir   string // base directory for worktrees
 }
 
 // CleanOpts configures which worktrees to clean.
@@ -148,6 +150,7 @@ func (m *Manager) Create(opts CreateOpts) (*Worktree, error) {
 		Branch:    opts.Branch,
 		Agent:     opts.Agent,
 		TaskID:    opts.TaskID,
+		ProjectID: opts.ProjectID,
 		CreatedAt: time.Now(),
 		State:     WorktreeActive,
 	}

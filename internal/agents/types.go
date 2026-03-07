@@ -91,9 +91,20 @@ type AgentSession struct {
 	TranscriptPath  string             `json:"transcriptPath" db:"transcript_path"`
 	Runtime         runtimes.RuntimeID `json:"runtime" db:"runtime"`
 
+	// v2: Project and color fields
+	ProjectID  string `json:"projectId" db:"project_id"`
+	ColorIndex int    `json:"colorIndex" db:"color_index"`
+	ColorHex   string `json:"colorHex" db:"color_hex"`
+
 	// Token usage aggregated from the metrics table (populated by ListSessions JOIN).
 	InputTokens  int64 `json:"inputTokens"`
 	OutputTokens int64 `json:"outputTokens"`
+}
+
+// DisplayColorHex returns the color hex to use for rendering, applying the
+// gold override for completed agents.
+func (s *AgentSession) DisplayColorHex() string {
+	return ColorForState(s.ColorHex, s.State)
 }
 
 // SpawnRequest contains the parameters for spawning a new agent (spec section 3.1.1).
@@ -109,6 +120,7 @@ type SpawnRequest struct {
 	SkipScout  bool               `json:"skipScout"`
 	SkipReview bool               `json:"skipReview"`
 	MaxAgents  int                `json:"maxAgents"`
+	ProjectID  string             `json:"projectId"`
 }
 
 // SpawnResult is the output from a successful spawn.
@@ -132,4 +144,5 @@ type ListOpts struct {
 	Capability Capability
 	State      SessionState
 	Parent     string
+	ProjectID  string
 }

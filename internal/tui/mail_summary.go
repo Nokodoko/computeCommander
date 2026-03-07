@@ -7,13 +7,18 @@ import (
 	"github.com/noko/computecommander/internal/mail"
 )
 
+// AgentColorResolver maps agent names to their assigned color hex.
+// Returns empty string if the agent has no color assignment.
+type AgentColorResolver func(agentName string) string
+
 // MailSummary renders unread mail count and recent message previews.
 type MailSummary struct {
-	store       mail.MailStore
-	unread      int
-	recent      []*mail.MailMessage
-	previewMax  int
-	theme       *Theme
+	store         mail.MailStore
+	unread        int
+	recent        []*mail.MailMessage
+	previewMax    int
+	theme         *Theme
+	colorResolver AgentColorResolver
 }
 
 // NewMailSummary constructs a MailSummary.
@@ -23,6 +28,11 @@ func NewMailSummary(store mail.MailStore, theme *Theme) *MailSummary {
 		previewMax: 5,
 		theme:      theme,
 	}
+}
+
+// SetColorResolver sets the function used to resolve agent colors for sender names.
+func (m *MailSummary) SetColorResolver(resolver AgentColorResolver) {
+	m.colorResolver = resolver
 }
 
 // Refresh fetches unread count and recent messages.
@@ -70,10 +80,17 @@ func (m *MailSummary) View() string {
 		if !msg.Read {
 			readMark = "*"
 		}
+		// Color the sender name using the agent's assigned color.
+		senderName := truncate(msg.From, 10)
+		if m.colorResolver != nil {
+			if hex := m.colorResolver(msg.From); hex != "" {
+				senderName = AgentColorStyle(hex).Render(senderName)
+			}
+		}
 		line := fmt.Sprintf(" %s [%s] %s -> %s: %s",
 			readMark,
 			string(msg.Type),
-			truncate(msg.From, 10),
+			senderName,
 			truncate(msg.To, 10),
 			truncate(msg.Subject, 30),
 		)

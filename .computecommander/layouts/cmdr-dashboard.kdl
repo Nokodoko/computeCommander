@@ -7,7 +7,7 @@ layout {
                     command "fp"
                     args "/home/n0ko/Programs/ai/computeCommander"
                 }
-                pane size="65%" focus=true borderless=true {
+                pane size="65%" focus=true {
                     command "claude"
                     args "--dangerously-skip-permissions" "--no-chrome" "--disallowedTools" "WebSearch" "WebFetch" "NotebookEdit"
                 }

@@ -13,7 +13,9 @@ import (
 // Config is the top-level ComputeCommander configuration matching spec section 6.1.
 type Config struct {
 	Version   int              `yaml:"version"`
+	System    SystemConfig     `yaml:"system"`
 	Project   ProjectConfig    `yaml:"project"`
+	Projects  []ProjectEntry   `yaml:"projects"`
 	Database  DatabaseConfig   `yaml:"database"`
 	Zellij    ZellijConfig     `yaml:"zellij"`
 	Agents    AgentsConfig     `yaml:"agents"`
@@ -25,6 +27,92 @@ type Config struct {
 	Features  FeaturesConfig   `yaml:"features"`
 	Logging   LoggingConfig    `yaml:"logging"`
 	Runtimes  RuntimesConfig   `yaml:"runtimes"`
+	Agentic   AgenticConfig    `yaml:"agentic"`
+}
+
+// SystemConfig holds system-wide configuration for ccv2.
+type SystemConfig struct {
+	Home            string `yaml:"home"`
+	DBPath          string `yaml:"db_path"`
+	DashboardLayout string `yaml:"dashboard_layout"`
+}
+
+// ProjectEntry represents a registered project in the system-wide config.
+type ProjectEntry struct {
+	Path string `yaml:"path"`
+	Name string `yaml:"name"`
+}
+
+// AgenticConfig holds agentic foundation configuration.
+type AgenticConfig struct {
+	Trace     TraceConfig     `yaml:"trace"`
+	Blocks    BlocksConfig    `yaml:"blocks"`
+	Isolation IsolationConfig `yaml:"isolation"`
+	Gates     GatesConfig     `yaml:"gates"`
+	Holdout   HoldoutConfig   `yaml:"holdout"`
+	Blueprint BlueprintConfig `yaml:"blueprint"`
+}
+
+// TraceConfig configures the traceability engine.
+type TraceConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	BatchSize     int    `yaml:"batch_size"`      // Max events before flush (default: 100)
+	FlushInterval string `yaml:"flush_interval"`  // Max time before flush (default: "5s")
+	RetentionDays int    `yaml:"retention_days"`   // Auto-prune after N days (default: 7)
+}
+
+// BlocksConfig configures the block rule engine.
+type BlocksConfig struct {
+	Enabled      bool     `yaml:"enabled"`
+	RulesDir     string   `yaml:"rules_dir"`       // Directory containing YAML rule files
+	DefaultRules string   `yaml:"default_rules"`    // Path to default.yaml
+	CustomRules  string   `yaml:"custom_rules"`     // Path to custom.yaml (optional)
+	FailClosed   bool     `yaml:"fail_closed"`      // If true, block on rule engine failure
+}
+
+// IsolationConfig configures the isolation engine.
+type IsolationConfig struct {
+	Enabled         bool              `yaml:"enabled"`
+	UseCgroups      bool              `yaml:"use_cgroups"`       // Enable cgroup v2 isolation
+	UseNamespaces   bool              `yaml:"use_namespaces"`    // Enable mount namespace isolation
+	DefaultResources ResourceDefaults `yaml:"default_resources"` // Default resource limits
+}
+
+// ResourceDefaults holds default resource limits for isolation.
+type ResourceDefaults struct {
+	CPUShares    int `yaml:"cpu_shares"`    // cgroup cpu.shares (default: 512)
+	MemoryMB     int `yaml:"memory_mb"`     // cgroup memory.max in MB (default: 2048)
+	DiskMB       int `yaml:"disk_mb"`       // Disk quota in MB (default: 1024)
+	MaxProcesses int `yaml:"max_processes"` // pids.max (default: 50)
+}
+
+// GatesConfig configures the quality gate pipeline.
+type GatesConfig struct {
+	Enabled    bool       `yaml:"enabled"`
+	Timeout    string     `yaml:"timeout"`     // Per-gate timeout (default: "5m")
+	RetryLimit int        `yaml:"retry_limit"` // Max gate retries (default: 3)
+	Pipeline   []GateDef  `yaml:"pipeline"`    // Ordered list of gates
+}
+
+// GateDef defines a single quality gate in the pipeline.
+type GateDef struct {
+	Name    string `yaml:"name"`    // lint|typecheck|test|security|format
+	Command string `yaml:"command"` // Shell command to run
+	Enabled bool   `yaml:"enabled"`
+}
+
+// HoldoutConfig configures the anti-gaming holdout system.
+type HoldoutConfig struct {
+	Enabled        bool    `yaml:"enabled"`
+	KeyPath        string  `yaml:"key_path"`        // Path to age recipient file
+	DriftThreshold float64 `yaml:"drift_threshold"` // Score below which drift alert fires (default: 0.7)
+}
+
+// BlueprintConfig configures the blueprint engine.
+type BlueprintConfig struct {
+	Enabled      bool   `yaml:"enabled"`
+	BlueprintDir string `yaml:"blueprint_dir"` // Directory for blueprint YAML files
+	DefaultTimeout string `yaml:"default_timeout"` // Default timeout for blueprints (default: "30m")
 }
 
 type ProjectConfig struct {
@@ -150,10 +238,16 @@ type PiConfig struct {
 // DefaultConfig returns a Config with sensible defaults matching spec section 6.1.
 func DefaultConfig() *Config {
 	return &Config{
-		Version: 1,
+		Version: 2,
+		System: SystemConfig{
+			Home:            "~",
+			DBPath:          "~/.computecommander/cc.db",
+			DashboardLayout: "~/.computecommander/layouts/cmdr-dashboard.kdl",
+		},
 		Project: ProjectConfig{
 			CanonicalBranch: "main",
 		},
+		Projects: []ProjectEntry{},
 		Database: DatabaseConfig{
 			Driver: "sqlite",
 			Postgres: PostgresConfig{
@@ -165,12 +259,12 @@ func DefaultConfig() *Config {
 				PoolSize: 10,
 			},
 			SQLite: SQLiteConfig{
-				Path: ".computecommander/local.db",
+				Path: "~/.computecommander/cc.db",
 			},
 		},
 		Zellij: ZellijConfig{
 			Layout:          "default",
-			DashboardLayout: ".computecommander/layouts/cmdr-dashboard.kdl",
+			DashboardLayout: "~/.computecommander/layouts/cmdr-dashboard.kdl",
 			Terminal:        "wezterm",
 			SessionPrefix:   "cc",
 		},
@@ -232,6 +326,54 @@ func DefaultConfig() *Config {
 			RedactSecrets: true,
 			Format:        "human",
 			Level:         "info",
+		},
+		Agentic: AgenticConfig{
+			Trace: TraceConfig{
+				Enabled:       true,
+				BatchSize:     100,
+				FlushInterval: "5s",
+				RetentionDays: 7,
+			},
+			Blocks: BlocksConfig{
+				Enabled:      true,
+				RulesDir:     ".computecommander/blocks",
+				DefaultRules: ".computecommander/blocks/default.yaml",
+				CustomRules:  ".computecommander/blocks/custom.yaml",
+				FailClosed:   true,
+			},
+			Isolation: IsolationConfig{
+				Enabled:       false,
+				UseCgroups:    false,
+				UseNamespaces: false,
+				DefaultResources: ResourceDefaults{
+					CPUShares:    512,
+					MemoryMB:     2048,
+					DiskMB:       1024,
+					MaxProcesses: 50,
+				},
+			},
+			Gates: GatesConfig{
+				Enabled:    true,
+				Timeout:    "5m",
+				RetryLimit: 3,
+				Pipeline: []GateDef{
+					{Name: "format", Command: "gofmt -l .", Enabled: true},
+					{Name: "lint", Command: "golangci-lint run", Enabled: true},
+					{Name: "typecheck", Command: "go vet ./...", Enabled: true},
+					{Name: "test", Command: "go test ./...", Enabled: true},
+					{Name: "security", Command: "gosec ./...", Enabled: false},
+				},
+			},
+			Holdout: HoldoutConfig{
+				Enabled:        false,
+				KeyPath:        ".computecommander/holdouts/holdout-key.pub",
+				DriftThreshold: 0.7,
+			},
+			Blueprint: BlueprintConfig{
+				Enabled:        true,
+				BlueprintDir:   ".computecommander/blueprints",
+				DefaultTimeout: "30m",
+			},
 		},
 		Runtimes: RuntimesConfig{
 			Claude: RuntimeConfig{
@@ -323,14 +465,139 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 
+	// Auto-upgrade v1 configs to v2
+	if cfg.Version < 2 {
+		cfg.UpgradeV1ToV2()
+	}
+
 	// Expand tilde in path-valued fields. Go does not expand "~/" automatically,
 	// so paths like "~/.computecommander/layouts/foo.kdl" would be passed as
 	// literal strings to exec.Command, causing file-not-found failures.
 	cfg.Zellij.DashboardLayout = expandTilde(cfg.Zellij.DashboardLayout)
 	cfg.Database.SQLite.Path = expandTilde(cfg.Database.SQLite.Path)
 	cfg.Worktrees.BaseDir = expandTilde(cfg.Worktrees.BaseDir)
+	cfg.System.DBPath = expandTilde(cfg.System.DBPath)
+	cfg.System.DashboardLayout = expandTilde(cfg.System.DashboardLayout)
+	cfg.System.Home = expandTilde(cfg.System.Home)
 
 	return cfg, nil
+}
+
+// LoadSystemConfig loads the system-wide config from ~/.computecommander/config.yaml,
+// then overlays the per-project config if projectPath is non-empty.
+func LoadSystemConfig(projectPath string) (*Config, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("get home dir: %w", err)
+	}
+
+	systemConfigPath := filepath.Join(home, ".computecommander", "config.yaml")
+
+	// Start with defaults
+	cfg := DefaultConfig()
+
+	// Load system-wide config if it exists
+	if data, err := os.ReadFile(systemConfigPath); err == nil {
+		data = expandEnvVars(data)
+		if err := yaml.Unmarshal(data, cfg); err != nil {
+			return nil, fmt.Errorf("parse system config %s: %w", systemConfigPath, err)
+		}
+
+		// Load system-wide local overlay
+		dir := filepath.Dir(systemConfigPath)
+		localPath := filepath.Join(dir, "config.local.yaml")
+		if localData, err := os.ReadFile(localPath); err == nil {
+			localData = expandEnvVars(localData)
+			if err := yaml.Unmarshal(localData, cfg); err != nil {
+				return nil, fmt.Errorf("parse system local config %s: %w", localPath, err)
+			}
+		}
+	}
+
+	// Overlay per-project config if provided
+	if projectPath != "" {
+		projectConfigPath := filepath.Join(projectPath, ".computecommander", "config.yaml")
+		if data, err := os.ReadFile(projectConfigPath); err == nil {
+			data = expandEnvVars(data)
+			if err := yaml.Unmarshal(data, cfg); err != nil {
+				return nil, fmt.Errorf("parse project config %s: %w", projectConfigPath, err)
+			}
+
+			// Project-local overlay
+			localPath := filepath.Join(projectPath, ".computecommander", "config.local.yaml")
+			if localData, err := os.ReadFile(localPath); err == nil {
+				localData = expandEnvVars(localData)
+				if err := yaml.Unmarshal(localData, cfg); err != nil {
+					return nil, fmt.Errorf("parse project local config %s: %w", localPath, err)
+				}
+			}
+		}
+	}
+
+	// Auto-upgrade v1 configs to v2
+	if cfg.Version < 2 {
+		cfg.UpgradeV1ToV2()
+	}
+
+	// Expand tilde in all path-valued fields
+	cfg.Zellij.DashboardLayout = expandTilde(cfg.Zellij.DashboardLayout)
+	cfg.Database.SQLite.Path = expandTilde(cfg.Database.SQLite.Path)
+	cfg.Worktrees.BaseDir = expandTilde(cfg.Worktrees.BaseDir)
+	cfg.System.DBPath = expandTilde(cfg.System.DBPath)
+	cfg.System.DashboardLayout = expandTilde(cfg.System.DashboardLayout)
+	cfg.System.Home = expandTilde(cfg.System.Home)
+
+	return cfg, nil
+}
+
+// IsSystemWide returns true if this is a v2 system-wide config.
+func (c *Config) IsSystemWide() bool {
+	return c.Version >= 2 && c.System.DBPath != ""
+}
+
+// SystemDBPath returns the expanded path to the system-wide database.
+func (c *Config) SystemDBPath() string {
+	return expandTilde(c.System.DBPath)
+}
+
+// SystemHome returns the expanded system home directory.
+func (c *Config) SystemHome() string {
+	if c.System.Home == "" || c.System.Home == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "."
+		}
+		return home
+	}
+	return expandTilde(c.System.Home)
+}
+
+// UpgradeV1ToV2 applies v2 defaults to a v1 config.
+func (c *Config) UpgradeV1ToV2() {
+	if c.Version >= 2 {
+		return
+	}
+	c.Version = 2
+	if c.System.Home == "" {
+		c.System.Home = "~"
+	}
+	if c.System.DBPath == "" {
+		c.System.DBPath = "~/.computecommander/cc.db"
+	}
+	if c.System.DashboardLayout == "" {
+		c.System.DashboardLayout = "~/.computecommander/layouts/cmdr-dashboard.kdl"
+	}
+	// Preserve per-project SQLite path. The cmdr-bridge hook writes agent
+	// sessions to the project-local .computecommander/local.db, so remapping
+	// to the system-wide cc.db would cause cmdr status to read from a different
+	// database than the one agents are registered in.
+	// Migrate zellij dashboard layout
+	if c.Zellij.DashboardLayout == ".computecommander/layouts/cmdr-dashboard.kdl" {
+		c.Zellij.DashboardLayout = "~/.computecommander/layouts/cmdr-dashboard.kdl"
+	}
+	if c.Projects == nil {
+		c.Projects = []ProjectEntry{}
+	}
 }
 
 // Validate checks the config for required fields and valid values.
@@ -339,6 +606,10 @@ func (c *Config) Validate() error {
 
 	if c.Version < 1 {
 		errs = append(errs, "version must be >= 1")
+	}
+
+	if c.Version > 2 {
+		errs = append(errs, fmt.Sprintf("version %d is not supported (max: 2)", c.Version))
 	}
 
 	if c.Database.Driver != "postgres" && c.Database.Driver != "sqlite" {

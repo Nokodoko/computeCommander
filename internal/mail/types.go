@@ -87,4 +87,5 @@ type MailMessage struct {
 	Payload   json.RawMessage `json:"payload" db:"payload"`
 	Read      bool            `json:"read" db:"read"`
 	CreatedAt time.Time       `json:"createdAt" db:"created_at"`
+	ProjectID string          `json:"projectId,omitempty" db:"project_id"`
 }

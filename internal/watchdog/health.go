@@ -32,6 +32,7 @@ type Issue struct {
 // HealthReport summarises the health of a single agent session.
 type HealthReport struct {
 	Agent           string
+	ProjectID       string
 	Status          HealthStatus
 	Issues          []Issue
 	Recommendations []string
@@ -46,12 +47,21 @@ type sessionRow struct {
 	ZellijPane   string
 	LastActivity time.Time
 	StalledSince *time.Time
+	ProjectID    string
 }
 
 // listActiveSessions returns all sessions that are not in a terminal state.
-func listActiveSessions(ctx context.Context, database db.DB) ([]sessionRow, error) {
-	rows, err := database.Query(ctx,
-		"SELECT agent, state, pid, zellij_pane, last_activity, stalled_since FROM sessions WHERE state NOT IN ('completed', 'failed', 'cancelled')")
+// If projectID is non-empty, only sessions for that project are returned.
+func listActiveSessions(ctx context.Context, database db.DB, projectID string) ([]sessionRow, error) {
+	query := "SELECT agent_name, state, pid, zellij_pane, last_activity, stalled_since, COALESCE(project_id, '') FROM sessions WHERE state NOT IN ('completed', 'zombie')"
+	var args []any
+
+	if projectID != "" {
+		query += " AND project_id = ?"
+		args = append(args, projectID)
+	}
+
+	rows, err := database.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list active sessions: %w", err)
 	}
@@ -60,7 +70,7 @@ func listActiveSessions(ctx context.Context, database db.DB) ([]sessionRow, erro
 	var sessions []sessionRow
 	for rows.Next() {
 		var s sessionRow
-		if err := rows.Scan(&s.Agent, &s.State, &s.PID, &s.ZellijPane, &s.LastActivity, &s.StalledSince); err != nil {
+		if err := rows.Scan(&s.Agent, &s.State, &s.PID, &s.ZellijPane, &s.LastActivity, &s.StalledSince, &s.ProjectID); err != nil {
 			return nil, fmt.Errorf("scan session row: %w", err)
 		}
 		sessions = append(sessions, s)
@@ -77,6 +87,7 @@ func listActiveSessions(ctx context.Context, database db.DB) ([]sessionRow, erro
 func tier0Check(s sessionRow, staleThreshold time.Duration) HealthReport {
 	report := HealthReport{
 		Agent:     s.Agent,
+		ProjectID: s.ProjectID,
 		Status:    StatusHealthy,
 		CheckedAt: time.Now(),
 	}

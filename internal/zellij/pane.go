@@ -245,3 +245,11 @@ func (m *Manager) AttachFloating(paneID string, opts AttachOpts) error {
 func (m *Manager) CapturePane(paneID string, lines int) (string, error) {
 	return m.CapturePaneContent(paneID, lines)
 }
+
+// RenamePane updates the zellij frame title for the currently focused pane.
+// Note: zellij 0.43.x does not support --pane-id; rename-pane always targets the focused pane.
+func (m *Manager) RenamePane(title string) error {
+	args := []string{"action", "rename-pane", title}
+	_, err := m.runner.Run("zellij", args...)
+	return err
+}

@@ -24,6 +24,7 @@ import (
 func DashboardCmd(app *App) *cobra.Command {
 	var useTUI bool
 	var agentCmd string
+	var projectFlag string
 	cmd := &cobra.Command{
 		Use:     "dashboard",
 		Short:   "Launch the cmdr dashboard",
@@ -37,7 +38,7 @@ Use --agent-cmd to override the default agent command in the center pane.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// Explicit --tui flag: use bubbletea TUI.
 			if useTUI {
-				return app.RunDashboardWithCmd(cmd.Context(), agentCmd)
+				return app.RunDashboardWithProject(cmd.Context(), agentCmd, projectFlag)
 			}
 
 			// Default: KDL layout via zellij.
@@ -92,6 +93,10 @@ Use --agent-cmd to override the default agent command in the center pane.`,
 				CmdrBinary:   cmdrBin,
 				ProjectDir:   projectDir,
 				AgentCommand: resolvedAgentCmd,
+				UseWrapper:   true,
+				SystemWide:   app.Config != nil && app.Config.Version >= 2,
+				ProjectID:    projectFlag,
+				Version:      app.Version,
 			}); writeErr != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to regenerate layout: %v\n", writeErr)
 				// Fall through — if the file already exists we can still use it.
@@ -115,18 +120,8 @@ Use --agent-cmd to override the default agent command in the center pane.`,
 				return err
 			}
 
-			// Enable pane frames for the dashboard tab. The global config
-			// has pane_frames: false, and zellij has no per-layout override.
-			// Wait briefly for the new tab to become active, then toggle.
-			time.Sleep(200 * time.Millisecond)
-			toggle := exec.CommandContext(cmd.Context(), "zellij", "action", "toggle-pane-frames")
-			toggle.Stdin = os.Stdin
-			toggle.Stdout = os.Stdout
-			toggle.Stderr = os.Stderr
-			if err := toggle.Run(); err != nil {
-				fmt.Fprintf(os.Stderr, "Note: could not enable pane frames: %v\n", err)
-				fmt.Fprintln(os.Stderr, "Toggle manually with Ctrl+P then z")
-			}
+			// Pane frames are now enabled globally (pane_frames true in config).
+			// No toggle needed — frames stay on by default.
 
 			// Register the primary agent session and emit a dashboard event
 			// so the status/feed panes have data to display immediately.
@@ -137,6 +132,7 @@ Use --agent-cmd to override the default agent command in the center pane.`,
 	}
 	cmd.Flags().BoolVar(&useTUI, "tui", false, "Use the in-process bubbletea TUI instead of the KDL zellij layout")
 	cmd.Flags().StringVar(&agentCmd, "agent-cmd", "", "Override the agent command (default: from config or built-in)")
+	cmd.Flags().StringVar(&projectFlag, "project", "", "Filter dashboard to a specific project ID")
 	return cmd
 }
 
@@ -160,7 +156,9 @@ func zellijAvailable() bool {
 
 // registerDashboardSession inserts a run, session, and event so the
 // status/feed dashboard panes have data to display immediately.
-// Errors are silently ignored — this is best-effort telemetry.
+// It also cleans up old "primary" dashboard sessions to prevent unbounded
+// accumulation in the sessions table.
+// Errors are silently ignored -- this is best-effort telemetry.
 func registerDashboardSession(ctx context.Context, app *App, projectDir string) {
 	if app.DB == nil {
 		return
@@ -170,11 +168,28 @@ func registerDashboardSession(ctx context.Context, app *App, projectDir string) 
 	runID := fmt.Sprintf("run-dash-%d", now.UnixNano())
 	sessionID := fmt.Sprintf("dash-%d", now.UnixNano())
 
+	// Clean up old completed dashboard sessions. Each dashboard launch inserts
+	// a "primary" session; without cleanup these accumulate indefinitely and
+	// clutter the Agents pane. Keep only the 3 most recent for history.
+	_ = app.DB.Exec(ctx,
+		`DELETE FROM sessions WHERE agent_name = 'primary' AND task_id = 'dashboard'
+		 AND id NOT IN (
+			SELECT id FROM sessions WHERE agent_name = 'primary' AND task_id = 'dashboard'
+			ORDER BY started_at DESC LIMIT 3
+		 )`,
+	)
+
 	// Create a run so the foreign-key on sessions/events is satisfied.
 	_ = app.DB.Exec(ctx,
 		`INSERT OR IGNORE INTO runs (id, started_at, agent_count, status)
 		VALUES (?, ?, 1, 'active')`,
 		runID, now,
+	)
+
+	// Mark any previous "primary" working sessions as completed so the new
+	// session is the only working one.
+	_ = app.DB.Exec(ctx,
+		`UPDATE sessions SET state = 'completed' WHERE agent_name = 'primary' AND state = 'working'`,
 	)
 
 	// Insert a session for the primary agent running in the center pane.

@@ -1,0 +1,11 @@
+/home/n0ko/Programs/ai/computeCommander/plugins/focus-tracker/target/wasm32-wasip1/release/deps/include_dir-b2716592311fc6f3.d: /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/lib.rs /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/dir.rs /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/dir_entry.rs /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/file.rs /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/../README.md
+
+/home/n0ko/Programs/ai/computeCommander/plugins/focus-tracker/target/wasm32-wasip1/release/deps/libinclude_dir-b2716592311fc6f3.rlib: /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/lib.rs /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/dir.rs /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/dir_entry.rs /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/file.rs /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/../README.md
+
+/home/n0ko/Programs/ai/computeCommander/plugins/focus-tracker/target/wasm32-wasip1/release/deps/libinclude_dir-b2716592311fc6f3.rmeta: /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/lib.rs /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/dir.rs /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/dir_entry.rs /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/file.rs /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/../README.md
+
+/home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/lib.rs:
+/home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/dir.rs:
+/home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/dir_entry.rs:
+/home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/file.rs:
+/home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/include_dir-0.7.4/src/../README.md:

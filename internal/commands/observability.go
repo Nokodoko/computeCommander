@@ -12,11 +12,13 @@ import (
 )
 
 // TraceCmd returns the "trace" command for event timeline viewing.
+// It also incorporates the agentic causal traceability subcommands
+// (list, show, export, prune) as subcommands.
 func TraceCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "trace",
-		Short:   "Event timeline",
-		Long:    "Display the event timeline for a run or agent session.",
+		Short:   "Event timeline and causal traceability",
+		Long:    "Display the event timeline for a run or agent session.\nSubcommands provide causal traceability: list, show, export, prune.",
 		GroupID: "OBSERVABILITY",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			agentName, _ := cmd.Flags().GetString("agent")
@@ -55,6 +57,11 @@ func TraceCmd(app *App) *cobra.Command {
 	cmd.Flags().String("agent", "", "Filter by agent name")
 	cmd.Flags().String("run", "", "Filter by run ID")
 	cmd.Flags().Int("limit", 50, "Max events to display")
+
+	// Merge agentic causal trace subcommands (list, show, export, prune).
+	for _, sub := range agenticTraceSubcommands() {
+		cmd.AddCommand(sub)
+	}
 
 	return cmd
 }
@@ -167,6 +174,13 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	// Watch the SQLite DB file with fsnotify for instant refresh.
+	// When any process writes events to the DB, fsnotify fires
+	// and we re-render immediately instead of waiting for the ticker.
+	dbChanged := watchDBFile(app)
+
+	watcher := newBinaryWatcher()
+
 	render := func() {
 		clearScreen()
 		events, err := queryEvents(ctx, app, "", "", 20)
@@ -209,7 +223,13 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-dbChanged:
+			// DB file changed (fsnotify) — instant refresh.
+			render()
 		case <-ticker.C:
+			if watcher.check() {
+				watcher.reexec()
+			}
 			render()
 		}
 	}

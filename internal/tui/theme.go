@@ -50,6 +50,10 @@ type Theme struct {
 	FileDir      lipgloss.Style
 	FileRegular  lipgloss.Style
 	FileCursor   lipgloss.Style
+
+	// Agent palette colors (12 colors + gold for completed).
+	AgentColors      [12]lipgloss.Style
+	StateCompletedGold lipgloss.Style
 }
 
 // DefaultTheme returns the standard ComputeCommander colour scheme.
@@ -163,5 +167,24 @@ func DefaultTheme() *Theme {
 		FileCursor: lipgloss.NewStyle().
 			Background(lipgloss.Color("#333355")).
 			Foreground(white),
+
+		// Agent palette colors: 12-color palette for agent identification.
+		AgentColors: [12]lipgloss.Style{
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#FF6B6B")), // 0: Coral
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#4ECDC4")), // 1: Teal
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB347")), // 2: Amber
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#9B59B6")), // 3: Violet
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#5DADE2")), // 4: Sky
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#82E0AA")), // 5: Lime
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#F1948A")), // 6: Rose
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#7B68EE")), // 7: Indigo
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#FFDAB9")), // 8: Peach
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#98FB98")), // 9: Mint
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#FA8072")), // 10: Salmon
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#E6E6FA")), // 11: Lavender
+		},
+		StateCompletedGold: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFD700")).
+			Bold(true),
 	}
 }

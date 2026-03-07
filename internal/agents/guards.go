@@ -1,15 +1,19 @@
 package agents
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/noko/computecommander/internal/agentic/block"
 )
 
 // GuardRules defines tool enforcement rules matching spec 3.7.
 type GuardRules struct {
-	Global       GlobalRules                `yaml:"global"`
+	Global       GlobalRules                    `yaml:"global"`
 	ByCapability map[Capability]CapabilityRules `yaml:"by_capability"`
+	BlockEngine  *block.BlockRuleEngine         `yaml:"-"` // Agentic foundation block rule engine (nil-safe)
 }
 
 // GlobalRules are restrictions that apply to every agent.
@@ -246,6 +250,26 @@ func (g *GuardRules) IsAllowed(cap Capability, tool string, args string) (bool, 
 			if !matched {
 				return false, fmt.Sprintf("%s: args do not match any allow pattern for tool %q", cap, tool)
 			}
+		}
+	}
+
+	// Check agentic foundation BlockRuleEngine (if initialized).
+	// This runs after existing global blocks and capability rules.
+	// Evaluation order: existing global blocks first, then capability rules,
+	// then BlockRuleEngine.Evaluate(). The first failing check short-circuits.
+	if g.BlockEngine != nil {
+		input := &block.EvalInput{
+			Tool:    tool,
+			Command: args,
+			AgentID: string(cap),
+		}
+		// For file-path tools, extract the file path from args
+		if tool == "Read" || tool == "Write" || tool == "Edit" {
+			input.FilePath = args
+		}
+		result := g.BlockEngine.Evaluate(context.Background(), input)
+		if result.Matched && !result.Overridden && result.Action == block.ActionBlock {
+			return false, fmt.Sprintf("block rule %q: %s", result.RuleID, result.Message)
 		}
 	}
 

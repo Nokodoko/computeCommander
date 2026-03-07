@@ -36,12 +36,14 @@ type MergeEntry struct {
 	EnqueuedAt    time.Time       `db:"enqueued_at"`
 	Status        MergeStatus     `db:"status"`
 	ResolvedTier  *ResolutionTier `db:"resolved_tier"`
+	ProjectID     string          `db:"project_id"`
 }
 
 // ListOpts configures filtering for queue listing.
 type ListOpts struct {
-	Status *MergeStatus // filter by status; nil means all
-	Limit  int          // max entries to return; 0 means no limit
+	Status    *MergeStatus // filter by status; nil means all
+	Limit     int          // max entries to return; 0 means no limit
+	ProjectID string       // filter by project ID; empty means all
 }
 
 // MergeResult holds the outcome of a merge execution attempt.

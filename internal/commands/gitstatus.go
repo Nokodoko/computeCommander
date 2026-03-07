@@ -2,12 +2,38 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 )
+
+// activeCWDFile returns the path to the shared active CWD file.
+// The agent-wrapper writes the current project directory here on session switch.
+func activeCWDFile() string {
+	return fmt.Sprintf("/tmp/cmdr-%d-active-cwd", os.Getuid())
+}
+
+// readActiveCWD reads the active-cwd file and returns the project directory,
+// or empty string if the file doesn't exist or contains an invalid path.
+func readActiveCWD() string {
+	data, err := os.ReadFile(activeCWDFile())
+	if err != nil {
+		return ""
+	}
+	dir := strings.TrimSpace(string(data))
+	if dir == "" {
+		return ""
+	}
+	// Verify it's a real directory.
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		return ""
+	}
+	return dir
+}
 
 // GitStatusCmd returns the "git-status" command for git repository overview.
 func GitStatusCmd(app *App) *cobra.Command {
@@ -22,7 +48,7 @@ func GitStatusCmd(app *App) *cobra.Command {
 			if paneMode {
 				return runGitStatusPane(cmd)
 			}
-			printGitStatus()
+			printGitStatus("")
 			return nil
 		},
 	}
@@ -33,14 +59,34 @@ func GitStatusCmd(app *App) *cobra.Command {
 }
 
 // runGitStatusPane runs git-status in long-lived pane mode, refreshing every 3 seconds.
+// It watches the active-cwd file to switch between project directories
+// when the agent switches sessions via cmdr sessions.
 func runGitStatusPane(cmd *cobra.Command) error {
 	ctx := cmd.Context()
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
+	watcher := newBinaryWatcher()
+	lastDir := ""
+
 	render := func() {
+		// Check if the focused project changed.
+		activeDir := readActiveCWD()
+		if activeDir != "" && activeDir != lastDir {
+			lastDir = activeDir
+		}
+
 		clearScreen()
-		printGitStatus()
+
+		// Show which project we're displaying if it's not the CWD.
+		if lastDir != "" {
+			cwd, _ := os.Getwd()
+			if lastDir != cwd {
+				fmt.Printf("\033[2m%s\033[0m\n", filepath.Base(lastDir))
+			}
+		}
+
+		printGitStatus(lastDir)
 	}
 
 	// Initial render.
@@ -51,16 +97,20 @@ func runGitStatusPane(cmd *cobra.Command) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			if watcher.check() {
+				watcher.reexec()
+			}
 			render()
 		}
 	}
 }
 
 // printGitStatus prints a compact git status view with ANSI colors.
-func printGitStatus() {
-	branch := gitBranch()
-	staged, modified, untracked := gitStatusFiles()
-	lastCommit := gitLastCommit()
+// If gitDir is non-empty, runs git commands against that directory instead of CWD.
+func printGitStatus(gitDir string) {
+	branch := gitBranchIn(gitDir)
+	staged, modified, untracked := gitStatusFilesIn(gitDir)
+	lastCommit := gitLastCommitIn(gitDir)
 
 	// Branch line with change indicators.
 	indicator := ""
@@ -108,18 +158,27 @@ func printGitStatus() {
 	}
 }
 
-// gitBranch returns the current branch name (or HEAD sha if detached).
-func gitBranch() string {
-	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+// gitCommand builds a git exec.Cmd, optionally with -C <dir> if dir is non-empty.
+func gitCommand(dir string, args ...string) *exec.Cmd {
+	if dir != "" {
+		fullArgs := append([]string{"-C", dir}, args...)
+		return exec.Command("git", fullArgs...)
+	}
+	return exec.Command("git", args...)
+}
+
+// gitBranchIn returns the current branch name (or HEAD sha if detached).
+func gitBranchIn(dir string) string {
+	out, err := gitCommand(dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
 	if err != nil {
 		return "unknown"
 	}
 	return strings.TrimSpace(string(out))
 }
 
-// gitStatusFiles parses `git status --porcelain` and returns staged, modified, and untracked file lists.
-func gitStatusFiles() (staged, modified, untracked []string) {
-	out, err := exec.Command("git", "status", "--porcelain").Output()
+// gitStatusFilesIn parses `git status --porcelain` and returns staged, modified, and untracked file lists.
+func gitStatusFilesIn(dir string) (staged, modified, untracked []string) {
+	out, err := gitCommand(dir, "status", "--porcelain").Output()
 	if err != nil {
 		return
 	}
@@ -150,9 +209,9 @@ func gitStatusFiles() (staged, modified, untracked []string) {
 	return
 }
 
-// gitLastCommit returns a short summary of the last commit.
-func gitLastCommit() string {
-	out, err := exec.Command("git", "log", "-1", "--pretty=format:%h %s", "--date=relative").Output()
+// gitLastCommitIn returns a short summary of the last commit.
+func gitLastCommitIn(dir string) string {
+	out, err := gitCommand(dir, "log", "-1", "--pretty=format:%h %s", "--date=relative").Output()
 	if err != nil {
 		return ""
 	}
@@ -162,7 +221,7 @@ func gitLastCommit() string {
 	}
 
 	// Append relative time.
-	timeOut, err := exec.Command("git", "log", "-1", "--pretty=format:%ar").Output()
+	timeOut, err := gitCommand(dir, "log", "-1", "--pretty=format:%ar").Output()
 	if err == nil {
 		rel := strings.TrimSpace(string(timeOut))
 		if rel != "" {
@@ -171,3 +230,8 @@ func gitLastCommit() string {
 	}
 	return truncate(msg, 72)
 }
+
+// Backwards-compatible wrappers used by the old non-pane code path.
+func gitBranch() string                                      { return gitBranchIn("") }
+func gitStatusFiles() (staged, modified, untracked []string) { return gitStatusFilesIn("") }
+func gitLastCommit() string                                  { return gitLastCommitIn("") }
