@@ -97,11 +97,29 @@ func GenerateLayout(opts LayoutOpts) string {
 		tabName = fmt.Sprintf("[CMDR] Dashboard v%s", opts.Version)
 	}
 
-	// Resolve the focus-watcher script path.
-	focusWatcherPath := filepath.Join(projectDir, ".computecommander", "scripts", "focus-watcher.sh")
+	// Resolve the focus-watcher path (Rust binary or bash script fallback).
+	scriptDir := projectDir
 	if opts.SystemWide {
 		home, _ := os.UserHomeDir()
-		focusWatcherPath = filepath.Join(home, ".computecommander", "scripts", "focus-watcher.sh")
+		scriptDir = home
+	}
+	focusWatcherPath, _ := WriteFocusWatcher(scriptDir, projectDir, opts.TabHash)
+	if focusWatcherPath == "" {
+		focusWatcherPath = filepath.Join(projectDir, ".computecommander", "scripts", "focus-watcher.sh")
+	}
+
+	// Build the focus-watcher pane KDL based on whether it's a binary or bash script.
+	var focusWatcherPane string
+	if strings.HasSuffix(focusWatcherPath, ".sh") {
+		focusWatcherPane = fmt.Sprintf(`        pane size=1 borderless=true {
+            command "bash"
+            args "%s" "%s"
+        }`, focusWatcherPath, opts.TabHash)
+	} else {
+		focusWatcherPane = fmt.Sprintf(`        pane size=1 borderless=true {
+            command "%s"
+            args "--tab-hash" "%s" "--poll-ms" "250"
+        }`, focusWatcherPath, opts.TabHash)
 	}
 
 	return fmt.Sprintf(`layout {
@@ -110,10 +128,7 @@ func GenerateLayout(opts LayoutOpts) string {
         pane size=1 borderless=true {
             plugin location="compact-bar"
         }
-        pane size=1 borderless=true {
-            command "bash"
-            args "%s" "%s"
-        }
+%s
         pane split_direction="horizontal" {
             pane split_direction="vertical" size="67%%" {
                 pane size="10%%" {
@@ -151,16 +166,51 @@ func GenerateLayout(opts LayoutOpts) string {
         }
     }
 }
-`, projectDir, tabName, focusWatcherPath, opts.TabHash, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, lazygitWrapperPath, projectDir, opts.TabHash)
+`, projectDir, tabName, focusWatcherPane, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, lazygitWrapperPath, projectDir, opts.TabHash)
 }
 
 
-// WriteFocusWatcher generates the focus-watcher shell script that polls
+// WriteFocusWatcher locates the compiled Rust focus-watcher binary and returns
+// its path. The binary is expected at plugins/focus-watcher/target/release/focus-watcher
+// relative to the Go module root (discovered via the cmdr binary's location).
+// Falls back to WriteFocusWatcherBash if the binary is not found.
+func WriteFocusWatcher(scriptBaseDir, projectDir, tabHash string) (string, error) {
+	// Try to find the Rust binary relative to the cmdr binary or project dir.
+	candidates := []string{
+		filepath.Join(projectDir, "plugins", "focus-watcher", "target", "release", "focus-watcher"),
+	}
+	// Also check relative to the running binary.
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates,
+			filepath.Join(exeDir, "focus-watcher"),
+			filepath.Join(exeDir, "..", "plugins", "focus-watcher", "target", "release", "focus-watcher"),
+		)
+	}
+	// Check home directory install location.
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates,
+			filepath.Join(home, ".local", "bin", "focus-watcher"),
+		)
+	}
+
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate, nil
+		}
+	}
+
+	// Fallback: generate the bash script.
+	fmt.Fprintf(os.Stderr, "Warning: Rust focus-watcher binary not found, falling back to bash script\n")
+	return WriteFocusWatcherBash(scriptBaseDir, projectDir, tabHash)
+}
+
+// WriteFocusWatcherBash generates the legacy focus-watcher shell script that polls
 // zellij for the focused pane's CWD and writes it to the per-tab CWD file.
-// This replaces the WASM focus-tracker plugin with a pure shell approach.
+// This is the bash fallback; prefer the Rust binary via WriteFocusWatcher.
 // The script uses /proc to read the foreground process's CWD on the focused
 // pane's pts device, derived from ZELLIJ_PANE_ID exposed by list-clients.
-func WriteFocusWatcher(scriptBaseDir, projectDir, tabHash string) (string, error) {
+func WriteFocusWatcherBash(scriptBaseDir, projectDir, tabHash string) (string, error) {
 	scriptDir := filepath.Join(scriptBaseDir, ".computecommander", "scripts")
 	if err := os.MkdirAll(scriptDir, 0o755); err != nil {
 		return "", fmt.Errorf("create scripts dir: %w", err)
@@ -713,10 +763,8 @@ func WriteLayout(path string, opts LayoutOpts) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to generate lazygit-wrapper: %v\n", err)
 	}
 
-	// Generate the focus-watcher script that tracks pane focus via /proc.
-	if _, err := WriteFocusWatcher(scriptDir, projectDir, tabHash); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to generate focus-watcher: %v\n", err)
-	}
+	// Note: WriteFocusWatcher is called from GenerateLayout() to resolve the
+	// focus-watcher path (Rust binary or bash fallback) and embed it in the KDL.
 
 	// Only generate the wrapper script when explicitly requested.
 	// Use scriptDir (not projectDir) so the wrapper lands in the same
