@@ -133,6 +133,11 @@ func runMergeListPane(cmd *cobra.Command, app *App, opts merge.ListOpts) error {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
+	// Watch the SQLite DB file with fsnotify for instant refresh.
+	// When any process writes merge entries to the DB, fsnotify fires
+	// and we re-render immediately instead of waiting for the ticker.
+	dbChanged := watchDBFile(app)
+
 	watcher := newBinaryWatcher()
 
 	render := func() {
@@ -179,6 +184,9 @@ func runMergeListPane(cmd *cobra.Command, app *App, opts merge.ListOpts) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-dbChanged:
+			// DB file changed (fsnotify) — instant refresh.
+			render()
 		case <-ticker.C:
 			if watcher.check() {
 				watcher.reexec()
