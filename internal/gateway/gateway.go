@@ -4,10 +4,13 @@ package gateway
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -110,6 +113,9 @@ func (g *Gateway) registerRoutes() {
 	g.mux.HandleFunc("POST /api/v1/mail", g.handleSendMail)
 	g.mux.HandleFunc("GET /api/v1/merge/queue", g.handleMergeQueue)
 	g.mux.HandleFunc("GET /api/v1/costs", g.handleCosts)
+	g.mux.HandleFunc("GET /api/v1/projects", g.handleListProjects)
+	g.mux.HandleFunc("POST /api/v1/projects", g.handleAddProject)
+	g.mux.HandleFunc("DELETE /api/v1/projects/", g.handleDeleteProject)
 }
 
 // middleware chains logging, CORS, and request ID middleware.
@@ -195,6 +201,9 @@ func (g *Gateway) handleListAgents(w http.ResponseWriter, r *http.Request) {
 	if state := r.URL.Query().Get("state"); state != "" {
 		opts.State = agents.SessionState(state)
 	}
+	if projectID := r.URL.Query().Get("project"); projectID != "" {
+		opts.ProjectID = projectID
+	}
 
 	sessions, err := g.spawner.ListSessions(ctx, opts)
 	if err != nil {
@@ -202,8 +211,21 @@ func (g *Gateway) handleListAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Include color_hex in the response for each agent.
+	type agentResponse struct {
+		*agents.AgentSession
+		ColorHex string `json:"color_hex"`
+	}
+	agentResp := make([]agentResponse, len(sessions))
+	for i, s := range sessions {
+		agentResp[i] = agentResponse{
+			AgentSession: s,
+			ColorHex:     s.ColorHex,
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"agents": sessions,
+		"agents": agentResp,
 		"count":  len(sessions),
 	})
 }
@@ -279,6 +301,9 @@ func (g *Gateway) handleListMail(w http.ResponseWriter, r *http.Request) {
 	if unread := r.URL.Query().Get("unread"); unread == "true" {
 		opts.Unread = true
 	}
+	if projectID := r.URL.Query().Get("project"); projectID != "" {
+		opts.ProjectID = projectID
+	}
 
 	messages, err := g.mail.List(opts)
 	if err != nil {
@@ -316,6 +341,9 @@ func (g *Gateway) handleMergeQueue(w http.ResponseWriter, r *http.Request) {
 		s := merge.MergeStatus(status)
 		opts.Status = &s
 	}
+	if projectID := r.URL.Query().Get("project"); projectID != "" {
+		opts.ProjectID = projectID
+	}
 
 	entries, err := g.queue.List(opts)
 	if err != nil {
@@ -336,6 +364,133 @@ func (g *Gateway) handleCosts(w http.ResponseWriter, r *http.Request) {
 		"breakdown": map[string]any{},
 		"currency":  "USD",
 		"note":      "cost tracking not yet implemented",
+	})
+}
+
+func (g *Gateway) handleListProjects(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	query := `SELECT id, name, path, active, canonical_branch, registered_at, last_accessed_at, migrated_at FROM projects ORDER BY last_accessed_at DESC`
+	rows, err := g.db.Query(ctx, query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list projects: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	type projectResponse struct {
+		ID              string  `json:"id"`
+		Name            string  `json:"name"`
+		Path            string  `json:"path"`
+		Active          bool    `json:"active"`
+		CanonicalBranch string  `json:"canonical_branch"`
+		RegisteredAt    string  `json:"registered_at"`
+		LastAccessedAt  string  `json:"last_accessed_at"`
+		MigratedAt      *string `json:"migrated_at,omitempty"`
+	}
+
+	var projects []projectResponse
+	for rows.Next() {
+		var p projectResponse
+		var active int
+		var migratedAt *string
+		if err := rows.Scan(&p.ID, &p.Name, &p.Path, &active, &p.CanonicalBranch, &p.RegisteredAt, &p.LastAccessedAt, &migratedAt); err != nil {
+			writeError(w, http.StatusInternalServerError, "scan project: %v", err)
+			return
+		}
+		p.Active = active != 0
+		p.MigratedAt = migratedAt
+		projects = append(projects, p)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"projects": projects,
+		"count":    len(projects),
+	})
+}
+
+func (g *Gateway) handleAddProject(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req struct {
+		Path string `json:"path"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "decode request: %v", err)
+		return
+	}
+
+	if req.Path == "" {
+		writeError(w, http.StatusBadRequest, "path is required")
+		return
+	}
+
+	absPath, err := filepath.Abs(req.Path)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "resolve path: %v", err)
+		return
+	}
+
+	// Verify directory exists.
+	info, err := os.Stat(absPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "stat path: %v", err)
+		return
+	}
+	if !info.IsDir() {
+		writeError(w, http.StatusBadRequest, "%s is not a directory", absPath)
+		return
+	}
+
+	name := req.Name
+	if name == "" {
+		name = filepath.Base(absPath)
+	}
+
+	// Generate deterministic project ID.
+	h := sha256.Sum256([]byte(absPath))
+	projectID := fmt.Sprintf("proj-%x", h[:4])
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	err = g.db.Exec(ctx, `
+		INSERT INTO projects (id, name, path, active, canonical_branch, registered_at, last_accessed_at)
+		VALUES (?, ?, ?, 1, 'main', ?, ?)
+	`, projectID, name, absPath, now, now)
+	if err != nil {
+		writeError(w, http.StatusConflict, "register project: %v", err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"project": map[string]any{
+			"id":            projectID,
+			"name":          name,
+			"path":          absPath,
+			"active":        true,
+			"registered_at": now,
+		},
+	})
+}
+
+func (g *Gateway) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	projectID := extractPathParam(r.URL.Path, "/api/v1/projects/")
+	if projectID == "" {
+		writeError(w, http.StatusBadRequest, "project ID is required")
+		return
+	}
+
+	err := g.db.Exec(ctx, `DELETE FROM projects WHERE id = ?`, projectID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete project: %v", err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":     "deleted",
+		"project_id": projectID,
 	})
 }
 

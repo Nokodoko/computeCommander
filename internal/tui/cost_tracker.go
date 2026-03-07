@@ -9,6 +9,8 @@ import (
 type CostEntry struct {
 	Capability   string
 	Model        string
+	AgentName    string
+	ProjectID    string
 	InputTokens  int64
 	OutputTokens int64
 	Cost         float64
@@ -16,9 +18,10 @@ type CostEntry struct {
 
 // CostTracker aggregates and displays token usage and cost data.
 type CostTracker struct {
-	entries    []CostEntry
-	totalCost  float64
-	theme      *Theme
+	entries       []CostEntry
+	totalCost     float64
+	theme         *Theme
+	colorResolver AgentColorResolver
 }
 
 // NewCostTracker constructs a CostTracker.
@@ -26,6 +29,11 @@ func NewCostTracker(theme *Theme) *CostTracker {
 	return &CostTracker{
 		theme: theme,
 	}
+}
+
+// SetColorResolver sets the function used to resolve agent colors for agent names.
+func (c *CostTracker) SetColorResolver(resolver AgentColorResolver) {
+	c.colorResolver = resolver
 }
 
 // Update replaces the cost entries with fresh data.
@@ -67,6 +75,7 @@ func (c *CostTracker) View() string {
 	}
 
 	cols := []column{
+		{Header: "Agent", Width: 12},
 		{Header: "Capability", Width: 12},
 		{Header: "Model", Width: 18},
 		{Header: "Input", Width: 10},
@@ -76,9 +85,21 @@ func (c *CostTracker) View() string {
 
 	var rows [][]string
 	for _, e := range c.entries {
+		// Color the agent name using their assigned palette color.
+		agentName := truncate(e.AgentName, cols[0].Width)
+		if agentName == "" {
+			agentName = "-"
+		}
+		if c.colorResolver != nil && e.AgentName != "" {
+			if hex := c.colorResolver(e.AgentName); hex != "" {
+				agentName = AgentColorStyle(hex).Render(agentName)
+			}
+		}
+
 		rows = append(rows, []string{
-			truncate(e.Capability, cols[0].Width),
-			truncate(e.Model, cols[1].Width),
+			agentName,
+			truncate(e.Capability, cols[1].Width),
+			truncate(e.Model, cols[2].Width),
 			formatTokens(e.InputTokens),
 			formatTokens(e.OutputTokens),
 			fmt.Sprintf("$%.2f", e.Cost),

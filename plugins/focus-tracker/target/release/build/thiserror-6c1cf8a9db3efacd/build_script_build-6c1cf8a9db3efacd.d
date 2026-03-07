@@ -1,0 +1,5 @@
+/home/n0ko/Programs/ai/computeCommander/plugins/focus-tracker/target/release/build/thiserror-6c1cf8a9db3efacd/build_script_build-6c1cf8a9db3efacd.d: /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-1.0.69/build.rs
+
+/home/n0ko/Programs/ai/computeCommander/plugins/focus-tracker/target/release/build/thiserror-6c1cf8a9db3efacd/build_script_build-6c1cf8a9db3efacd: /home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-1.0.69/build.rs
+
+/home/n0ko/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-1.0.69/build.rs:

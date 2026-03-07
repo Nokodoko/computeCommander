@@ -1,0 +1,268 @@
+use std::collections::BTreeMap;
+use zellij_tile::prelude::*;
+
+/// Zellij WASM plugin that tracks the focused agent workspace pane in a cmdr
+/// dashboard tab and writes its project path to the per-tab CWD file.
+///
+/// When the user switches focus between agent workspace panes (each running
+/// cmdr-agent-wrapper.sh for a different project), this plugin detects the
+/// focus change via PaneUpdate, extracts the project path from the focused
+/// pane's terminal_command, and writes it to /tmp/cmdr-<uid>-<hash>-cwd.
+///
+/// The fp-wrapper and lazygit-wrapper watch that CWD file via inotifywait
+/// and restart their tools pointed at the new project directory.
+///
+/// Resolution strategies (tried in order for the focused pane):
+/// 1. terminal_command containing the agent-wrapper marker path
+/// 2. Pane title with "CMDR:<project_path>" prefix (for dynamic splits)
+///
+/// No pgrep, no /proc scanning — just PaneInfo fields from the zellij API.
+
+struct FocusTracker {
+    /// 8-char hex tab hash from plugin config, used to construct the CWD file path.
+    tab_hash: String,
+    /// The last project path we wrote to the CWD file (to detect changes).
+    last_project_path: String,
+    /// The tab index our plugin lives in (discovered via PaneUpdate).
+    own_tab_index: Option<usize>,
+    /// Our own plugin pane ID (from get_plugin_ids).
+    own_pane_id: u32,
+    /// Whether we've written the initial CWD. On the first PaneUpdate where an
+    /// agent pane is found, always write even if path matches last_project_path.
+    initial_cwd_written: bool,
+}
+
+impl FocusTracker {
+    /// Marker in terminal_command that identifies an agent-wrapper pane.
+    const WRAPPER_MARKER: &'static str = "/.computecommander/scripts/cmdr-agent-wrapper.sh";
+
+    /// Title prefix set by agent-wrapper via printf escape sequence.
+    const TITLE_PREFIX: &'static str = "CMDR:";
+
+    /// Extract the project path from a single pane's terminal_command.
+    /// The command looks like: "bash /path/to/project/.computecommander/scripts/cmdr-agent-wrapper.sh HASH"
+    /// The project path is everything before the wrapper marker.
+    fn extract_path_from_command(cmd: &str) -> Option<String> {
+        let marker_pos = cmd.find(Self::WRAPPER_MARKER)?;
+        let path_portion = &cmd[..marker_pos];
+        // The path starts at the last space before the marker (skipping "bash " prefix).
+        let path_start = path_portion.rfind(' ').map(|i| i + 1).unwrap_or(0);
+        let project_path = &cmd[path_start..marker_pos];
+        if project_path.starts_with('/') {
+            Some(project_path.to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Extract the project path from a pane's title if it has the CMDR: prefix.
+    fn extract_path_from_title(title: &str) -> Option<String> {
+        let path = title.strip_prefix(Self::TITLE_PREFIX)?;
+        let path = path.trim();
+        if path.starts_with('/') && !path.is_empty() {
+            Some(path.to_string())
+        } else {
+            None
+        }
+    }
+
+    /// Try to extract a project path from a pane using all available strategies.
+    fn extract_project_path(pane: &PaneInfo) -> Option<String> {
+        // Strategy 1: Parse the terminal_command for the wrapper marker.
+        if let Some(cmd) = pane.terminal_command.as_deref() {
+            if let Some(path) = Self::extract_path_from_command(cmd) {
+                return Some(path);
+            }
+        }
+
+        // Strategy 2: Check title for CMDR:<path> prefix (dynamic splits).
+        Self::extract_path_from_title(&pane.title)
+    }
+
+    /// Check if a pane is an agent workspace pane (has the wrapper marker or CMDR title).
+    fn is_agent_pane(pane: &PaneInfo) -> bool {
+        if pane.is_plugin {
+            return false;
+        }
+        // Check terminal_command for wrapper marker.
+        if let Some(cmd) = pane.terminal_command.as_deref() {
+            if cmd.contains(Self::WRAPPER_MARKER) {
+                return true;
+            }
+        }
+        // Check title for CMDR: prefix.
+        if pane.title.starts_with(Self::TITLE_PREFIX) {
+            return true;
+        }
+        false
+    }
+
+    /// Find the project path for the currently focused agent workspace pane.
+    ///
+    /// Returns the project path of the focused pane if it is an agent workspace,
+    /// or falls back to the first agent pane found (for initial load when focus
+    /// may be on a non-agent pane like the fp pane).
+    fn find_focused_project(panes: &[PaneInfo]) -> Option<String> {
+        // First: check if the focused pane IS an agent pane.
+        let focused = panes.iter().find(|p| p.is_focused && !p.is_plugin);
+        if let Some(fp) = focused {
+            if Self::is_agent_pane(fp) {
+                return Self::extract_project_path(fp);
+            }
+        }
+
+        // Fallback: if focus is on a non-agent pane (fp, lazygit, status, etc.),
+        // use the first agent pane found. This handles initial load and the case
+        // where the user clicks on fp or lazygit (we keep showing the same project).
+        panes.iter()
+            .filter(|p| Self::is_agent_pane(p))
+            .find_map(|p| Self::extract_project_path(p))
+    }
+
+    /// Discover which tab index we live in by scanning the PaneManifest for our
+    /// own pane ID among plugin panes.
+    fn discover_own_tab(&self, manifest: &PaneManifest) -> Option<usize> {
+        for (tab_idx, panes) in &manifest.panes {
+            for pane in panes {
+                if pane.is_plugin && pane.id == self.own_pane_id {
+                    return Some(*tab_idx);
+                }
+            }
+        }
+        None
+    }
+
+    /// Build the shell command that atomically writes `path` to the CWD file.
+    fn build_write_command(path: &str, tab_hash: &str) -> Vec<String> {
+        let script = format!(
+            r#"CWD_FILE="/tmp/cmdr-$(id -u)-{hash}-cwd"
+TMP="$CWD_FILE.tmp.$$"
+printf '%s' {path} > "$TMP"
+mv -f "$TMP" "$CWD_FILE""#,
+            hash = tab_hash,
+            path = shlex_quote(path),
+        );
+        vec!["bash".to_string(), "-c".to_string(), script]
+    }
+}
+
+/// Minimal shell quoting: wrap in single quotes, escaping embedded single quotes.
+fn shlex_quote(s: &str) -> String {
+    let escaped = s.replace('\'', "'\\''");
+    format!("'{}'", escaped)
+}
+
+register_plugin!(FocusTracker);
+
+impl ZellijPlugin for FocusTracker {
+    fn load(&mut self, configuration: BTreeMap<String, String>) {
+        self.tab_hash = configuration
+            .get("tab_hash")
+            .cloned()
+            .unwrap_or_default();
+
+        let ids = get_plugin_ids();
+        self.own_pane_id = ids.plugin_id;
+
+        request_permission(&[
+            PermissionType::ReadApplicationState,
+            PermissionType::RunCommands,
+        ]);
+
+        subscribe(&[
+            EventType::PaneUpdate,
+            EventType::RunCommandResult,
+            EventType::PermissionRequestResult,
+        ]);
+    }
+
+    fn update(&mut self, event: Event) -> bool {
+        match event {
+            Event::PaneUpdate(manifest) => {
+                // Discover our tab on first PaneUpdate (or if not yet known).
+                if self.own_tab_index.is_none() {
+                    self.own_tab_index = self.discover_own_tab(&manifest);
+                }
+
+                let tab_idx = match self.own_tab_index {
+                    Some(idx) => idx,
+                    None => return false,
+                };
+
+                if self.tab_hash.is_empty() {
+                    return false;
+                }
+
+                // Only look at panes in our own tab.
+                let panes = match manifest.panes.get(&tab_idx) {
+                    Some(p) => p,
+                    None => return false,
+                };
+
+                // Find the project path based on the focused pane.
+                let project_path = match Self::find_focused_project(panes) {
+                    Some(p) => p,
+                    None => return false,
+                };
+
+                let is_initial = !self.initial_cwd_written;
+
+                // Write the CWD file on first update or when the project path changes.
+                let path_changed = project_path != self.last_project_path;
+                let should_write = is_initial || path_changed;
+
+                if !should_write {
+                    return false;
+                }
+
+                self.last_project_path = project_path.clone();
+                self.initial_cwd_written = true;
+
+                let parts = Self::build_write_command(&project_path, &self.tab_hash);
+                let cmd_refs: Vec<&str> = parts.iter().map(|s| s.as_str()).collect();
+
+                let mut ctx = BTreeMap::new();
+                ctx.insert("action".to_string(), "write_cwd".to_string());
+
+                run_command(&cmd_refs, ctx);
+            }
+
+            Event::RunCommandResult(exit_code, _stdout, stderr, context) => {
+                if let Some(action) = context.get("action") {
+                    if action == "write_cwd" {
+                        if let Some(code) = exit_code {
+                            if code != 0 {
+                                let err = String::from_utf8_lossy(&stderr);
+                                eprintln!(
+                                    "focus-tracker: write_cwd failed (exit {}): {}",
+                                    code, err
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            Event::PermissionRequestResult(_) => {}
+
+            _ => {}
+        }
+        false
+    }
+
+    fn render(&mut self, _rows: usize, _cols: usize) {
+        print!("focus-tracker: watching");
+    }
+}
+
+impl Default for FocusTracker {
+    fn default() -> Self {
+        Self {
+            tab_hash: String::new(),
+            last_project_path: String::new(),
+            own_tab_index: None,
+            own_pane_id: 0,
+            initial_cwd_written: false,
+        }
+    }
+}

@@ -170,7 +170,14 @@ func (s *Spawner) Spawn(ctx context.Context, req SpawnRequest) (*SpawnResult, er
 		return nil, fmt.Errorf("spawn create pane: %w", err)
 	}
 
-	// 5. Register session in database.
+	// 5. Assign color from palette (round-robin by spawn index within the run).
+	spawnIndex, err := s.countSessionsInRun(ctx, req.Name)
+	if err != nil {
+		spawnIndex = 0
+	}
+	agentColor := AssignColor(spawnIndex)
+
+	// 6. Register session in database.
 	now := time.Now()
 	session := &AgentSession{
 		ID:              sessionID,
@@ -190,6 +197,9 @@ func (s *Spawner) Spawn(ctx context.Context, req SpawnRequest) (*SpawnResult, er
 		EscalationLevel: 0,
 		TranscriptPath:  fmt.Sprintf("%s/.transcript", wt.Path),
 		Runtime:         req.Runtime,
+		ProjectID:       req.ProjectID,
+		ColorIndex:      agentColor.Index,
+		ColorHex:        agentColor.Hex,
 	}
 
 	if err := s.insertSession(ctx, session); err != nil {
@@ -237,18 +247,38 @@ func (s *Spawner) Stop(ctx context.Context, agentName string, opts StopOpts) err
 
 // ListSessions returns agent sessions filtered by the provided options.
 // Token usage is aggregated from the metrics table via LEFT JOIN.
+// The query gracefully handles databases that haven't been migrated to v2
+// (missing color_index, color_hex, project_id columns) by falling back to
+// a base query without those columns.
 func (s *Spawner) ListSessions(ctx context.Context, opts ListOpts) ([]*AgentSession, error) {
-	query := `SELECT s.id, s.agent_name, s.capability, s.worktree_path, s.branch_name,
+	// Detect whether the v2 columns exist. We cache this per-call since
+	// migrations could run between calls, but column detection is cheap.
+	hasV2 := s.hasV2Columns(ctx)
+
+	var selectCols string
+	if hasV2 {
+		selectCols = `s.id, s.agent_name, s.capability, s.worktree_path, s.branch_name,
 		s.task_id, s.zellij_pane, s.state, s.pid, s.parent_agent, s.depth, s.run_id,
 		s.started_at, s.last_activity, s.escalation_level, s.stalled_since,
 		s.transcript_path, s.runtime,
-		COALESCE(m.total_in, 0), COALESCE(m.total_out, 0)
+		COALESCE(m.total_in, 0), COALESCE(m.total_out, 0),
+		COALESCE(s.color_index, 0), COALESCE(s.color_hex, ''), COALESCE(s.project_id, '')`
+	} else {
+		selectCols = `s.id, s.agent_name, s.capability, s.worktree_path, s.branch_name,
+		s.task_id, s.zellij_pane, s.state, s.pid, s.parent_agent, s.depth, s.run_id,
+		s.started_at, s.last_activity, s.escalation_level, s.stalled_since,
+		s.transcript_path, s.runtime,
+		COALESCE(m.total_in, 0), COALESCE(m.total_out, 0)`
+	}
+
+	query := fmt.Sprintf(`SELECT %s
 	FROM sessions s
 	LEFT JOIN (
 		SELECT agent_name, SUM(input_tokens) AS total_in, SUM(output_tokens) AS total_out
 		FROM metrics GROUP BY agent_name
 	) m ON s.agent_name = m.agent_name
-	WHERE 1=1`
+	WHERE 1=1`, selectCols)
+
 	var args []any
 	argIdx := 1
 
@@ -272,6 +302,11 @@ func (s *Spawner) ListSessions(ctx context.Context, opts ListOpts) ([]*AgentSess
 		args = append(args, opts.Parent)
 		argIdx++
 	}
+	if opts.ProjectID != "" && hasV2 {
+		query += fmt.Sprintf(" AND s.project_id = $%d", argIdx)
+		args = append(args, opts.ProjectID)
+		argIdx++
+	}
 
 	query += " ORDER BY s.started_at DESC"
 
@@ -284,16 +319,35 @@ func (s *Spawner) ListSessions(ctx context.Context, opts ListOpts) ([]*AgentSess
 	var sessions []*AgentSession
 	for rows.Next() {
 		sess := &AgentSession{}
-		if err := rows.Scan(
-			&sess.ID, &sess.AgentName, &sess.Capability,
-			&sess.WorktreePath, &sess.BranchName, &sess.TaskID,
-			&sess.ZellijPane, &sess.State, &sess.PID,
-			&sess.ParentAgent, &sess.Depth, &sess.RunID,
-			&sess.StartedAt, &sess.LastActivity, &sess.EscalationLevel,
-			&sess.StalledSince, &sess.TranscriptPath, &sess.Runtime,
-			&sess.InputTokens, &sess.OutputTokens,
-		); err != nil {
-			return nil, fmt.Errorf("list sessions scan: %w", err)
+		var scanErr error
+		if hasV2 {
+			scanErr = rows.Scan(
+				&sess.ID, &sess.AgentName, &sess.Capability,
+				&sess.WorktreePath, &sess.BranchName, &sess.TaskID,
+				&sess.ZellijPane, &sess.State, &sess.PID,
+				&sess.ParentAgent, &sess.Depth, &sess.RunID,
+				&sess.StartedAt, &sess.LastActivity, &sess.EscalationLevel,
+				&sess.StalledSince, &sess.TranscriptPath, &sess.Runtime,
+				&sess.InputTokens, &sess.OutputTokens,
+				&sess.ColorIndex, &sess.ColorHex, &sess.ProjectID,
+			)
+		} else {
+			scanErr = rows.Scan(
+				&sess.ID, &sess.AgentName, &sess.Capability,
+				&sess.WorktreePath, &sess.BranchName, &sess.TaskID,
+				&sess.ZellijPane, &sess.State, &sess.PID,
+				&sess.ParentAgent, &sess.Depth, &sess.RunID,
+				&sess.StartedAt, &sess.LastActivity, &sess.EscalationLevel,
+				&sess.StalledSince, &sess.TranscriptPath, &sess.Runtime,
+				&sess.InputTokens, &sess.OutputTokens,
+			)
+			// Set defaults for missing v2 fields.
+			sess.ColorIndex = 0
+			sess.ColorHex = ""
+			sess.ProjectID = ""
+		}
+		if scanErr != nil {
+			return nil, fmt.Errorf("list sessions scan: %w", scanErr)
 		}
 		sessions = append(sessions, sess)
 	}
@@ -302,6 +356,20 @@ func (s *Spawner) ListSessions(ctx context.Context, opts ListOpts) ([]*AgentSess
 	}
 
 	return sessions, nil
+}
+
+// hasV2Columns checks whether the sessions table has the v2 schema columns
+// (color_index, color_hex, project_id) added by migration 002_system_wide.
+// Returns false for pre-migration databases so queries can adapt gracefully.
+func (s *Spawner) hasV2Columns(ctx context.Context) bool {
+	// Use a lightweight probe: try to select the v2 columns from a LIMIT 0 query.
+	// If the columns don't exist, the query will fail.
+	rows, err := s.db.Query(ctx, "SELECT color_index FROM sessions LIMIT 0")
+	if err != nil {
+		return false
+	}
+	rows.Close()
+	return true
 }
 
 // validateSpawnRequest checks the request fields.
@@ -326,18 +394,41 @@ func (s *Spawner) validateSpawnRequest(req SpawnRequest) error {
 
 // insertSession writes a new session record.
 func (s *Spawner) insertSession(ctx context.Context, sess *AgentSession) error {
-	return s.db.Exec(ctx,
+	err := s.db.Exec(ctx,
 		`INSERT INTO sessions (id, agent_name, capability, worktree_path, branch_name,
 			task_id, zellij_pane, state, pid, parent_agent, depth, run_id,
 			started_at, last_activity, escalation_level, stalled_since,
-			transcript_path, runtime)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+			transcript_path, runtime, project_id, color_index, color_hex)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
 		sess.ID, sess.AgentName, string(sess.Capability), sess.WorktreePath,
 		sess.BranchName, sess.TaskID, sess.ZellijPane, string(sess.State),
 		sess.PID, sess.ParentAgent, sess.Depth, sess.RunID,
 		sess.StartedAt, sess.LastActivity, sess.EscalationLevel,
 		sess.StalledSince, sess.TranscriptPath, string(sess.Runtime),
+		sess.ProjectID, sess.ColorIndex, sess.ColorHex,
 	)
+	if err != nil {
+		return err
+	}
+
+	// Also write to agent_colors table for color history.
+	if sess.RunID != "" {
+		_ = s.db.Exec(ctx,
+			`INSERT OR IGNORE INTO agent_colors (agent_name, run_id, color_index, color_hex) VALUES ($1, $2, $3, $4)`,
+			sess.AgentName, sess.RunID, sess.ColorIndex, sess.ColorHex,
+		)
+	}
+	return nil
+}
+
+// countSessionsInRun counts existing sessions to determine the spawn index for color assignment.
+func (s *Spawner) countSessionsInRun(ctx context.Context, _ string) (int, error) {
+	var count int
+	row := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM sessions WHERE state != 'completed'`)
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 // findSessionByName locates a session by agent name.
@@ -370,6 +461,67 @@ func (s *Spawner) updateSessionState(ctx context.Context, sessionID string, stat
 		"UPDATE sessions SET state = $1, last_activity = $2 WHERE id = $3",
 		string(state), time.Now(), sessionID,
 	)
+}
+
+// LookupAgentColor returns the color hex assigned to the given agent name.
+// It first checks active sessions, then falls back to the agent_colors history table.
+// Returns empty string if no color is found.
+func (s *Spawner) LookupAgentColor(ctx context.Context, agentName string) string {
+	// Check active sessions first.
+	var hex string
+	row := s.db.QueryRow(ctx,
+		`SELECT color_hex FROM sessions WHERE agent_name = $1 AND color_hex != '' ORDER BY started_at DESC LIMIT 1`,
+		agentName)
+	if err := row.Scan(&hex); err == nil && hex != "" {
+		return hex
+	}
+
+	// Fall back to agent_colors history.
+	row = s.db.QueryRow(ctx,
+		`SELECT color_hex FROM agent_colors WHERE agent_name = $1 ORDER BY rowid DESC LIMIT 1`,
+		agentName)
+	if err := row.Scan(&hex); err == nil {
+		return hex
+	}
+
+	return ""
+}
+
+// BuildColorResolver returns an AgentColorResolver function that maps agent names to color hex strings.
+// This is suitable for passing to TUI components and CLI renderers.
+func (s *Spawner) BuildColorResolver(ctx context.Context) func(string) string {
+	// Build a cache from all known sessions to avoid per-name queries.
+	cache := make(map[string]string)
+	rows, err := s.db.Query(ctx,
+		`SELECT agent_name, color_hex FROM sessions WHERE color_hex != '' ORDER BY started_at ASC`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var name, hex string
+			if err := rows.Scan(&name, &hex); err == nil {
+				cache[name] = hex
+			}
+		}
+	}
+
+	// Supplement with agent_colors history for agents not in active sessions.
+	rows2, err := s.db.Query(ctx,
+		`SELECT agent_name, color_hex FROM agent_colors`)
+	if err == nil {
+		defer rows2.Close()
+		for rows2.Next() {
+			var name, hex string
+			if err := rows2.Scan(&name, &hex); err == nil {
+				if _, ok := cache[name]; !ok {
+					cache[name] = hex
+				}
+			}
+		}
+	}
+
+	return func(agentName string) string {
+		return cache[agentName]
+	}
 }
 
 // defaultIDGenerator produces a timestamp-based unique ID.

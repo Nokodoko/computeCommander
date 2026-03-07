@@ -1,14 +1,13 @@
 layout {
-    pane_frames true
     cwd "/home/n0ko/Programs/ai/computeCommander"
     tab name="[CMDR] Dashboard" {
         pane split_direction="horizontal" {
             pane split_direction="vertical" size="67%" {
-                pane name="File Picker" size="10%" {
+                pane name="fp" size="10%" {
                     command "fp"
                     args "/home/n0ko/Programs/ai/computeCommander"
                 }
-                pane name="Claude" size="65%" focus=true {
+                pane size="65%" focus=true {
                     command "claude"
                     args "--dangerously-skip-permissions" "--no-chrome" "--disallowedTools" "WebSearch" "WebFetch" "NotebookEdit"
                 }

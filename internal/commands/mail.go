@@ -125,13 +125,15 @@ func mailListCmd(app *App) *cobra.Command {
 			from, _ := cmd.Flags().GetString("from")
 			unread, _ := cmd.Flags().GetBool("unread")
 			limit, _ := cmd.Flags().GetInt("limit")
+			projectID, _ := cmd.Flags().GetString("project")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
 
 			listOpts := mail.ListOpts{
-				Agent:  agent,
-				From:   from,
-				Unread: unread,
-				Limit:  limit,
+				Agent:     agent,
+				From:      from,
+				Unread:    unread,
+				Limit:     limit,
+				ProjectID: projectID,
 			}
 
 			if paneMode {
@@ -147,23 +149,23 @@ func mailListCmd(app *App) *cobra.Command {
 				return json.NewEncoder(os.Stdout).Encode(msgs)
 			}
 
-			pane, _ := cmd.Flags().GetBool("pane")
-			if pane {
-				return printMailPane(msgs)
-			}
-
 			if len(msgs) == 0 {
 				fmt.Println("No messages found.")
 				return nil
 			}
 
+			// Build agent color resolver for colorized output.
+			colorResolver := app.Spawner.BuildColorResolver(cmd.Context())
+
 			for _, m := range msgs {
 				readMark := " "
 				if !m.Read {
-					readMark = "*"
+					readMark = "\033[33m*\033[0m"
 				}
+				// Color the sender name using their agent color.
+				fromName := colorizeAgent(truncate(m.From, 12), colorResolver(m.From))
 				fmt.Printf("%s [%s] %s -> %s: %s (%s)\n",
-					readMark, m.Type, m.From, m.To, m.Subject, m.ID)
+					readMark, m.Type, fromName, truncate(m.To, 12), m.Subject, m.ID)
 			}
 			fmt.Printf("\n%d message(s)\n", len(msgs))
 			return nil
@@ -174,6 +176,7 @@ func mailListCmd(app *App) *cobra.Command {
 	cmd.Flags().String("from", "", "Filter by sender")
 	cmd.Flags().Bool("unread", false, "Show only unread messages")
 	cmd.Flags().Int("limit", 0, "Max messages (0 = no limit)")
+	cmd.Flags().String("project", "", "Filter by project ID")
 	cmd.Flags().Bool("pane", false, "Run in long-lived pane mode (for zellij dashboard)")
 
 	return cmd
@@ -184,6 +187,8 @@ func runMailListPane(cmd *cobra.Command, app *App, opts mail.ListOpts) error {
 	ctx := cmd.Context()
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
+
+	watcher := newBinaryWatcher()
 
 	render := func() {
 		clearScreen()
@@ -232,6 +237,9 @@ func runMailListPane(cmd *cobra.Command, app *App, opts mail.ListOpts) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+			if watcher.check() {
+				watcher.reexec()
+			}
 			render()
 		}
 	}

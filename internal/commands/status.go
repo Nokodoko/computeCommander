@@ -29,6 +29,7 @@ func StatusCmd(app *App) *cobra.Command {
 			paneMode, _ := cmd.Flags().GetBool("pane")
 			capability, _ := cmd.Flags().GetString("capability")
 			state, _ := cmd.Flags().GetString("state")
+			projectID, _ := cmd.Flags().GetString("project")
 			pane, _ := cmd.Flags().GetBool("pane")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
 
@@ -38,6 +39,9 @@ func StatusCmd(app *App) *cobra.Command {
 			}
 			if state != "" {
 				opts.State = agents.SessionState(state)
+			}
+			if projectID != "" {
+				opts.ProjectID = projectID
 			}
 
 			if paneMode {
@@ -84,7 +88,8 @@ func StatusCmd(app *App) *cobra.Command {
 
 			// Pane mode: styled output for zellij dashboard Agents pane.
 			if pane {
-				return printAgentsPane(sessions)
+				colorResolver := app.Spawner.BuildColorResolver(cmd.Context())
+				return printAgentsPane(sessions, colorResolver)
 			}
 
 			// Full human-readable output.
@@ -127,12 +132,18 @@ func StatusCmd(app *App) *cobra.Command {
 				return nil
 			}
 
+			// Build agent color resolver for colorized output.
+			colorResolver := app.Spawner.BuildColorResolver(cmd.Context())
+
 			fmt.Printf("%-14s %-12s %-10s %-14s %-8s\n", "NAME", "CAPABILITY", "STATE", "TASK", "RUNTIME")
 			for _, s := range sessions {
-				fmt.Printf("%-14s %-12s %-10s %-14s %-8s\n",
-					truncate(s.AgentName, 14),
+				agentName := colorizeAgent(truncate(s.AgentName, 14), colorResolver(s.AgentName))
+				_, stateColor := stateStyle(s.State)
+				stateStr := fmt.Sprintf("%s%-10s%s", stateColor, truncate(string(s.State), 10), ansiReset)
+				fmt.Printf("%-14s %-12s %s %-14s %-8s\n",
+					agentName,
 					truncate(string(s.Capability), 12),
-					truncate(string(s.State), 10),
+					stateStr,
 					truncate(s.TaskID, 14),
 					truncate(string(s.Runtime), 8),
 				)
@@ -144,17 +155,66 @@ func StatusCmd(app *App) *cobra.Command {
 
 	cmd.Flags().String("capability", "", "Filter by capability")
 	cmd.Flags().String("state", "", "Filter by state")
+	cmd.Flags().String("project", "", "Filter by project ID")
 	cmd.Flags().Bool("pane", false, "Run in long-lived pane mode (for zellij dashboard)")
 
 	return cmd
 }
 
 // runStatusPane runs the status command in long-lived pane mode, refreshing periodically.
+// It includes a staleness reaper that automatically marks agents as completed when their
+// last_activity exceeds the stale threshold (default 10 minutes). This prevents ghost
+// entries from lingering when the SubagentStop hook fails to update the database.
 func runStatusPane(cmd *cobra.Command, app *App, opts agents.ListOpts) error {
 	ctx := cmd.Context()
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
+	// Watch the SQLite DB file with inotify for instant refresh.
+	// When cmdr-bridge.sh writes to the DB, fsnotify fires and we re-render
+	// immediately. This is more robust than SIGUSR1+PID files because it
+	// requires zero coupling — any process writing to the DB triggers a refresh.
+	dbChanged := watchDBFile(app)
+
+	// Staleness reaper: runs every 60 seconds and marks agents whose last_activity
+	// exceeds the threshold as completed. This is the safety net for missed hook calls.
+	// The minimum threshold is 10 minutes to avoid prematurely reaping agents that
+	// are waiting on model responses or between tool uses.
+	reapInterval := 60 * time.Second
+	staleThreshold := 10 * time.Minute
+	if app.Config != nil && app.Config.Watchdog.StaleThresholdMs > 0 {
+		configured := time.Duration(app.Config.Watchdog.StaleThresholdMs) * time.Millisecond
+		if configured > staleThreshold {
+			staleThreshold = configured
+		}
+	}
+	reapTicker := time.NewTicker(reapInterval)
+	defer reapTicker.Stop()
+
+	reapStale := func() {
+		if app.DB == nil {
+			return
+		}
+		// Mark working/booting agents as completed if their last_activity exceeds the threshold.
+		// Use parameterised query for safety.
+		cutoff := time.Now().Add(-staleThreshold).UTC().Format("2006-01-02T15:04:05Z")
+		_ = app.DB.Exec(ctx,
+			"UPDATE sessions SET state = 'completed', last_activity = $1 WHERE state IN ('working', 'booting') AND last_activity < $2",
+			time.Now().UTC().Format("2006-01-02T15:04:05Z"), cutoff,
+		)
+	}
+
+	// Capture the dashboard start time so we can filter out stale completed
+	// sessions from previous dashboard launches. Prefer the lock file mtime;
+	// fall back to the current process start time (time.Now()) when the lock
+	// file is missing, since this pane process was spawned by zellij at the
+	// same time the dashboard opened.
+	dashStart := dashboardStartTime()
+	if dashStart.IsZero() {
+		dashStart = time.Now()
+	}
+
+	// Build agent color resolver once (rebuilt on each render for freshness).
 	render := func() {
 		clearScreen()
 		sessions, err := app.Spawner.ListSessions(ctx, opts)
@@ -163,11 +223,17 @@ func runStatusPane(cmd *cobra.Command, app *App, opts agents.ListOpts) error {
 			return
 		}
 
+		// Filter out completed agents from previous dashboard sessions so the
+		// pane starts clean. Without this, every old "primary" dashboard session
+		// and completed agent from previous runs would accumulate indefinitely.
+		sessions = filterPaneSessions(sessions, dashStart)
+
 		if len(sessions) == 0 {
 			fmt.Println("\033[2mNo active agents.\033[0m")
 			return
 		}
 
+		colorResolver := app.Spawner.BuildColorResolver(ctx)
 		fmt.Printf("\033[2m%-14s %-12s %-10s %-14s\033[0m\n", "NAME", "CAPABILITY", "STATE", "TASK")
 		for _, s := range sessions {
 			stateColor := "\033[32m" // green for working
@@ -181,8 +247,9 @@ func runStatusPane(cmd *cobra.Command, app *App, opts agents.ListOpts) error {
 			case agents.StateBooting:
 				stateColor = "\033[36m" // cyan
 			}
+			agentName := colorizeAgent(truncate(s.AgentName, 14), colorResolver(s.AgentName))
 			fmt.Printf("%-14s %-12s %s%-10s\033[0m %-14s\n",
-				truncate(s.AgentName, 14),
+				agentName,
 				truncate(string(s.Capability), 12),
 				stateColor,
 				truncate(string(s.State), 10),
@@ -192,14 +259,25 @@ func runStatusPane(cmd *cobra.Command, app *App, opts agents.ListOpts) error {
 		fmt.Printf("\n\033[2mTotal: %d agent(s)\033[0m\n", len(sessions))
 	}
 
-	// Initial render.
+	watcher := newBinaryWatcher()
+
+	// Run initial staleness reap and render.
+	reapStale()
 	render()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
+		case <-dbChanged:
+			// DB file changed (inotify) — instant refresh.
+			render()
+		case <-reapTicker.C:
+			reapStale()
 		case <-ticker.C:
+			if watcher.check() {
+				watcher.reexec()
+			}
 			render()
 		}
 	}
@@ -258,7 +336,7 @@ func filterPaneSessions(sessions []*agents.AgentSession, dashStart time.Time) []
 // (tail of the list) so the latest activity is always visible without scrolling.
 // Completed agents from previous dashboard sessions are filtered out so a new
 // session starts with a clean pane.
-func printAgentsPane(sessions []*agents.AgentSession) error {
+func printAgentsPane(sessions []*agents.AgentSession, colorResolver func(string) string) error {
 	// Filter out completed agents from previous dashboard sessions.
 	dashStart := dashboardStartTime()
 	sessions = filterPaneSessions(sessions, dashStart)
@@ -306,8 +384,16 @@ func printAgentsPane(sessions []*agents.AgentSession) error {
 		stateIcon, stateColor := stateStyle(s.State)
 		dur := formatAgentDuration(s)
 
-		fmt.Printf(" %s%-16s%s %-12s %s%s%-10s%s %-10s %-14s\n",
-			ansiBold, truncate(s.AgentName, 16), ansiReset,
+		// Color agent name using their assigned palette color.
+		agentName := truncate(s.AgentName, 16)
+		if colorResolver != nil {
+			agentName = colorizeAgent(agentName, colorResolver(s.AgentName))
+		} else {
+			agentName = ansiBold + agentName + ansiReset
+		}
+
+		fmt.Printf(" %-16s %-12s %s%s%-10s%s %-10s %-14s\n",
+			agentName,
 			truncate(string(s.Capability), 12),
 			stateColor, stateIcon, truncate(string(s.State), 9), ansiReset,
 			dur,

@@ -17,31 +17,84 @@ type SessionLister interface {
 
 // AgentTable renders the agent session table view.
 type AgentTable struct {
-	sessions []*agents.AgentSession
-	lister   SessionLister
-	cursor   int
-	theme    *Theme
+	sessions  []*agents.AgentSession
+	lister    SessionLister
+	cursor    int
+	theme     *Theme
+	dashStart time.Time // when the dashboard was started; used to filter stale completed sessions
 }
 
 // NewAgentTable constructs an AgentTable.
 func NewAgentTable(lister SessionLister, theme *Theme) *AgentTable {
 	return &AgentTable{
-		lister: lister,
-		theme:  theme,
+		lister:    lister,
+		theme:     theme,
+		dashStart: time.Now(),
 	}
 }
 
-// Refresh fetches the latest sessions from the database.
+// Refresh fetches the latest sessions from the database and filters out
+// stale entries from previous dashboard sessions.
 func (t *AgentTable) Refresh(ctx context.Context) error {
 	sessions, err := t.lister.ListSessions(ctx, agents.ListOpts{})
 	if err != nil {
 		return fmt.Errorf("agent table refresh: %w", err)
 	}
+	sessions = t.filterLiveSessions(sessions)
 	t.sessions = sessions
 	if t.cursor >= len(t.sessions) && len(t.sessions) > 0 {
 		t.cursor = len(t.sessions) - 1
 	}
 	return nil
+}
+
+// filterLiveSessions removes sessions that should not appear in the agents pane:
+//   - Completed/zombie sessions from before the dashboard was started are hidden,
+//     since they belong to a previous run and are stale.
+//   - Working/booting sessions whose last_activity is older than staleThreshold
+//     are also excluded, as they likely represent ghost entries from crashed
+//     processes where the SubagentStop hook failed to fire.
+//
+// This mirrors the filterPaneSessions() logic in internal/commands/status.go
+// so the TUI dashboard behaves consistently with the KDL pane-mode status view.
+func (t *AgentTable) filterLiveSessions(sessions []*agents.AgentSession) []*agents.AgentSession {
+	if t.dashStart.IsZero() {
+		return sessions
+	}
+
+	// Threshold: sessions with no activity for this long and in an active state
+	// from before the dashboard started are considered stale ghosts.
+	const staleThreshold = 10 * time.Minute
+
+	filtered := make([]*agents.AgentSession, 0, len(sessions))
+	for _, s := range sessions {
+		// Skip filtering for sessions without a real StartedAt (e.g. in-memory mocks).
+		if s.StartedAt.IsZero() {
+			filtered = append(filtered, s)
+			continue
+		}
+
+		switch s.State {
+		case agents.StateCompleted, agents.StateZombie:
+			// Keep completed/zombie agents only if they started during this
+			// dashboard session. Old completed agents from previous runs are
+			// stale and should not clutter the pane.
+			if s.StartedAt.Before(t.dashStart) {
+				continue
+			}
+		case agents.StateWorking, agents.StateBooting:
+			// If an agent has had no activity for staleThreshold AND it
+			// started before the dashboard, it is almost certainly a ghost
+			// entry from a previous run whose process died without updating
+			// the DB. Skip it so the pane stays clean; the dashboard reaper
+			// will transition these to completed in the DB.
+			if !s.LastActivity.IsZero() && time.Since(s.LastActivity) > staleThreshold && s.StartedAt.Before(t.dashStart) {
+				continue
+			}
+		}
+		filtered = append(filtered, s)
+	}
+	return filtered
 }
 
 // Sessions returns the current snapshot.
@@ -101,8 +154,12 @@ func (t *AgentTable) View() string {
 			namePrefix = "> "
 		}
 
+		// Color the agent name using their assigned palette color.
+		agentStyle := StyleForAgent(s)
+		coloredName := agentStyle.Render(truncate(s.AgentName, cols[0].Width-2))
+
 		row := []string{
-			namePrefix + truncate(s.AgentName, cols[0].Width-2),
+			namePrefix + coloredName,
 			truncate(string(s.Capability), cols[1].Width),
 			stateStr,
 			dur,
@@ -133,7 +190,9 @@ func (t *AgentTable) CompactView(width, height int) string {
 		stateStr := t.renderState(s.State)
 		tokens := formatTokens(s.InputTokens + s.OutputTokens)
 		dur := RuntimeDuration(s.StartedAt)
-		name := truncate(s.AgentName, width-28)
+		// Color the agent name using their assigned palette color.
+		agentStyle := StyleForAgent(s)
+		name := agentStyle.Render(truncate(s.AgentName, width-28))
 
 		prefix := "  "
 		if i == t.cursor {

@@ -8,8 +8,8 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.Version != 1 {
-		t.Errorf("expected version 1, got %d", cfg.Version)
+	if cfg.Version != 2 {
+		t.Errorf("expected version 2, got %d", cfg.Version)
 	}
 	if cfg.Database.Driver != "sqlite" {
 		t.Errorf("expected driver sqlite, got %s", cfg.Database.Driver)

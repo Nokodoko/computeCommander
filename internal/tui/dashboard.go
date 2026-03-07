@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -75,6 +78,7 @@ type Dashboard struct {
 	projectName    string
 	projectID      string
 	db             db.DB     // database for staleness reaping (nil-safe)
+	dbPath         string    // SQLite DB file path for fsnotify watching
 	lastReapTime   time.Time // when we last ran the staleness reaper
 	staleThreshold time.Duration
 }
@@ -137,6 +141,7 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		projectName:    projectName,
 		projectID:      opts.ProjectID,
 		db:             opts.DB,
+		dbPath:         dbPathFromConfig(opts.Config),
 		staleThreshold: staleThreshold,
 	}
 
@@ -147,12 +152,23 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 func (d *Dashboard) Run(ctx context.Context) error {
 	d.ctx = ctx
 
+	// Write PID file so cmdr-bridge.sh can signal us for instant refresh.
 	// Perform an initial refresh before starting.
 	if err := d.Refresh(); err != nil {
 		d.err = err
 	}
 
 	p := tea.NewProgram(d, tea.WithAltScreen(), tea.WithMouseCellMotion())
+
+	// Watch the SQLite DB file with fsnotify for instant refresh.
+	// When cmdr-bridge.sh writes agent state to the DB, fsnotify fires
+	// and we forward a signalRefreshMsg to bubbletea for immediate re-render.
+	dbWatcher := d.watchDBForRefresh(p)
+	defer func() {
+		if dbWatcher != nil {
+			dbWatcher.Close()
+		}
+	}()
 
 	done := make(chan error, 1)
 	go func() {
@@ -162,7 +178,6 @@ func (d *Dashboard) Run(ctx context.Context) error {
 
 	select {
 	case err := <-done:
-		// Clean up PTY sessions.
 		_ = d.agentSession.Stop()
 		_ = d.filePicker.Stop()
 		return err
@@ -172,6 +187,62 @@ func (d *Dashboard) Run(ctx context.Context) error {
 		_ = d.filePicker.Stop()
 		return ctx.Err()
 	}
+}
+
+// dbPathFromConfig extracts the SQLite DB path from config, or returns empty string.
+func dbPathFromConfig(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.Database.SQLite.Path
+}
+
+// watchDBForRefresh sets up an fsnotify watcher on the SQLite DB file.
+// Sends signalRefreshMsg to the bubbletea program whenever the DB is modified.
+// Returns the watcher (caller must Close) or nil if watching is not possible.
+func (d *Dashboard) watchDBForRefresh(p *tea.Program) *fsnotify.Watcher {
+	if d.dbPath == "" {
+		return nil
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil
+	}
+
+	dbDir := filepath.Dir(d.dbPath)
+	if err := watcher.Add(dbDir); err != nil {
+		watcher.Close()
+		return nil
+	}
+
+	dbBase := filepath.Base(d.dbPath)
+	walBase := dbBase + "-wal"
+
+	go func() {
+		for {
+			select {
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
+					continue
+				}
+				name := filepath.Base(event.Name)
+				if name != dbBase && name != walBase {
+					continue
+				}
+				p.Send(signalRefreshMsg{})
+			case _, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+			}
+		}
+	}()
+
+	return watcher
 }
 
 // Refresh updates all sub-views with the latest data.
@@ -244,6 +315,11 @@ type tickMsg time.Time
 // rather than waiting for the next tick.
 type ptyOutputMsg struct{}
 
+// signalRefreshMsg is sent when a SIGUSR1 signal is received, triggering
+// an immediate data refresh. This allows cmdr-bridge.sh to notify the
+// dashboard of agent state changes without waiting for the tick interval.
+type signalRefreshMsg struct{}
+
 // Init sets up the initial command, starting the refresh ticker and
 // PTY output listeners.
 func (d *Dashboard) Init() tea.Cmd {
@@ -278,6 +354,10 @@ func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return d, tea.Tick(d.interval, func(t time.Time) tea.Msg {
 			return tickMsg(t)
 		})
+	case signalRefreshMsg:
+		// SIGUSR1 received from cmdr-bridge.sh — instant data refresh.
+		d.err = d.Refresh()
+		return d, nil
 	case ptyOutputMsg:
 		// PTY output arrived — re-render and re-subscribe for the next signal.
 		return d, d.waitForPTYOutput()

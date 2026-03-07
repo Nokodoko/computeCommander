@@ -25,7 +25,8 @@ func setupTestDB(t *testing.T) db.DB {
 		files_modified TEXT NOT NULL DEFAULT '[]',
 		enqueued_at TEXT NOT NULL DEFAULT (datetime('now')),
 		status TEXT NOT NULL DEFAULT 'pending',
-		resolved_tier TEXT
+		resolved_tier TEXT,
+		project_id TEXT
 	)`)
 	if err != nil {
 		t.Fatalf("create merge_queue table: %v", err)

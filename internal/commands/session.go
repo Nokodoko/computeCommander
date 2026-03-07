@@ -11,9 +11,16 @@ import (
 )
 
 // sessionManager is a package-level session manager shared across session commands.
-// In a full implementation, this would be stored in the App struct and initialized
-// at startup. For now, we use a package-level instance.
+// Initialized as in-memory; upgraded to DB-backed when GetSessionManager is called with an App.
 var sessionManager = tui.NewSessionManager()
+
+// GetSessionManager returns the session manager, upgrading to DB-backed if an App with a DB is available.
+func GetSessionManager(app *App) *tui.SessionManager {
+	if app != nil && app.DB != nil && !sessionManager.IsDBBacked() {
+		sessionManager = tui.NewDBSessionManager(app.DB)
+	}
+	return sessionManager
+}
 
 // SessionCmd returns the "session" command group for directory session management.
 func SessionCmd(app *App) *cobra.Command {
@@ -59,7 +66,7 @@ func SessionListCmd(app *App) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
 
-			sessions := sessionManager.ListSessions(false)
+			sessions := GetSessionManager(app).ListSessions(false)
 
 			if jsonOut {
 				return json.NewEncoder(os.Stdout).Encode(map[string]any{
@@ -105,8 +112,9 @@ func SessionSwitchCmd(app *App) *cobra.Command {
 			create, _ := cmd.Flags().GetBool("create")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
 
+			sm := GetSessionManager(app)
 			// Try to switch to existing session.
-			sess := sessionManager.SwitchSession(target)
+			sess := sm.SwitchSession(target)
 			if sess != nil {
 				if jsonOut {
 					return json.NewEncoder(os.Stdout).Encode(map[string]any{
@@ -125,7 +133,7 @@ func SessionSwitchCmd(app *App) *cobra.Command {
 				if app.Config != nil {
 					runtime = app.Config.Defaults.Runtime
 				}
-				sess = sessionManager.CreateSession(target, runtime)
+				sess = sm.CreateSession(target, runtime)
 				if jsonOut {
 					return json.NewEncoder(os.Stdout).Encode(map[string]any{
 						"success": true,
@@ -163,7 +171,7 @@ func SessionStopCmd(app *App) *cobra.Command {
 			target := args[0]
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
 
-			if err := sessionManager.StopSession(target); err != nil {
+			if err := GetSessionManager(app).StopSession(target); err != nil {
 				if jsonOut {
 					return json.NewEncoder(os.Stdout).Encode(map[string]any{
 						"success": false,

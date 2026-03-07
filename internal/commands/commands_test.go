@@ -2,6 +2,10 @@ package commands
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -393,6 +397,7 @@ func TestCommandConstructors(t *testing.T) {
 		{"doctor", DoctorCmd},
 		{"clean", CleanCmd},
 		{"feature", FeatureCmd},
+		{"evals", EvalsCmd},
 	}
 
 	for _, tc := range constructors {
@@ -565,6 +570,517 @@ func TestClose(t *testing.T) {
 	app := &App{}
 	if err := app.Close(); err != nil {
 		t.Errorf("Close with nil DB should not error: %v", err)
+	}
+}
+
+// --- Eval Bridge Tests -------------------------------------------------------
+
+// TestEvalsAddAndList verifies the full add → list cycle for evals.
+func TestEvalsAddAndList(t *testing.T) {
+	app := testApp(t)
+	ctx := context.Background()
+
+	// Initially, no evals exist.
+	rows, err := app.DB.Query(ctx, "SELECT id FROM evals")
+	if err != nil {
+		t.Fatalf("query evals: %v", err)
+	}
+	count := 0
+	for rows.Next() {
+		count++
+	}
+	rows.Close()
+	if count != 0 {
+		t.Fatalf("expected 0 evals initially, got %d", count)
+	}
+
+	// Add an eval via direct DB (simulating what evalsAddCmd does).
+	id := generateEvalID()
+	if !strings.HasPrefix(id, "eval-") {
+		t.Errorf("expected eval ID to start with 'eval-', got %q", id)
+	}
+
+	err = app.DB.Exec(ctx,
+		"INSERT INTO evals (id, project_name, agent_task, eval_type, command) VALUES (?, ?, ?, ?, ?)",
+		id, "test-project", "run unit tests", "unit_test", "echo ok",
+	)
+	if err != nil {
+		t.Fatalf("insert eval: %v", err)
+	}
+
+	// Query back.
+	row := app.DB.QueryRow(ctx, "SELECT id, project_name, agent_task, eval_type, command FROM evals WHERE id = ?", id)
+	var gotID, gotProject, gotTask, gotType, gotCommand string
+	if err := row.Scan(&gotID, &gotProject, &gotTask, &gotType, &gotCommand); err != nil {
+		t.Fatalf("scan eval: %v", err)
+	}
+	if gotID != id {
+		t.Errorf("expected id %q, got %q", id, gotID)
+	}
+	if gotProject != "test-project" {
+		t.Errorf("expected project 'test-project', got %q", gotProject)
+	}
+	if gotTask != "run unit tests" {
+		t.Errorf("expected task 'run unit tests', got %q", gotTask)
+	}
+	if gotType != "unit_test" {
+		t.Errorf("expected type 'unit_test', got %q", gotType)
+	}
+	if gotCommand != "echo ok" {
+		t.Errorf("expected command 'echo ok', got %q", gotCommand)
+	}
+}
+
+// TestEvalsRunPassingCommand verifies running an eval with a passing command.
+func TestEvalsRunPassingCommand(t *testing.T) {
+	app := testApp(t)
+	ctx := context.Background()
+
+	id := generateEvalID()
+	err := app.DB.Exec(ctx,
+		"INSERT INTO evals (id, project_name, agent_task, eval_type, command) VALUES (?, ?, ?, ?, ?)",
+		id, "test-project", "echo test", "build", "echo hello",
+	)
+	if err != nil {
+		t.Fatalf("insert eval: %v", err)
+	}
+
+	// Run the evals command.
+	cmd := EvalsCmd(app)
+	cmd.SetArgs([]string{"run", "--id", id, "--json"})
+
+	// Capture output.
+	var buf strings.Builder
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("evals run: %v", err)
+	}
+
+	// Verify the eval was updated in the DB.
+	row := app.DB.QueryRow(ctx, "SELECT passed, error_detail, last_run_at FROM evals WHERE id = ?", id)
+	var passed *bool
+	var errorDetail, lastRunAt *string
+	if err := row.Scan(&passed, &errorDetail, &lastRunAt); err != nil {
+		t.Fatalf("scan eval result: %v", err)
+	}
+	if passed == nil {
+		t.Fatal("expected passed to be non-nil after run")
+	}
+	if !*passed {
+		t.Error("expected eval to pass with 'echo hello'")
+	}
+	if lastRunAt == nil {
+		t.Error("expected last_run_at to be set")
+	}
+}
+
+// TestEvalsRunFailingCommand verifies running an eval with a failing command.
+func TestEvalsRunFailingCommand(t *testing.T) {
+	app := testApp(t)
+	ctx := context.Background()
+
+	id := generateEvalID()
+	err := app.DB.Exec(ctx,
+		"INSERT INTO evals (id, project_name, agent_task, eval_type, command) VALUES (?, ?, ?, ?, ?)",
+		id, "test-project", "fail test", "custom", "exit 1",
+	)
+	if err != nil {
+		t.Fatalf("insert eval: %v", err)
+	}
+
+	cmd := EvalsCmd(app)
+	cmd.SetArgs([]string{"run", "--id", id})
+
+	// Suppress output.
+	var buf strings.Builder
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("evals run: %v", err)
+	}
+
+	// Verify the eval failed.
+	row := app.DB.QueryRow(ctx, "SELECT passed FROM evals WHERE id = ?", id)
+	var passed *bool
+	if err := row.Scan(&passed); err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if passed == nil {
+		t.Fatal("expected passed to be non-nil after run")
+	}
+	if *passed {
+		t.Error("expected eval to fail with 'exit 1'")
+	}
+}
+
+// TestEvalsRemove verifies removing an eval.
+func TestEvalsRemove(t *testing.T) {
+	app := testApp(t)
+	ctx := context.Background()
+
+	id := generateEvalID()
+	err := app.DB.Exec(ctx,
+		"INSERT INTO evals (id, project_name, agent_task, eval_type, command) VALUES (?, ?, ?, ?, ?)",
+		id, "test-project", "removable", "lint", "echo lint",
+	)
+	if err != nil {
+		t.Fatalf("insert eval: %v", err)
+	}
+
+	cmd := EvalsCmd(app)
+	cmd.SetArgs([]string{"remove", id})
+
+	var buf strings.Builder
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("evals remove: %v", err)
+	}
+
+	// Verify it was deleted.
+	row := app.DB.QueryRow(ctx, "SELECT id FROM evals WHERE id = ?", id)
+	var gone string
+	err = row.Scan(&gone)
+	if err == nil {
+		t.Error("expected eval to be deleted, but it still exists")
+	}
+}
+
+// TestEvalsRemoveNonExistent verifies removing a non-existent eval returns an error.
+func TestEvalsRemoveNonExistent(t *testing.T) {
+	app := testApp(t)
+
+	cmd := EvalsCmd(app)
+	cmd.SetArgs([]string{"remove", "eval-doesnotexist"})
+
+	var buf strings.Builder
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Error("expected error when removing non-existent eval")
+	}
+}
+
+// TestEvalsListJSON verifies JSON output of eval list.
+func TestEvalsListJSON(t *testing.T) {
+	app := testApp(t)
+	ctx := context.Background()
+
+	// Add two evals.
+	for i, et := range []string{"unit_test", "integration"} {
+		id := generateEvalID()
+		err := app.DB.Exec(ctx,
+			"INSERT INTO evals (id, project_name, agent_task, eval_type, command) VALUES (?, ?, ?, ?, ?)",
+			id, "test-project", fmt.Sprintf("task-%d", i), et, "echo ok",
+		)
+		if err != nil {
+			t.Fatalf("insert eval %d: %v", i, err)
+		}
+	}
+
+	cmd := EvalsCmd(app)
+	cmd.SetArgs([]string{"--json"})
+
+	// Capture stdout.
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	if err := cmd.Execute(); err != nil {
+		w.Close()
+		os.Stdout = oldStdout
+		t.Fatalf("evals list --json: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var output strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := r.Read(buf)
+		if n > 0 {
+			output.Write(buf[:n])
+		}
+		if readErr != nil {
+			break
+		}
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(output.String()), &result); err != nil {
+		t.Fatalf("failed to parse JSON output: %v\nOutput: %s", err, output.String())
+	}
+	if result["success"] != true {
+		t.Errorf("expected success=true, got %v", result["success"])
+	}
+	count, ok := result["count"].(float64)
+	if !ok || count != 2 {
+		t.Errorf("expected count=2, got %v", result["count"])
+	}
+}
+
+// TestEvalsAddCmd verifies the add subcommand via cobra execution.
+func TestEvalsAddCmd(t *testing.T) {
+	app := testApp(t)
+	ctx := context.Background()
+
+	cmd := EvalsCmd(app)
+	cmd.SetArgs([]string{"add",
+		"--project", "my-project",
+		"--task", "check formatting",
+		"--type", "lint",
+		"--command", "echo formatted",
+	})
+
+	var buf strings.Builder
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("evals add: %v", err)
+	}
+
+	// Verify it was inserted.
+	rows, err := app.DB.Query(ctx, "SELECT id, project_name, eval_type, command FROM evals WHERE project_name = ?", "my-project")
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	found := false
+	for rows.Next() {
+		var id, project, evalType, command string
+		if err := rows.Scan(&id, &project, &evalType, &command); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if project == "my-project" && evalType == "lint" && command == "echo formatted" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected to find the inserted eval")
+	}
+}
+
+// TestEvalsAddInvalidType verifies that an invalid eval type is rejected.
+func TestEvalsAddInvalidType(t *testing.T) {
+	app := testApp(t)
+
+	cmd := EvalsCmd(app)
+	cmd.SetArgs([]string{"add",
+		"--project", "my-project",
+		"--type", "invalid_type",
+		"--command", "echo nope",
+	})
+
+	var buf strings.Builder
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Error("expected error for invalid eval type")
+	}
+}
+
+// TestEvalsAddMissingProject verifies that --project is required.
+func TestEvalsAddMissingProject(t *testing.T) {
+	app := testApp(t)
+
+	cmd := EvalsCmd(app)
+	cmd.SetArgs([]string{"add",
+		"--command", "echo test",
+	})
+
+	var buf strings.Builder
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Error("expected error for missing --project")
+	}
+}
+
+// TestEvalsAddMissingCommand verifies that --command is required.
+func TestEvalsAddMissingCommand(t *testing.T) {
+	app := testApp(t)
+
+	cmd := EvalsCmd(app)
+	cmd.SetArgs([]string{"add",
+		"--project", "my-project",
+	})
+
+	var buf strings.Builder
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Error("expected error for missing --command")
+	}
+}
+
+// TestEvalsRunMultiple verifies running multiple evals and checking summary counts.
+func TestEvalsRunMultiple(t *testing.T) {
+	app := testApp(t)
+	ctx := context.Background()
+
+	// Insert a passing and a failing eval.
+	passID := generateEvalID()
+	failID := generateEvalID()
+
+	err := app.DB.Exec(ctx,
+		"INSERT INTO evals (id, project_name, agent_task, eval_type, command) VALUES (?, ?, ?, ?, ?)",
+		passID, "test-project", "pass test", "build", "echo ok",
+	)
+	if err != nil {
+		t.Fatalf("insert pass eval: %v", err)
+	}
+
+	err = app.DB.Exec(ctx,
+		"INSERT INTO evals (id, project_name, agent_task, eval_type, command) VALUES (?, ?, ?, ?, ?)",
+		failID, "test-project", "fail test", "build", "exit 1",
+	)
+	if err != nil {
+		t.Fatalf("insert fail eval: %v", err)
+	}
+
+	// Run all evals for this project via JSON output.
+	cmd := EvalsCmd(app)
+	cmd.SetArgs([]string{"run", "--project", "test-project", "--json"})
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	if err := cmd.Execute(); err != nil {
+		w.Close()
+		os.Stdout = oldStdout
+		t.Fatalf("evals run: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var output strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := r.Read(buf)
+		if n > 0 {
+			output.Write(buf[:n])
+		}
+		if readErr != nil {
+			break
+		}
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(output.String()), &result); err != nil {
+		t.Fatalf("parse JSON: %v\nOutput: %s", err, output.String())
+	}
+
+	if p, ok := result["passed"].(float64); !ok || p != 1 {
+		t.Errorf("expected 1 passed, got %v", result["passed"])
+	}
+	if f, ok := result["failed"].(float64); !ok || f != 1 {
+		t.Errorf("expected 1 failed, got %v", result["failed"])
+	}
+	if total, ok := result["total"].(float64); !ok || total != 2 {
+		t.Errorf("expected 2 total, got %v", result["total"])
+	}
+}
+
+// TestEvalsFilterByProject verifies that evals can be filtered by project name.
+func TestEvalsFilterByProject(t *testing.T) {
+	app := testApp(t)
+	ctx := context.Background()
+
+	// Add evals for two different projects.
+	for _, proj := range []string{"alpha", "beta"} {
+		id := generateEvalID()
+		err := app.DB.Exec(ctx,
+			"INSERT INTO evals (id, project_name, agent_task, eval_type, command) VALUES (?, ?, ?, ?, ?)",
+			id, proj, "task for "+proj, "custom", "echo "+proj,
+		)
+		if err != nil {
+			t.Fatalf("insert eval for %s: %v", proj, err)
+		}
+	}
+
+	// List with --project alpha --json.
+	cmd := EvalsCmd(app)
+	cmd.SetArgs([]string{"--project", "alpha", "--json"})
+
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+
+	if err := cmd.Execute(); err != nil {
+		w.Close()
+		os.Stdout = oldStdout
+		t.Fatalf("evals list: %v", err)
+	}
+
+	w.Close()
+	os.Stdout = oldStdout
+
+	var output strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := r.Read(buf)
+		if n > 0 {
+			output.Write(buf[:n])
+		}
+		if readErr != nil {
+			break
+		}
+	}
+
+	var result map[string]any
+	if err := json.Unmarshal([]byte(output.String()), &result); err != nil {
+		t.Fatalf("parse JSON: %v", err)
+	}
+
+	count, ok := result["count"].(float64)
+	if !ok || count != 1 {
+		t.Errorf("expected 1 eval for project alpha, got %v", result["count"])
+	}
+}
+
+// TestGenerateEvalID verifies IDs are unique and well-formed.
+func TestGenerateEvalID(t *testing.T) {
+	seen := make(map[string]bool)
+	for i := 0; i < 100; i++ {
+		id := generateEvalID()
+		if !strings.HasPrefix(id, "eval-") {
+			t.Fatalf("eval ID should start with 'eval-', got %q", id)
+		}
+		if seen[id] {
+			t.Fatalf("duplicate eval ID generated: %q", id)
+		}
+		seen[id] = true
+	}
+}
+
+// TestEvalsEvalTypeConstraint verifies the DB CHECK constraint on eval_type.
+func TestEvalsEvalTypeConstraint(t *testing.T) {
+	app := testApp(t)
+	ctx := context.Background()
+
+	err := app.DB.Exec(ctx,
+		"INSERT INTO evals (id, project_name, eval_type, command) VALUES (?, ?, ?, ?)",
+		"eval-constraint", "test-project", "nonexistent_type", "echo nope",
+	)
+	if err == nil {
+		t.Error("expected CHECK constraint violation for invalid eval_type")
 	}
 }
 

@@ -15,16 +15,18 @@ import (
 // It behaves like AgentSession: spawn the process, forward keystrokes,
 // and render its terminal output via a virtual terminal emulator.
 type FilePicker struct {
-	root    string
-	cmd     *exec.Cmd
-	ptyFile *os.File
-	vterm   *VTerm
-	mu      sync.Mutex
-	width   int
-	height  int
-	running bool
-	theme   *Theme
-	lastErr string // last error message for display
+	root        string
+	projectName string // display name for the active project
+	projectID   string // ID of the active project
+	cmd         *exec.Cmd
+	ptyFile     *os.File
+	vterm       *VTerm
+	mu          sync.Mutex
+	width       int
+	height      int
+	running     bool
+	theme       *Theme
+	lastErr     string // last error message for display
 
 	// notify signals the bubbletea event loop when new PTY output arrives.
 	notify chan struct{}
@@ -38,6 +40,32 @@ func NewFilePicker(root string, theme *Theme) *FilePicker {
 		vterm:  NewVTerm(30, 20), // default size, resized on Start
 		notify: make(chan struct{}, 1),
 	}
+}
+
+// SetProject sets the project context for display in the header.
+func (fp *FilePicker) SetProject(name, id string) {
+	fp.mu.Lock()
+	defer fp.mu.Unlock()
+	fp.projectName = name
+	fp.projectID = id
+}
+
+// NavigateTo restarts the file picker with a new root directory.
+// This is called when the active session switches to a different project.
+func (fp *FilePicker) NavigateTo(newRoot string) error {
+	if newRoot == fp.root {
+		return nil
+	}
+	// Stop current fp process.
+	if err := fp.Stop(); err != nil {
+		return fmt.Errorf("stop fp for navigate: %w", err)
+	}
+	fp.root = newRoot
+	// Restart with current dimensions.
+	if fp.width > 0 && fp.height > 0 {
+		return fp.Start(fp.width, fp.height)
+	}
+	return nil
 }
 
 // Notify returns the channel that signals new PTY output is available.
@@ -179,15 +207,23 @@ func (fp *FilePicker) SetLastError(msg string) {
 // processes all ANSI escape sequences internally, so only safe SGR codes
 // appear in the output.
 func (fp *FilePicker) View() string {
-	if !fp.Running() {
-		fp.mu.Lock()
-		errMsg := fp.lastErr
-		fp.mu.Unlock()
-		if errMsg != "" {
-			return fp.theme.Subtitle.Render("fp error: " + errMsg + "\nPress Enter to retry.")
-		}
-		return fp.theme.Subtitle.Render("  File picker not started. Press Enter to launch.")
+	fp.mu.Lock()
+	projectName := fp.projectName
+	errMsg := fp.lastErr
+	fp.mu.Unlock()
+
+	// Build project header if project context is set.
+	header := ""
+	if projectName != "" {
+		header = fp.theme.Subtitle.Render(fmt.Sprintf(" [%s]", projectName)) + "\n"
 	}
 
-	return fp.vterm.Render()
+	if !fp.Running() {
+		if errMsg != "" {
+			return header + fp.theme.Subtitle.Render("fp error: "+errMsg+"\nPress Enter to retry.")
+		}
+		return header + fp.theme.Subtitle.Render("  File picker not started. Press Enter to launch.")
+	}
+
+	return header + fp.vterm.Render()
 }

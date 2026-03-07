@@ -1,0 +1,59 @@
+version: 1
+rules:
+  - id: no-force-push
+    description: "Block git push --force to protected branches"
+    tool: Bash
+    match:
+      command: "git push.*--force.*(?:main|master|develop)"
+    action: block
+    message: "Force push to protected branches is prohibited"
+    severity: critical
+
+  - id: no-secret-read
+    description: "Block reading common secret files"
+    tool: Read
+    match:
+      file_path: ".*\\.env$|.*credentials.*|.*\\.pem$|.*\\.key$"
+    action: block
+    message: "Reading secret files is prohibited without explicit grant"
+    severity: critical
+    override: grant
+
+  - id: no-recursive-spawn
+    description: "Block agents from spawning beyond max depth"
+    tool: Task
+    match:
+      depth: ">5"
+    action: block
+    message: "Agent spawn depth exceeds maximum (5)"
+    severity: high
+
+  - id: no-destructive-git
+    description: "Block destructive git operations"
+    tool: Bash
+    match:
+      command: "git (reset --hard|clean -f|checkout \\.|branch -D)"
+    action: block
+    message: "Destructive git operations require explicit grant"
+    severity: high
+    override: grant
+
+  - id: ci-retry-limit
+    description: "Block CI retries beyond limit"
+    tool: Bash
+    match:
+      command: "gh run rerun|gh workflow run"
+      count_window: "1h"
+      count_max: 3
+    action: block
+    message: "CI retry limit (3/hour) exceeded"
+    severity: medium
+
+  - id: no-root-operations
+    description: "Block sudo and root-level operations"
+    tool: Bash
+    match:
+      command: "^sudo |^su |^doas "
+    action: block
+    message: "Root-level operations are prohibited"
+    severity: critical

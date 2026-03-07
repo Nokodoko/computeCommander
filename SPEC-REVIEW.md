@@ -1,200 +1,56 @@
-# SPEC Review -- ComputeCommander CLI Redesign (Iteration 3 -- Final)
+# Spec Review: ComputeCommander Evals Pane
 
-## Verdict: PASS
+**Iteration:** 1/3
+**Date:** 2026-03-05
+**Verdict:** PASS WITH WARNINGS
 
 ## Summary
 
-Both iteration 2 issues (N1: cross-process IPC for Git Status pane, N2: `$ZELLIJ_PANE_ID` for frame title rename) have been comprehensively resolved. The spec now contains a dedicated "Cross-Process Session Notification" section with a 5-step file-based IPC protocol, and `$ZELLIJ_PANE_ID` is documented in the `SessionFocusManager` data model, the `PaneIdMap` interface, and the Session Change Protocol narrative. The spec is implementable end-to-end with no critical or high-severity gaps remaining. All carried warnings from iterations 1 and 2 are non-blocking and can be resolved during implementation.
+The spec is well-structured and provides substantial detail for implementing an Evals pane across both the KDL layout and BubbleTea TUI. Most sections are thorough, with complete SQL migrations, Go struct definitions, and CLI specifications. However, there are two critical issues (incorrect pattern claim leading agents to the wrong reference files, and missing test file updates that will cause T8 to fail) and several warnings around inconsistencies between the spec and the actual codebase that could lead to implementation errors.
 
-## Fix Verification
+## Dimension Scores
 
-### N1: Cross-Process IPC
-**VERIFIED.** A dedicated "Cross-Process Session Notification" section has been added at lines 686-696 under Integration. The specification:
+| Dimension | Rating | Critical | Warnings |
+|-----------|--------|----------|----------|
+| Completeness | WARN | 1 | 2 |
+| Clarity | PASS | 0 | 2 |
+| Correctness | WARN | 1 | 3 |
+| Consistency | WARN | 0 | 3 |
+| SDLC | PASS | 0 | 1 |
+| Actionability | PASS | 0 | 1 |
 
-- **Line 688**: Explicitly states the problem: "Panes running as separate OS processes (e.g., `cmdr git-status --pane`) cannot receive Go interface callbacks from the `SessionFocusManager`."
-- **Line 689**: Defines the mechanism: file-based IPC via `.computecommander/active-session.path`.
-- **Lines 690-694**: 5-step protocol:
-  1. **Write**: `SessionFocusManager` atomically writes the active session's directory path (temp file + `os.Rename`)
-  2. **Watch**: External pane processes watch via `fsnotify`
-  3. **Read**: On `fsnotify.Write` event, the external process reads the new path and updates state
-  4. **Startup**: Initial launch reads the existing value rather than waiting for a change event
-  5. **Cleanup**: `cmdr stop` removes `active-session.path` alongside `cmdr.lock`
-- **Line 696**: Rationale note explains why `fsnotify` was chosen over SIGUSR1 (more reliable, no PID tracking needed), with a reference to the existing SIGUSR1 pattern from commit `6e8cbe3` for context.
+## Findings
 
-The fix is also reflected in three other locations:
-- **Line 310**: `switchTo()` operation description now says "write active-session file"
-- **Line 329**: `SessionFocusManager` narrative paragraph explains both in-process callbacks and cross-process file-based broadcast
-- **Lines 789-791**: Session Change Protocol step 2 is now split into `(a) In-process broadcast` and `(b) Cross-process broadcast`, with the file-based mechanism described inline
-- **Lines 543-548**: `cmdr git-status --pane` CLI help text documents that the pane watches `.computecommander/active-session.path` via `fsnotify`
+### Critical (must fix)
 
-The IPC mechanism is fully specified from write to watch to read to startup bootstrap to cleanup. An implementor can build T23 (`cmdr git-status --pane`) without ambiguity.
+- [C1] **Incorrect pattern claim in Design Principles (Section: Design Principles, line 15).** The spec states: "The new Evals pane mirrors `MergeQueueView` / `MailSummary` in structure: a Go struct with `View()`, `Refresh()`, `SetSize()`." Neither `MergeQueueView` (`internal/tui/merge_view.go`) nor `MailSummary` (`internal/tui/mail_summary.go`) implements `SetSize()`. Verified by searching both files -- zero matches. The panes that DO have `SetSize()` are `EventsPane` (`internal/tui/events_pane.go`), `GitStatusPane` (`internal/tui/git_status.go`), `FilePicker`, and `AgentSession`. The EvalsPane must follow the `EventsPane`/`GitStatusPane` pattern (which includes `SetSize`, `width`, `height` fields). Furthermore, in `updatePaneSizes()` (`dashboard.go` line 427), `SetSize` is called for `eventsPane` and `gitStatus` but NOT for `mail` or `queue`. Task T3's read scope lists `internal/tui/merge_view.go` as the primary reference -- this will mislead the implementing agent. The correct primary references are `internal/tui/events_pane.go` and `internal/tui/git_status.go`.
 
-### N2: $ZELLIJ_PANE_ID
-**VERIFIED.** The `$ZELLIJ_PANE_ID` environment variable discovery mechanism is now documented in multiple locations:
+- [C2] **Missing test file in task write scopes (Section: Task Manifest, T4/T5).** `internal/tui/dashboard_test.go` contains `TestPaneNavigation` (line 171) which hardcodes `PaneGitStatus` as the last pane in wrap-around assertions (lines 190-200: `nextPane(PaneGitStatus)` expects `PaneFilePicker`, and `prevPane(PaneFilePicker)` expects `PaneGitStatus`). After adding `PaneEvals` to the end of the iota block and `paneOrder`, the wrap-around target changes from `PaneGitStatus` to `PaneEvals`, breaking this test. Neither T4 nor T5 includes `internal/tui/dashboard_test.go` in their write scope, and T8's verify command (`go test ./internal/tui/...`) will fail. Additionally, the Failure Modes section (line 531) references `TestPaneCycle` and `TestPaneMetaByID` -- `TestPaneCycle` does not exist; the actual test name is `TestPaneNavigation`.
 
-- **Lines 316-321**: A new `PaneIdMap` interface in the data model defines the pane ID mapping structure with `fp`, `agentWorkspace`, and `gitStatus` string fields, with a comment: "Zellij pane ID mapping for frame title updates and cross-process coordination"
-- **Line 307**: `SessionFocusManager` includes `paneIds: PaneIdMap` field with comment: "captured from `$ZELLIJ_PANE_ID` at launch"
-- **Line 329**: Narrative paragraph after the `SessionFocusManager` interface states: "Each pane's zellij pane ID is captured at launch from the `$ZELLIJ_PANE_ID` environment variable and stored in `paneIds` so that frame title updates can target the correct pane via `zellij action rename-pane --pane-id <id> \"<title>\"`"
-- **Line 762**: FP pane behavior item 10 explicitly states: "The pane ID is captured at FP pane launch from the `$ZELLIJ_PANE_ID` environment variable (zellij injects this into every pane's environment) and stored in `SessionFocusManager.paneIds.fp`"
-- **Line 793**: Session Change Protocol step 3 (FP pane reaction) references: "pane ID from `SessionFocusManager.paneIds.fp`, originally captured from `$ZELLIJ_PANE_ID` at pane launch"
+### Warnings (should fix)
 
-The mechanism is fully documented: zellij injects `$ZELLIJ_PANE_ID` into each pane's environment, the application captures it at launch, stores it in `PaneIdMap`, and uses it for targeted `zellij action rename-pane --pane-id <id>` calls. No ambiguity remains.
+- [W1] **SQL parameter style not specified (Section: Implementation Details, T3).** The spec's `Refresh()` query uses no parameters, but `RunAll()` and the `--pane` mode (T2) will need parameterized queries for UPDATE and filtered SELECT. The codebase uses mixed conventions: `$1` positional params in newer code (`internal/agents/spawner.go`, `internal/tui/dashboard.go`, `internal/commands/status.go`) and `?` params in older code (`internal/mail/sql_store.go`, `internal/merge/queue.go`). The `internal/agents/agentic_instructions.md` explicitly says "SQL uses `$1` positional params (compatible with both postgres and sqlite)." The spec should state which convention to use to prevent the implementing agent from picking the wrong one.
 
----
+- [W2] **KDL layout Sprintf argument mapping not provided (Section: Implementation Details, T6, lines 628-641).** `GenerateLayout()` (`internal/zellij/layout.go` line 101-146) uses a single large `fmt.Sprintf` with 16 positional arguments. Adding a 5th bottom-row pane requires inserting 2+ new format arguments (`cmdrBin` and `projectFlag`) at the correct position in the Sprintf call. The spec shows the KDL template snippet but does not provide the complete argument list or the positional index where new arguments should be inserted. Given this Sprintf has 16 args already, off-by-one errors are likely without an explicit argument map.
 
-## Dimension 1: Completeness
+- [W3] **`updatePaneSizes()` inconsistency not addressed (Section: Implementation Details, T5, line 613).** The spec says to add `d.evals.SetSize(bottomPaneW-2, bottomH-3)` in `updatePaneSizes()`. This is correct. However, the existing `mail` and `queue` components do NOT have SetSize called on them in `updatePaneSizes()` (they render without explicit sizing). The spec does not explain this asymmetry, which could confuse the implementer into thinking they need to add SetSize calls for mail/queue as well, or conversely, that EvalsPane doesn't need SetSize because other bottom panes don't have it.
 
-### Pass
+- [W4] **T2 implementation details are sparse compared to T3 (Section: Implementation Details).** T2's `--pane` mode runs as a separate OS process (`cmdr evals --pane`) with its own ticker loop querying the database independently. The spec says "Follows the `GitStatusCmd` / `FeedCmd` pattern for `--pane` mode with a ticker loop" (line 169) but provides no code skeleton for T2, while T3 gets a full struct definition, method signatures, and column widths. The T2 implementer must: (a) understand that `--pane` mode is a completely separate code path from the TUI EvalsPane, (b) use `app.DB` for queries, (c) implement `clearScreen()` + render loop, (d) format output with ANSI colors matching the lipgloss styles. These are all inferrable from the referenced files but should be more explicit.
 
-All major features are specified with sufficient detail for implementation. The session management system (SessionFocusManager, PTYManager, cross-process IPC, session change protocol) is the most complex area and is now fully closed:
+- [W5] **Bottom row pane count mismatch between KDL and TUI (Section: Integration, line 327).** In KDL mode, the 4th bottom pane is "LazyGit" (a bash wrapper). In TUI mode, the 4th bottom pane is "Git Status" (an in-process component). The spec adds "Evals" as the 5th pane in both modes, making KDL have 5 panes (Event Log, Mail, Merge Queue, LazyGit, Evals) and TUI have 5 panes (Events, Mail, Merge Queue, Git Status, Evals). This asymmetry is inherited from the existing codebase and is not a spec bug, but the spec does not acknowledge it. An implementer might be confused by the discrepancy.
 
-- In-process session coupling: Go interface callbacks for FP and Agent Workspace panes
-- Cross-process session coupling: file-based IPC via `active-session.path` for Git Status pane
-- PTY lifecycle: spawn, attach, detach, kill, scrollback, max-concurrent, crash recovery
-- Session fallback: MRU ordering when active session is stopped
-- Pane ID discovery: `$ZELLIJ_PANE_ID` captured at launch, stored in `PaneIdMap`
+- [W6] **Section numbering is inconsistent.** The spec has 23 top-level `##` sections total but numbers only sections 15-19. Sections 1-14 are implied by ordering, and sections 20-23 (Agent Assignments, Execution Order, Failure Modes, Implementation Details) are unnumbered. This makes it difficult to reference specific sections by number.
 
-### Remaining Warnings (non-blocking)
+- [W7] **Color scheme references external hook files that are not in the repo.** The Color Scheme section references `~/.claude/hooks/intent/eval_loop.py:PREDICATE_NOTIFICATION_COLORS`, `intent-eval-posttool.py`, and `intent-build-verify.py` as the source of truth for color values. These files are user-specific and not part of the computeCommander repository. The hex color values are explicitly provided (so implementation doesn't depend on the files), but the provenance claim is unverifiable by another implementer.
 
-- **C1-WARN-1 (carried): ExportData references undefined types.** `ExportData` (line 236-249) references `AgentSession[]`, `Event[]`, etc. without defining them. These map to existing DB tables. Adding "See existing SQLite schema in `migrations/`" would close this gap but is not blocking -- an implementor will naturally reference the existing schema.
+- [W8] **`NewEvalsPane` needs DB handle from `NewDashboard` but spec doesn't show DashboardOpts change.** The spec's T5 instructions (line 610) say to add `evals: NewEvalsPane(opts.DB, theme),` in `NewDashboard()`. This works because `DashboardOpts` already has a `DB db.DB` field (dashboard.go line 27). However, the spec does not mention that `DashboardOpts` does NOT need modification, which is good -- but an explicit "DashboardOpts already has DB; no change needed" note would prevent unnecessary modifications.
 
-- **C1-WARN-2 (carried): No error handling spec for session directory failures.** What happens when a session's directory is deleted while the session is active? What happens when two sessions target the same directory? PTY crash recovery is specified (line 826) but filesystem-level edge cases are not. An implementor can handle these as standard error paths.
+### Notes (informational)
 
-- **C1-WARN-3 (carried): `cmdr fp` implementation approach ambiguity.** T19 creates a bubbletea component; the KDL layout runs an external `fp` binary. The spec heavily favors the bubbletea approach (session coupling depends on it). An explicit "replaces external `fp` binary" note would eliminate the last trace of ambiguity. Inferrable from context.
+- [N1] **Go 1.25 reference.** The Tech Stack section says "Go 1.25". As of March 2026, this is plausible if the project tracks the latest Go release. No action needed.
 
-- **C1-WARN-4 (carried): DirectorySession persistence undecided.** Sessions appear to be in-memory (managed by `SessionFocusManager` runtime struct). Line 759 says "Sessions persist until explicitly stopped" but this means runtime persistence, not restart persistence. The spec does not state whether sessions survive a `cmdr` restart. The most natural reading is that they are ephemeral (re-created on next launch). Not blocking -- an implementor can default to ephemeral and add persistence later.
+- [N2] **Migration 002 and 003 exist as untracked files.** Both `internal/platform/db/migrations/sqlite/002_system_wide.sql` and `003_agentic_foundation.sql` show as untracked (`??`) in git status. If these haven't been committed when an agent runs T1, migration 004 would numerically follow untracked files. This won't break the embed directive (`//go:embed migrations/sqlite/*.sql`) since it embeds all `.sql` files in the directory, but if 002/003 are not committed, the 004 migration could run on a database that lacks the 002/003 tables. This is a project state issue, not a spec issue.
 
-- **C1-WARN-5 (new, minor): `active-session.path` not listed in On-Disk Format.** The On-Disk Format section (lines 36-54) does not include `active-session.path` in the `.computecommander/` directory listing. It is documented in the Cross-Process Session Notification section (line 690) and the CLI help text (line 545), so an implementor will know about it. Adding it to the On-Disk Format listing would be more consistent.
+- [N3] **No new Go dependencies confirmed.** All required packages (`os/exec`, `database/sql`, `crypto/rand`, `charmbracelet/lipgloss`, etc.) are already imported elsewhere in the project.
 
----
-
-## Dimension 2: Clarity
-
-### Pass
-
-The spec is well-organized with clear section boundaries. The session management additions from iteration 2 are thorough and use consistent terminology.
-
-### Remaining Warnings (non-blocking)
-
-- **C2-WARN-1 (carried): "cmdr" vs "cc" naming.** Open Question #5 (line 1442) asks whether both should be supported. The suggested default ("Change `Use` to `cmdr`, keep Makefile output as `cmdr`, add `cc` as alias") is reasonable and an implementor can adopt it. Converting this to a decision before implementation would be ideal.
-
-- **C2-WARN-2 (carried): FP pane width 15% (spec) vs 10% (deployed).** The spec standardized on 15% in all internal references. The deployed KDL layout uses 10%. Minor -- pick one during implementation.
-
-- **C2-WARN-3 (carried): `--tui` flag semantics.** Line 417 says `--tui` means "Force in-process TUI (skip wezterm)" but the default behavior is also a TUI. The distinction is wezterm-spawned-zellij vs in-process-bubbletea-only. One clarifying sentence would help, but the intent is inferrable.
-
-- **C2-WARN-4 (carried): Leader key implementation layer.** Whether the leader key is bubbletea-level (only works when TUI pane is focused) or zellij-level (works from any pane). The KDL layout does not include keybindings (per MEMORY.md: "Layout files must NOT contain keybinds blocks"), and T11 says "leader key handler in TUI event loop", so bubbletea-level is the implicit answer. A confirming sentence would help.
-
----
-
-## Dimension 3: Correctness
-
-### Pass
-
-All layout diagrams, KDL blocks, task descriptions, and data models are internally consistent.
-
-### Remaining Warnings (non-blocking)
-
-- **C3-WARN-1 (carried): FP pane width 15% vs 10%.** Spec says 15%, deployed says 10%. Both cannot be correct simultaneously. Low severity.
-
-- **C3-WARN-2 (carried): `ShutdownCmd` naming.** T4 (line 1319) documents the workaround, Success Criteria (line 1412) references it. The fragility is acknowledged but mitigated by documentation.
-
-### Info
-
-- **C3-INFO-1 (carried): Go 1.25 does not exist yet.** Forward reference or aspirational.
-- **C3-INFO-2 (carried): CI uses `actions/checkout@v6`.** Current latest is v4.
-
----
-
-## Dimension 4: Consistency
-
-### Pass
-
-Pane naming, scoping terminology, and cross-references are consistent throughout.
-
-- "Git Status" appears correctly in all 7+ locations (layout diagrams, KDL block, migration table, panels table, task manifest, CHANGELOG, CLI section)
-- Session-scoped vs cross-project terminology is used consistently in the pane behavior table (lines 770-778), panels table (lines 1198-1206), and all session-related narrative sections
-- The dual notification mechanism (in-process callbacks + cross-process file-based IPC) is consistently described in the data model (line 329), the Session Change Protocol (lines 789-796), the Cross-Process Session Notification section (lines 686-696), and the CLI help text (lines 543-548)
-
-### Remaining Warnings (non-blocking)
-
-- **C4-WARN-1 (carried): "Agents" pane vs "Agent Session"/"Agent Workspace".** These are distinct panes (right sidebar vs center workspace). The spec uses distinct names consistently in the panels table (lines 1198-1206). Residual risk of confusion in casual reading is minimal.
-
-- **C4-WARN-2 (carried): Section numbering non-sequential.** Earlier sections use `##` without numbers; sections 15-19 have numeric prefixes. Cosmetic.
-
----
-
-## Dimension 5: SDLC (Testing, CI, Deployment, Rollback)
-
-### Pass
-
-The test strategy covers session-scoping explicitly. T22 (line 1337) requires: "verify FP, Git Status, and Agent Workspace all update when session changes." Success criteria (line 1431) adds a machine-verifiable check for this.
-
-### Remaining Warnings (non-blocking)
-
-- **C5-WARN-1 (carried): Rollback plan is `git stash`.** Acceptable for pre-release. Does not address go.mod changes or generated files on user machines.
-
-- **C5-WARN-2 (carried): No performance criteria.** 8 concurrent PTYs with 10k-line scrollback buffers could consume significant memory. A target like "session switch < 200ms" and "memory per PTY < 50MB" would be prudent. Not blocking for implementation.
-
-- **C5-WARN-3 (carried): CI does not validate KDL syntax.** Malformed KDL would only surface at runtime. Adding `zellij setup --check` or a KDL parser test would catch this. Low severity.
-
-- **C5-WARN-4 (carried): Missing directory creation in `cmdr init`.** T15 (line 1330) says "Update cmdr init to generate keybinds.yaml and open interface after DB start" but does not mention creating `backups/`, `layouts/`, `plugins/`, `themes/` directories. `cmdr backup` will fail if `backups/` does not exist. Medium severity but easily caught during implementation.
-
----
-
-## Dimension 6: Actionability
-
-### Pass
-
-All 25 tasks have clear file scope (read and write), explicit dependencies, and verify commands. The execution order (4 phases plus integration) is aligned with the dependency graph. The new cross-process IPC section and `PaneIdMap` data model give T23 (git-status) and T24 (SessionFocusManager) implementors everything they need.
-
-### Remaining Warnings (non-blocking)
-
-- **C6-WARN-1 (carried): T19 fp approach.** T19 builds a bubbletea component. The deployed KDL runs an external `fp` binary. The bubbletea approach is authoritative (session coupling depends on it). An explicit "replaces external `fp` binary" note in T19 would be ideal.
-
-- **C6-WARN-2 (carried): Open questions block tasks.** Questions 1-4 block T5, question 5 blocks T1, question 7 blocks T9/T19. Suggested defaults are provided and are reasonable. An implementor can adopt them as decisions. Converting them to decisions before starting Phase 1 is recommended but not blocking.
-
-- **C6-WARN-3 (carried): T24/T25 dependency ordering.** T24 (SessionFocusManager) depends on T19 and T20. T25 (PTYManager) depends on T9 and T19. These are consumers of the FP and session commands, which makes sense -- the managers need the components they coordinate to exist first. The alternative (making managers foundational) would require stub interfaces in the consumers. The current ordering is defensible.
-
----
-
-## Remaining Warnings Summary
-
-All remaining warnings are non-blocking. They represent documentation polish, edge case coverage, or decisions that can be made during implementation.
-
-| ID | Summary | Severity | Recommendation |
-|----|---------|----------|----------------|
-| C1-WARN-1 | ExportData references undefined types | Info | Add "See `migrations/`" reference |
-| C1-WARN-2 | No session directory failure handling | Warning | Handle as standard error paths during implementation |
-| C1-WARN-3 | fp approach ambiguity (bubbletea vs external) | Info | Add "replaces external `fp` binary" to T19 |
-| C1-WARN-4 | DirectorySession persistence undecided | Warning | Default to ephemeral; add persistence if needed later |
-| C1-WARN-5 | `active-session.path` missing from On-Disk Format | Info | Add to directory listing for consistency |
-| C2-WARN-1 | cmdr vs cc naming (Open Question #5) | Warning | Adopt suggested default before implementation |
-| C2-WARN-2 | FP pane width: 15% vs 10% | Info | Pick one during implementation |
-| C2-WARN-3 | `--tui` flag semantics | Info | Add clarifying sentence |
-| C2-WARN-4 | Leader key layer (bubbletea vs zellij) | Warning | Confirm bubbletea-level with one sentence |
-| C3-WARN-1 | FP width discrepancy | Info | Same as C2-WARN-2 |
-| C3-WARN-2 | ShutdownCmd naming fragility | Info | Already documented in T4 and success criteria |
-| C4-WARN-1 | Agents vs Agent Session naming | Info | Panels table disambiguates |
-| C4-WARN-2 | Section numbering non-sequential | Info | Cosmetic |
-| C5-WARN-1 | Rollback plan incomplete | Info | Acceptable for pre-release |
-| C5-WARN-2 | No performance criteria | Warning | Add targets during implementation if needed |
-| C5-WARN-3 | CI does not validate KDL | Info | Add KDL validation test |
-| C5-WARN-4 | Missing init directory creation | Warning | Add to T15 scope during implementation |
-| C6-WARN-1 | T19 fp approach note | Info | One sentence addition |
-| C6-WARN-2 | Open questions block tasks | Warning | Adopt suggested defaults |
-| C6-WARN-3 | T24/T25 dependency ordering | Info | Current ordering is defensible |
-
----
-
-## Final Assessment
-
-The spec is **implementable**. All critical and high-severity issues from iterations 1 and 2 have been resolved. The session management system -- the most architecturally complex addition -- is fully specified across five interconnected sections: the `SessionFocusManager` data model (lines 299-329), the Session Change Protocol (lines 784-803), the Cross-Process Session Notification mechanism (lines 686-696), the PTY Swapping Mechanics (lines 816-827), and the `cmdr git-status --pane` CLI definition (lines 543-548). The dual notification strategy (in-process Go callbacks for FP/Agent Workspace + file-based fsnotify IPC for Git Status) is well-reasoned and consistent with the project's existing patterns. The `$ZELLIJ_PANE_ID` pane discovery mechanism is documented in the data model, the narrative, and the behavioral specification.
-
-The 20 remaining warnings are all low-to-medium severity, non-blocking, and addressable during implementation without spec revision. An implementation team can begin Phase 1 (T1, T3, T16) immediately.
-
----
-
-*Review iteration: 3 of 3 (final)*
-*Reviewer: spec-reviewer*
-*Date: 2026-03-03*
-*Verdict: PASS*
+- [N4] **The `_migrations` table's `applied_at` default uses `datetime('now')` (SQLite syntax).** This is fine for SQLite but would break on PostgreSQL if the same DDL were used. The `Migrate()` function uses the same DDL for both drivers (line 37-40 of migrate.go). However, since the migrations tracking table already exists on any initialized database, this is not a concern for the new 004 migration.

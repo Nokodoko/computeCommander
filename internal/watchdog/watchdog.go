@@ -31,6 +31,12 @@ type Watchdog struct {
 	classifier  Tier1Classifier
 	cfg         config.WatchdogConfig
 	nudgeCfg    config.NudgeConfig
+	projectID   string // Optional project filter for scoped monitoring.
+}
+
+// SetProjectFilter restricts health checks to sessions belonging to the given project.
+func (w *Watchdog) SetProjectFilter(projectID string) {
+	w.projectID = projectID
 }
 
 // NewWatchdog creates a Watchdog with the given options.
@@ -116,8 +122,9 @@ func (w *Watchdog) tick(ctx context.Context) error {
 }
 
 // CheckAll inspects every active session and returns a health report for each.
+// If a project filter is set, only sessions for that project are checked.
 func (w *Watchdog) CheckAll(ctx context.Context) ([]HealthReport, error) {
-	sessions, err := listActiveSessions(ctx, w.db)
+	sessions, err := listActiveSessions(ctx, w.db, w.projectID)
 	if err != nil {
 		return nil, fmt.Errorf("check all: %w", err)
 	}
@@ -149,7 +156,11 @@ func (w *Watchdog) CheckAll(ctx context.Context) ([]HealthReport, error) {
 
 // sendHealthMail sends a health_check message through the mail system.
 func (w *Watchdog) sendHealthMail(report HealthReport) error {
-	body := fmt.Sprintf("Agent %s health: %s\nIssues:\n", report.Agent, report.Status)
+	body := fmt.Sprintf("Agent %s health: %s\n", report.Agent, report.Status)
+	if report.ProjectID != "" {
+		body += fmt.Sprintf("Project: %s\n", report.ProjectID)
+	}
+	body += "Issues:\n"
 	for _, iss := range report.Issues {
 		body += fmt.Sprintf("  - [Tier%d/%s] %s\n", iss.Tier, iss.Code, iss.Description)
 	}
@@ -161,12 +172,13 @@ func (w *Watchdog) sendHealthMail(report HealthReport) error {
 	}
 
 	msg := &mail.MailMessage{
-		From:     "watchdog",
-		To:       report.Agent,
-		Subject:  fmt.Sprintf("Health check: %s (%s)", report.Agent, report.Status),
-		Body:     body,
-		Priority: healthPriority(report.Status),
-		Type:     mail.TypeHealthCheck,
+		From:      "watchdog",
+		To:        report.Agent,
+		Subject:   fmt.Sprintf("Health check: %s (%s)", report.Agent, report.Status),
+		Body:      body,
+		Priority:  healthPriority(report.Status),
+		Type:      mail.TypeHealthCheck,
+		ProjectID: report.ProjectID,
 	}
 
 	return w.mailStore.Send(msg)

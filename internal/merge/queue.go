@@ -56,12 +56,17 @@ func (q *SQLQueue) Enqueue(entry *MergeEntry) error {
 	}
 
 	ctx := context.Background()
+	// Pass SQL NULL for empty ProjectID to avoid FK constraint violation.
+	var projectID any
+	if entry.ProjectID != "" {
+		projectID = entry.ProjectID
+	}
 	err = q.db.Exec(ctx,
-		`INSERT INTO merge_queue (branch_name, task_id, agent_name, files_modified, enqueued_at, status)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO merge_queue (branch_name, task_id, agent_name, files_modified, enqueued_at, status, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		entry.BranchName, entry.TaskID, entry.AgentName,
 		string(filesJSON), entry.EnqueuedAt.Format(time.RFC3339),
-		string(entry.Status),
+		string(entry.Status), projectID,
 	)
 	if err != nil {
 		return fmt.Errorf("enqueue %s: %w", entry.BranchName, err)
@@ -191,10 +196,22 @@ func (q *SQLQueue) List(opts ListOpts) ([]*MergeEntry, error) {
 	query := `SELECT branch_name, task_id, agent_name, files_modified, enqueued_at, status, resolved_tier
 		 FROM merge_queue`
 	var args []any
+	var clauses []string
 
 	if opts.Status != nil {
-		query += ` WHERE status = ?`
+		clauses = append(clauses, "status = ?")
 		args = append(args, string(*opts.Status))
+	}
+	if opts.ProjectID != "" {
+		clauses = append(clauses, "project_id = ?")
+		args = append(args, opts.ProjectID)
+	}
+
+	if len(clauses) > 0 {
+		query += ` WHERE ` + clauses[0]
+		for _, c := range clauses[1:] {
+			query += ` AND ` + c
+		}
 	}
 
 	query += ` ORDER BY enqueued_at ASC`
