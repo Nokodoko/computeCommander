@@ -30,13 +30,13 @@
 ---
 
 ```
-╔══════════════════════════════════════════════════════╗
-║  PROJECT_NAME   = "computeCommander"                 ║
-║  VERSION        = "0.1.0"                            ║
-║  LICENSE        = "MIT"                              ║
-║  LANGUAGE       = "Go 1.25 + Rust (focus-watcher)"  ║
-║  ARCHITECTURE   = "Zellij KDL + BubbleTea TUI"      ║
-╚══════════════════════════════════════════════════════╝
+╔═══════════════════════════════════════════════════════╗
+║  PROJECT_NAME   = "computeCommander"                  ║
+║  VERSION        = "0.1.0"                             ║
+║  LICENSE        = "MIT"                               ║
+║  LANGUAGE       = "Go 1.25 + Rust (focus-watcher)"    ║
+║  ARCHITECTURE   = "Zellij KDL + BubbleTea TUI"        ║
+╚═══════════════════════════════════════════════════════╝
 ```
 
 <div align="center">
