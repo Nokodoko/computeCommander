@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -63,6 +64,8 @@ func appPreRun(cmd *cobra.Command, args []string) error {
 
 func rootCmd() *cobra.Command {
 	var tuiFlag bool
+	var restoreFlag bool
+	var restoreForceFlag bool
 
 	root := &cobra.Command{
 		Use:   "cmdr",
@@ -93,6 +96,23 @@ conflict resolution.`,
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Restore sessions from saved state if requested.
+			if restoreFlag {
+				if err := sharedApp.RestoreSessionState(restoreForceFlag); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+				} else {
+					sm := commands.GetSessionManager(sharedApp)
+					sessions := sm.ListSessions(false)
+					fmt.Fprintf(os.Stderr, "Restored %d session(s) from saved state.\n", len(sessions))
+				}
+			}
+
+			// Start autosave goroutine (saves every 30s while sessions exist).
+			stopAutosave := commands.GetSessionManager(sharedApp).StartAutosave(
+				sharedApp.SessionStatePath(), 30*time.Second,
+			)
+			defer stopAutosave()
+
 			// Check for --tui flag or CC_DASHBOARD_TUI env var.
 			if !tuiFlag {
 				tuiFlag = os.Getenv("CC_DASHBOARD_TUI") == "1"
@@ -154,12 +174,18 @@ conflict resolution.`,
 		},
 		PersistentPostRun: func(cmd *cobra.Command, args []string) {
 			if appInitialised {
+				// Save session state before closing.
+				if err := sharedApp.SaveSessionState(); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not save session state: %v\n", err)
+				}
 				_ = sharedApp.Close()
 			}
 		},
 	}
 
 	root.Flags().BoolVar(&tuiFlag, "tui", false, "Force in-process Bubbletea TUI (skip zellij session)")
+	root.Flags().BoolVar(&restoreFlag, "restore", false, "Restore sessions from last saved state")
+	root.Flags().BoolVar(&restoreForceFlag, "restore-force", false, "Restore even if state file is >24h old")
 	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress non-error output")
 	root.PersistentFlags().Bool("json", false, "JSON output")
 	root.PersistentFlags().Bool("timing", false, "Show execution timing")

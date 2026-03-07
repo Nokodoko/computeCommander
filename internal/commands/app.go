@@ -6,9 +6,16 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/noko/computecommander/internal/agents"
+	"github.com/noko/computecommander/internal/agentic/block"
+	"github.com/noko/computecommander/internal/agentic/blueprint"
+	"github.com/noko/computecommander/internal/agentic/gate"
+	"github.com/noko/computecommander/internal/agentic/holdout"
+	"github.com/noko/computecommander/internal/agentic/isolation"
+	"github.com/noko/computecommander/internal/agentic/trace"
 	"github.com/noko/computecommander/internal/config"
 	"github.com/noko/computecommander/internal/gateway"
 	"github.com/noko/computecommander/internal/mail"
@@ -43,6 +50,28 @@ type App struct {
 	Watchdog        *watchdog.Watchdog
 	Gateway         *gateway.Gateway
 	Version         string
+
+	// Agentic foundation engines.
+	TraceEngine     *trace.TraceEngine
+	BlockEngine     *block.BlockRuleEngine
+	BlueprintEngine *blueprint.BlueprintEngine
+	GatePipeline    *gate.GatePipeline
+	HoldoutEngine   *holdout.HoldoutEngine
+	ManifestStore   *isolation.ManifestStore
+}
+
+// NewAppSystemWide constructs an App using the system-wide config loading path.
+// It loads ~/.computecommander/config.yaml, then overlays per-project config from projectPath.
+func NewAppSystemWide(projectPath, version string) (*App, error) {
+	cfg, err := config.LoadSystemConfig(projectPath)
+	if err != nil {
+		return nil, fmt.Errorf("load system config: %w", err)
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("validate config: %w", err)
+	}
+
+	return newAppFromConfig(cfg, version)
 }
 
 // NewApp constructs an App by reading the project config and initialising all services.
@@ -56,6 +85,11 @@ func NewApp(configPath, version string) (*App, error) {
 		return nil, fmt.Errorf("validate config: %w", err)
 	}
 
+	return newAppFromConfig(cfg, version)
+}
+
+// newAppFromConfig constructs an App from a fully loaded and validated Config.
+func newAppFromConfig(cfg *config.Config, version string) (*App, error) {
 	dbCfg := db.DatabaseConfig{
 		Driver: cfg.Database.Driver,
 		Postgres: db.PostgresConfig{
@@ -130,6 +164,13 @@ func NewApp(configPath, version string) (*App, error) {
 		StartAt: time.Now(),
 	})
 
+	// Agentic foundation engines.
+	traceEngine := trace.NewTraceEngine(database, 100, 5*time.Second)
+	blockEngine := block.NewBlockRuleEngine(database)
+	blueprintEngine := blueprint.NewBlueprintEngine(database)
+	holdoutEngine := holdout.NewHoldoutEngine(database, 0.7)
+	manifestStore := isolation.NewManifestStore(database)
+
 	return &App{
 		Config:          cfg,
 		DB:              database,
@@ -143,6 +184,11 @@ func NewApp(configPath, version string) (*App, error) {
 		Watchdog:        wd,
 		Gateway:         gw,
 		Version:         version,
+		TraceEngine:     traceEngine,
+		BlockEngine:     blockEngine,
+		BlueprintEngine: blueprintEngine,
+		HoldoutEngine:   holdoutEngine,
+		ManifestStore:   manifestStore,
 	}, nil
 }
 
@@ -154,6 +200,66 @@ func (a *App) Close() error {
 	return nil
 }
 
+// SessionStatePath returns the path to the session state file,
+// resolved from the config directory.
+func (a *App) SessionStatePath() string {
+	if a.Config != nil && a.Config.System.DBPath != "" {
+		// System-wide: use ~/.computecommander/
+		dir := filepath.Dir(a.Config.System.DBPath)
+		// Expand ~ if present.
+		if len(dir) > 0 && dir[0] == '~' {
+			if home, err := os.UserHomeDir(); err == nil {
+				dir = filepath.Join(home, dir[1:])
+			}
+		}
+		return filepath.Join(dir, "session-state.json")
+	}
+	// Per-project fallback.
+	return filepath.Join(".computecommander", "session-state.json")
+}
+
+// SaveSessionState persists the current session state to disk.
+func (a *App) SaveSessionState() error {
+	sm := GetSessionManager(a)
+	return sm.SaveState(a.SessionStatePath())
+}
+
+// RestoreSessionState loads saved session state from disk and populates
+// the session manager. If force is false and the state is older than 24h,
+// an error is returned.
+func (a *App) RestoreSessionState(force bool) error {
+	path := a.SessionStatePath()
+
+	state, err := tui.LoadState(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("no saved session state found at %s", path)
+		}
+		return fmt.Errorf("load session state: %w", err)
+	}
+
+	// Staleness check.
+	if !force && state.IsStale(24*time.Hour) {
+		return fmt.Errorf("session state is older than 24 hours (saved at %s); use --restore-force to override",
+			state.SavedAt.Format(time.RFC3339))
+	}
+
+	// Warn if the saving process is still alive.
+	if state.IsPIDAlive() {
+		fmt.Fprintf(os.Stderr, "Warning: process %d that saved this state may still be running\n", state.PID)
+	}
+
+	sm := GetSessionManager(a)
+	if err := sm.RestoreState(state); err != nil {
+		return fmt.Errorf("restore session state: %w", err)
+	}
+
+	// Remove the state file after successful restoration.
+	_ = os.Remove(path)
+
+	return nil
+}
+
 // NewDashboard creates a TUI Dashboard wired to the App's services.
 func (a *App) NewDashboard() *tui.Dashboard {
 	return tui.NewDashboard(tui.DashboardOpts{
@@ -161,6 +267,7 @@ func (a *App) NewDashboard() *tui.Dashboard {
 		Mail:   a.MailStore,
 		Queue:  a.MergeQueue,
 		Config: a.Config,
+		DB:     a.DB,
 	})
 }
 
@@ -171,6 +278,7 @@ func (a *App) NewDashboardWithCmd(agentCmd string) *tui.Dashboard {
 		Mail:     a.MailStore,
 		Queue:    a.MergeQueue,
 		Config:   a.Config,
+		DB:       a.DB,
 		AgentCmd: agentCmd,
 	})
 }
@@ -184,6 +292,31 @@ func (a *App) RunDashboard(ctx context.Context) error {
 // RunDashboardWithCmd launches the TUI dashboard with an optional agent command override.
 func (a *App) RunDashboardWithCmd(ctx context.Context, agentCmd string) error {
 	dash := a.NewDashboardWithCmd(agentCmd)
+	return dash.Run(ctx)
+}
+
+// RunDashboardWithProject launches the TUI dashboard with project context.
+func (a *App) RunDashboardWithProject(ctx context.Context, agentCmd, projectID string) error {
+	// Resolve project name from DB if a project ID is provided.
+	projectName := ""
+	if projectID != "" && a.DB != nil {
+		var name string
+		row := a.DB.QueryRow(ctx, "SELECT name FROM projects WHERE id = ?", projectID)
+		if err := row.Scan(&name); err == nil {
+			projectName = name
+		}
+	}
+
+	dash := tui.NewDashboard(tui.DashboardOpts{
+		Lister:      a.Spawner,
+		Mail:        a.MailStore,
+		Queue:       a.MergeQueue,
+		Config:      a.Config,
+		DB:          a.DB,
+		AgentCmd:    agentCmd,
+		ProjectName: projectName,
+		ProjectID:   projectID,
+	})
 	return dash.Run(ctx)
 }
 
