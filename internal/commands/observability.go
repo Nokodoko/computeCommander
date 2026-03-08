@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -182,6 +181,8 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 
 	watcher := newBinaryWatcher()
 
+	colorResolver := app.Spawner.BuildColorResolver(ctx)
+
 	render := func() {
 		clearScreen()
 		events, err := queryEvents(ctx, app, "", "", 20)
@@ -208,9 +209,10 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 			case "debug":
 				levelColor = "\033[2m"
 			}
-			fmt.Printf("%s%-19s\033[0m \033[1m%-12s\033[0m %-12s %s\n",
+			agentName := colorizeAgent(truncate(e.Agent, 12), colorResolver(e.Agent))
+			fmt.Printf("%s%-19s\033[0m %s %-12s %s\n",
 				levelColor, timeStr,
-				truncate(e.Agent, 12),
+				agentName,
 				truncate(e.EventType, 12),
 				truncate(e.Data, 40),
 			)
@@ -236,7 +238,7 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 	}
 }
 
-func printEventPane(events []eventRow) error {
+func printEventPane(events []eventRow, colorResolver func(string) string) error {
 	header := fmt.Sprintf("%s%s── Events (%d) ──%s", ansiBold, ansiCyan, len(events), ansiReset)
 	fmt.Println(header)
 
@@ -247,10 +249,13 @@ func printEventPane(events []eventRow) error {
 
 	for _, e := range events {
 		ts := shortTime(e.CreatedAt)
-		agentColor := eventAgentColor(e.EventType)
-		fmt.Printf(" %s%s%s %s%s%s %s\n",
+		agentName := truncate(e.Agent, 16)
+		if colorResolver != nil {
+			agentName = colorizeAgent(agentName, colorResolver(e.Agent))
+		}
+		fmt.Printf(" %s%s%s %s %s\n",
 			ansiDim, ts, ansiReset,
-			agentColor, truncate(e.Agent, 16), ansiReset,
+			agentName,
 			truncate(e.Data, 40),
 		)
 	}
@@ -271,19 +276,6 @@ func shortTime(ts string) string {
 	return ts
 }
 
-// eventAgentColor returns an ANSI color based on event type keywords.
-func eventAgentColor(eventType string) string {
-	switch {
-	case strings.Contains(eventType, "completed"), strings.Contains(eventType, "done"):
-		return ansiGreen
-	case strings.Contains(eventType, "error"), strings.Contains(eventType, "fail"):
-		return ansiRed
-	case strings.Contains(eventType, "supervisor"), strings.Contains(eventType, "spawn"):
-		return ansiYellow
-	default:
-		return ansiCyan
-	}
-}
 
 // LogsCmd returns the "logs" command for querying agent logs.
 // Enhanced with --follow and --lines flags.
