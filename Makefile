@@ -2,10 +2,22 @@ VERSION ?= 0.2.0
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
-.PHONY: build test lint vet clean
+FOCUS_WATCHER_DIR := plugins/focus-watcher
+FOCUS_WATCHER_BIN := $(FOCUS_WATCHER_DIR)/target/release/focus-watcher
 
-build:
+.PHONY: build build-focus-watcher test lint vet clean install
+
+build: build-focus-watcher
 	go build $(LDFLAGS) -o cmdr ./cmd/cc/
+
+build-focus-watcher:
+	@command -v cargo >/dev/null 2>&1 || { echo "ERROR: cargo (Rust toolchain) is required to build focus-watcher"; exit 1; }
+	cargo build --release --manifest-path $(FOCUS_WATCHER_DIR)/Cargo.toml
+
+install: build
+	@mkdir -p $(HOME)/.local/bin
+	cp cmdr $(HOME)/.local/bin/cmdr
+	cp $(FOCUS_WATCHER_BIN) $(HOME)/.local/bin/focus-watcher
 
 test:
 	go test ./...
@@ -18,3 +30,4 @@ vet:
 
 clean:
 	rm -f cmdr
+	cargo clean --manifest-path $(FOCUS_WATCHER_DIR)/Cargo.toml 2>/dev/null || true

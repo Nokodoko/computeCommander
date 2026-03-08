@@ -47,8 +47,11 @@ func TestGenerateLayout_IncludesFocusWatcher(t *testing.T) {
 	if strings.Contains(layout, "focus-tracker.wasm") {
 		t.Errorf("layout must NOT contain the deprecated focus-tracker WASM plugin:\n%s", layout)
 	}
-	if !strings.Contains(layout, "focus-watcher.sh") {
-		t.Errorf("layout must contain focus-watcher.sh pane:\n%s", layout)
+	// Layout must include either the Rust binary or the bash fallback.
+	hasBash := strings.Contains(layout, "focus-watcher.sh")
+	hasRust := strings.Contains(layout, "focus-watcher") && strings.Contains(layout, "--tab-hash")
+	if !hasBash && !hasRust {
+		t.Errorf("layout must contain a focus-watcher pane (Rust binary or bash fallback):\n%s", layout)
 	}
 	if !strings.Contains(layout, `"abc12345"`) {
 		t.Errorf("layout must pass tab_hash to focus-watcher:\n%s", layout)
@@ -76,9 +79,11 @@ func TestWriteLayout_NoKeybinds(t *testing.T) {
 	if strings.Contains(string(data), "keybinds") {
 		t.Errorf("written layout must not contain 'keybinds':\n%s", string(data))
 	}
-	// Verify focus-watcher shell script pane is included (WASM plugin replaced).
-	if !strings.Contains(string(data), "focus-watcher.sh") {
-		t.Errorf("written layout must contain focus-watcher.sh pane")
+	// Verify focus-watcher pane is included (Rust binary or bash fallback).
+	hasBash := strings.Contains(string(data), "focus-watcher.sh")
+	hasRust := strings.Contains(string(data), "focus-watcher") && strings.Contains(string(data), "--tab-hash")
+	if !hasBash && !hasRust {
+		t.Errorf("written layout must contain a focus-watcher pane (Rust binary or bash fallback)")
 	}
 	if strings.Contains(string(data), "focus-tracker.wasm") {
 		t.Errorf("written layout must NOT contain deprecated focus-tracker WASM plugin")
