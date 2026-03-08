@@ -15,11 +15,8 @@
 -->
 
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:0D1117,50:00D4FF,100:00FF9F&height=200&section=header&text=computeCommander&fontSize=42&fontColor=FFFFFF&animation=fadeIn" width="100%"/>
-
 <div align="center">
-
 <img src="assets/banner.jpg" width="600" alt="computeCommander — an agentic IDE for AI coding agent swarms" />
-
 </div>
 
 <div align="center">
