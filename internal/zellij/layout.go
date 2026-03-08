@@ -175,18 +175,25 @@ func GenerateLayout(opts LayoutOpts) string {
 // relative to the Go module root (discovered via the cmdr binary's location).
 // Falls back to WriteFocusWatcherBash if the binary is not found.
 func WriteFocusWatcher(scriptBaseDir, projectDir, tabHash string) (string, error) {
-	// Try to find the Rust binary relative to the cmdr binary or project dir.
-	candidates := []string{
-		filepath.Join(projectDir, "plugins", "focus-watcher", "target", "release", "focus-watcher"),
-	}
-	// Also check relative to the running binary.
+	// Try to find the Rust binary in several candidate locations.
+	var candidates []string
+
+	// Check relative to the running binary (covers dev builds and installed setups).
 	if exe, err := os.Executable(); err == nil {
 		exeDir := filepath.Dir(exe)
 		candidates = append(candidates,
+			// Installed next to cmdr (e.g., make install copies it here).
 			filepath.Join(exeDir, "focus-watcher"),
-			filepath.Join(exeDir, "..", "plugins", "focus-watcher", "target", "release", "focus-watcher"),
+			// Dev build: cmdr is in the repo root, Rust binary in plugins/ subtree.
+			filepath.Join(exeDir, "plugins", "focus-watcher", "target", "release", "focus-watcher"),
 		)
 	}
+
+	// Check project dir (for cases where projectDir is the computeCommander repo itself).
+	candidates = append(candidates,
+		filepath.Join(projectDir, "plugins", "focus-watcher", "target", "release", "focus-watcher"),
+	)
+
 	// Check home directory install location.
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates,
@@ -201,7 +208,10 @@ func WriteFocusWatcher(scriptBaseDir, projectDir, tabHash string) (string, error
 	}
 
 	// Fallback: generate the bash script.
-	fmt.Fprintf(os.Stderr, "Warning: Rust focus-watcher binary not found, falling back to bash script\n")
+	if os.Getenv("CMDR_FOCUS_WATCHER_REQUIRE_RUST") == "1" {
+		return "", fmt.Errorf("Rust focus-watcher binary not found. Build it with: cd plugins/focus-watcher && cargo build --release")
+	}
+	fmt.Fprintf(os.Stderr, "WARNING: Rust focus-watcher binary not found in any candidate location — falling back to slow bash script.\nTo suppress this, build the binary: cd plugins/focus-watcher && cargo build --release\nTo make this a hard error, set CMDR_FOCUS_WATCHER_REQUIRE_RUST=1\n")
 	return WriteFocusWatcherBash(scriptBaseDir, projectDir, tabHash)
 }
 
