@@ -421,14 +421,16 @@ func (s *Spawner) insertSession(ctx context.Context, sess *AgentSession) error {
 	return nil
 }
 
-// countSessionsInRun counts existing sessions to determine the spawn index for color assignment.
+// countSessionsInRun returns the next color index for a new agent.
+// Uses MAX(color_index)+1 instead of COUNT(*) to avoid color collisions
+// when agents start near-simultaneously or stale sessions skew the count.
 func (s *Spawner) countSessionsInRun(ctx context.Context, _ string) (int, error) {
-	var count int
-	row := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM sessions WHERE state != 'completed'`)
-	if err := row.Scan(&count); err != nil {
+	var nextIdx int
+	row := s.db.QueryRow(ctx, `SELECT COALESCE(MAX(color_index), -1) + 1 FROM sessions WHERE state != 'completed'`)
+	if err := row.Scan(&nextIdx); err != nil {
 		return 0, err
 	}
-	return count, nil
+	return nextIdx, nil
 }
 
 // findSessionByName locates a session by agent name.
