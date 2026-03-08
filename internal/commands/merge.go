@@ -129,7 +129,8 @@ func mergeListCmd(app *App) *cobra.Command {
 
 // runMergeListPane runs merge list in long-lived pane mode, refreshing periodically.
 func runMergeListPane(cmd *cobra.Command, app *App, opts merge.ListOpts) error {
-	ctx := cmd.Context()
+	ctx, cancel := paneContext(cmd.Context())
+	defer cancel()
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 

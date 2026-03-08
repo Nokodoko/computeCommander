@@ -54,6 +54,11 @@ type ListOpts struct {
 	// Limit caps the number of returned messages. 0 means no limit.
 	Limit int
 
+	// Recent sorts by created_at DESC (newest first) instead of the default
+	// priority-first, oldest-first ordering. Useful for the TUI mail summary
+	// which shows the most recent activity, not the oldest unread queue.
+	Recent bool
+
 	// ProjectID filters to messages for this project. Empty means all projects.
 	ProjectID string
 }

@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,57 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 )
+
+// orphanChecker detects when a pane process has been orphaned — i.e., the
+// parent zellij pane was closed but the process was not killed. This happens
+// when zellij tabs are closed and the child processes survive (e.g., because
+// zellij doesn't always send SIGTERM to deeply nested children).
+//
+// Detection strategy: record the parent PID at startup. If the parent PID
+// changes (reparented to init/PID 1, or to a new process), the original
+// parent is gone and we should exit.
+type orphanChecker struct {
+	parentPID int
+}
+
+// newOrphanChecker creates an orphan checker that records the current parent PID.
+func newOrphanChecker() *orphanChecker {
+	return &orphanChecker{parentPID: os.Getppid()}
+}
+
+// isOrphaned returns true if the process has been reparented (parent PID changed).
+// This indicates the original parent (zellij pane shell) has exited.
+func (o *orphanChecker) isOrphaned() bool {
+	if o == nil {
+		return false
+	}
+	return os.Getppid() != o.parentPID
+}
+
+// paneContext returns a context that cancels when the pane process is orphaned.
+// It checks every 5 seconds and also propagates the parent context's cancellation.
+func paneContext(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	checker := newOrphanChecker()
+
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if checker.isOrphaned() {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
+	return ctx, cancel
+}
 
 // clearScreen sends ANSI escape codes to clear the terminal and move the cursor
 // to the top-left corner. Used by --pane mode commands in the zellij dashboard.

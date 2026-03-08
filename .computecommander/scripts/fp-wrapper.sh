@@ -7,7 +7,7 @@ set -uo pipefail
 DEFAULT_DIR="${1:-/home/n0ko/Programs/ai/computeCommander}"
 # $2 is the tab hash passed from the KDL layout args at launch time.
 # Fall back to the compile-time hash so existing running instances stay valid.
-TAB_HASH="${2:-443c43bc}"
+TAB_HASH="${2:-e191dbc7}"
 export CMDR_TAB_HASH="$TAB_HASH"
 FP_PID=""
 HAS_INOTIFY=false
@@ -22,7 +22,7 @@ start_fp() {
     # Update the pane title to reflect the current project.
     # Uses terminal escape sequence so it works from within this pane
     # regardless of which pane has focus (unlike zellij action rename-pane).
-    printf '\033]2;%s\007' "$(basename "$dir")"
+    printf '\033]2;fp: %s\007' "$(basename "$dir")"
     fp "$dir" &
     FP_PID=$!
 }

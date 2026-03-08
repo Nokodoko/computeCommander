@@ -166,7 +166,11 @@ func StatusCmd(app *App) *cobra.Command {
 // last_activity exceeds the stale threshold (default 10 minutes). This prevents ghost
 // entries from lingering when the SubagentStop hook fails to update the database.
 func runStatusPane(cmd *cobra.Command, app *App, opts agents.ListOpts) error {
-	ctx := cmd.Context()
+	// Wrap the context with orphan detection so the pane process exits
+	// when its parent zellij pane is closed. Without this, pane processes
+	// accumulate as zombies across dashboard restarts.
+	ctx, cancel := paneContext(cmd.Context())
+	defer cancel()
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
@@ -196,11 +200,17 @@ func runStatusPane(cmd *cobra.Command, app *App, opts agents.ListOpts) error {
 			return
 		}
 		// Mark working/booting agents as completed if their last_activity exceeds the threshold.
-		// Use parameterised query for safety.
+		// Use REPLACE to normalize both 'YYYY-MM-DD HH:MM:SS' (SQLite datetime('now'))
+		// and 'YYYY-MM-DDTHH:MM:SSZ' (Go/bridge ISO format) before comparing. Without this,
+		// space-separated timestamps always compare as less-than T-separated ones because
+		// space (0x20) < 'T' (0x54) in ASCII, causing freshly registered agents to be reaped.
 		cutoff := time.Now().Add(-staleThreshold).UTC().Format("2006-01-02T15:04:05Z")
+		now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
 		_ = app.DB.Exec(ctx,
-			"UPDATE sessions SET state = 'completed', last_activity = $1 WHERE state IN ('working', 'booting') AND last_activity < $2",
-			time.Now().UTC().Format("2006-01-02T15:04:05Z"), cutoff,
+			`UPDATE sessions SET state = 'completed', last_activity = $1
+			 WHERE state IN ('working', 'booting')
+			 AND REPLACE(REPLACE(last_activity, ' ', 'T'), 'Z', '') < REPLACE(REPLACE($2, ' ', 'T'), 'Z', '')`,
+			now, cutoff,
 		)
 	}
 

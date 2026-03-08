@@ -123,11 +123,16 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		staleThreshold = time.Duration(opts.Config.Watchdog.StaleThresholdMs) * time.Millisecond
 	}
 
+	eventsPane := NewEventsPane(theme)
+	if opts.DB != nil {
+		eventsPane.SetDB(opts.DB)
+	}
+
 	d := &Dashboard{
 		filePicker:     fp,
 		agentSession:   NewAgentSession(agentCmd, theme),
 		agents:         NewAgentTable(opts.Lister, theme),
-		eventsPane:     NewEventsPane(theme),
+		eventsPane:     eventsPane,
 		mail:           NewMailSummary(opts.Mail, theme),
 		queue:          NewMergeQueueView(opts.Queue, theme),
 		gitStatus:      NewGitStatusPane(theme),
@@ -266,6 +271,9 @@ func (d *Dashboard) Refresh() error {
 	var errs []string
 
 	if err := d.agents.Refresh(ctx); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := d.eventsPane.Refresh(); err != nil {
 		errs = append(errs, err.Error())
 	}
 	if err := d.mail.Refresh(); err != nil {

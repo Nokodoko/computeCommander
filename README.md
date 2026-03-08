@@ -101,12 +101,32 @@ cmdr
 ```sh
 go version        # 1.22 or later (built with 1.25)
 zellij --version  # 0.43.1 or later
+fp --version      # file picker — required for the file-picker pane
 cargo --version   # optional — only needed to rebuild focus-watcher from source
 ```
 
 - **Go 1.22+** — core runtime
 - **Zellij 0.43+** — multiplexer backend for the multi-pane layout
 - **Rust / Cargo** *(optional)* — rebuild `plugins/focus-watcher` from source; a pre-built binary is included
+
+### Runtime dependencies (not baked in)
+
+The fully functional dashboard requires two external tools that are **not bundled** with the `cmdr` binary. They must be installed separately and available on your `$PATH`:
+
+| Dependency | Purpose | Install |
+|---|---|---|
+| [`fp`](https://github.com/mrjones2014/fp) | File picker shown in the left pane of the dashboard | `cargo install fp` or build from source |
+| `focus-watcher` | Rust binary that tracks pane focus via `/proc` for dynamic CWD updates | Build from `plugins/focus-watcher/`: `cd plugins/focus-watcher && cargo build --release && cp target/release/focus-watcher ~/.local/bin/` |
+
+> **Tip:** Run `cmdr doctor` to verify that all required dependencies are present.
+
+To check deps as part of the eval suite, register the bundled script once:
+
+```sh
+cmdr evals add --project computeCommander --task "verify runtime deps" --type custom --command "sh .computecommander/scripts/check-deps.sh"
+```
+
+After registering, `cmdr evals run` will include the dependency check alongside any other evals.
 
 ---
 

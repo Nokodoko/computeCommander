@@ -47,19 +47,41 @@ fn main() {
         tab_hash, poll_ms, cwd_file
     );
 
+    let debounce_count: u32 = parse_arg(&args, "--debounce-count")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(2);
+
     let poll_duration = Duration::from_millis(poll_ms);
     let mut last_cwd = String::new();
+    let mut last_seen_pts: Option<u32> = None;
+    let mut stable_count: u32 = 0;
+
+    eprintln!(
+        "focus-watcher: debounce_count={} (focus must be stable for {} polls before updating CWD)",
+        debounce_count, debounce_count
+    );
 
     while RUNNING.load(Ordering::Relaxed) {
         if let Some(pts_num) = focused_pane_pts() {
-            if let Some(cwd) = fg_cwd_for_pts(pts_num) {
-                // Resolve to git root.
-                let project = find_git_root(&cwd).unwrap_or(cwd);
+            // Debounce: only proceed after focus has been stable for N consecutive polls.
+            // This filters out transient mouse-hover focus changes.
+            if last_seen_pts == Some(pts_num) {
+                stable_count = stable_count.saturating_add(1);
+            } else {
+                last_seen_pts = Some(pts_num);
+                stable_count = 1;
+            }
 
-                // Skip dotfile/config directories ($HOME/.<something>).
-                if !is_dotdir(&project, &home) && project != last_cwd {
-                    if write_cwd_atomic(&cwd_file, &project).is_ok() {
-                        last_cwd = project;
+            if stable_count >= debounce_count {
+                if let Some(cwd) = fg_cwd_for_pts(pts_num) {
+                    // Resolve to git root.
+                    let project = find_git_root(&cwd).unwrap_or(cwd);
+
+                    // Skip dotfile/config directories ($HOME/.<something>).
+                    if !is_dotdir(&project, &home) && project != last_cwd {
+                        if write_cwd_atomic(&cwd_file, &project).is_ok() {
+                            last_cwd = project;
+                        }
                     }
                 }
             }

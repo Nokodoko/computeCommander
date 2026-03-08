@@ -403,7 +403,9 @@ func evalsRemoveCmd(app *App) *cobra.Command {
 
 // runEvalsPane runs evals in long-lived pane mode, refreshing every 3 seconds.
 func runEvalsPane(cmd *cobra.Command, app *App) error {
-	ctx := cmd.Context()
+	paneCtx, cancel := paneContext(cmd.Context())
+	defer cancel()
+	ctx := paneCtx
 	projectFilter, _ := cmd.Flags().GetString("project")
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()

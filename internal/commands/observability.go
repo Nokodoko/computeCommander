@@ -170,7 +170,8 @@ func FeedCmd(app *App) *cobra.Command {
 
 // runFeedPane runs the event feed in long-lived pane mode, polling for new events.
 func runFeedPane(cmd *cobra.Command, app *App) error {
-	ctx := cmd.Context()
+	ctx, cancel := paneContext(cmd.Context())
+	defer cancel()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
