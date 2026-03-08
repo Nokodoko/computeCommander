@@ -18,6 +18,12 @@
 
 <div align="center">
 
+<img src="assets/banner.jpg" width="600" alt="computeCommander — an agentic IDE for AI coding agent swarms" />
+
+</div>
+
+<div align="center">
+
 [![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?style=for-the-badge&logo=go&logoColor=white)](https://go.dev)
 [![Rust](https://img.shields.io/badge/Rust-focus--watcher-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![Zellij](https://img.shields.io/badge/Zellij-0.43+-5A4FCF?style=for-the-badge&logo=zellij&logoColor=white)](https://zellij.dev)
