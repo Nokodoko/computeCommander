@@ -47,7 +47,8 @@ func (m *MailSummary) Refresh() error {
 	m.unread = len(msgs)
 
 	recent, err := m.store.List(mail.ListOpts{
-		Limit: m.previewMax,
+		Limit:  m.previewMax,
+		Recent: true,
 	})
 	if err != nil {
 		return fmt.Errorf("mail summary refresh recent: %w", err)

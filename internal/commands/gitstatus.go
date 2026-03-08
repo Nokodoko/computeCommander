@@ -62,7 +62,8 @@ func GitStatusCmd(app *App) *cobra.Command {
 // It watches the active-cwd file to switch between project directories
 // when the agent switches sessions via cmdr sessions.
 func runGitStatusPane(cmd *cobra.Command) error {
-	ctx := cmd.Context()
+	ctx, cancel := paneContext(cmd.Context())
+	defer cancel()
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 

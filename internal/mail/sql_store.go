@@ -176,7 +176,10 @@ func (s *sqlStore) List(opts ListOpts) ([]*MailMessage, error) {
 		query += " WHERE " + strings.Join(clauses, " AND ")
 	}
 
-	query += `
+	if opts.Recent {
+		query += " ORDER BY created_at DESC"
+	} else {
+		query += `
 		ORDER BY
 			CASE priority
 				WHEN 'urgent' THEN 3
@@ -186,6 +189,7 @@ func (s *sqlStore) List(opts ListOpts) ([]*MailMessage, error) {
 				ELSE 1
 			END DESC,
 			created_at ASC`
+	}
 
 	if opts.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d", opts.Limit)

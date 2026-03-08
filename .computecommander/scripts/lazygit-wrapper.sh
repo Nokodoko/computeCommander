@@ -7,7 +7,7 @@ set -uo pipefail
 DEFAULT_DIR="${1:-/home/n0ko/Programs/ai/computeCommander}"
 # $2 is the tab hash passed from the KDL layout args at launch time.
 # Fall back to the compile-time hash so existing running instances stay valid.
-TAB_HASH="${2:-443c43bc}"
+TAB_HASH="${2:-e191dbc7}"
 export CMDR_TAB_HASH="$TAB_HASH"
 LG_PID=""
 HAS_INOTIFY=false
@@ -19,6 +19,10 @@ CWD_FILE="/tmp/cmdr-$(id -u)-${TAB_HASH}-cwd"
 start_lg() {
     local dir="${1:-$DEFAULT_DIR}"
     [ -d "$dir" ] || dir="$DEFAULT_DIR"
+    # Update pane frame title to show the project name.
+    local project_name
+    project_name=$(basename "$dir")
+    printf '\033]2;LazyGit: %s\007' "$project_name"
     if [ -d "$dir/.git" ] || git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
         lazygit -p "$dir" &
         LG_PID=$!

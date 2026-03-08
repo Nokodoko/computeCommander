@@ -184,7 +184,8 @@ func mailListCmd(app *App) *cobra.Command {
 
 // runMailListPane runs mail list in long-lived pane mode, refreshing periodically.
 func runMailListPane(cmd *cobra.Command, app *App, opts mail.ListOpts) error {
-	ctx := cmd.Context()
+	ctx, cancel := paneContext(cmd.Context())
+	defer cancel()
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 
