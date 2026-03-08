@@ -240,7 +240,10 @@ set -uo pipefail
 TAB_HASH=%q
 CWD_FILE="/tmp/cmdr-$(id -u)-${TAB_HASH}-cwd"
 POLL_INTERVAL="${CMDR_FOCUS_POLL:-2}"
+DEBOUNCE_COUNT="${CMDR_FOCUS_DEBOUNCE:-2}"
 LAST_CWD=""
+LAST_SEEN_PTS=""
+STABLE_COUNT=0
 
 # cleanup: nothing persistent to remove beyond what wrappers manage.
 trap 'exit 0' EXIT INT TERM
@@ -309,19 +312,31 @@ git_root() {
 }
 
 # Main loop: poll for focus changes and update the CWD file.
+# Debounce: only update CWD after focus has been stable for DEBOUNCE_COUNT
+# consecutive polls. This filters out transient mouse-hover focus changes.
 while true; do
     pts=$(focused_pane_pts)
     if [ -n "$pts" ] && [ "$pts" -ge 0 ] 2>/dev/null; then
-        cwd=$(fg_cwd_for_pts "$pts")
-        if [ -n "$cwd" ] && [ -d "$cwd" ]; then
-            # Resolve to git root so fp/lazygit get the project root,
-            # not a subdirectory like internal/commands/.
-            project=$(git_root "$cwd")
-            # Skip non-git dirs and dotfile/config repos (~/.config/*, ~/.claude, etc).
-            if [ -n "$project" ] && [ "$project" != "$LAST_CWD" ] \
-               && [[ ! "$project" =~ ^${HOME}/\. ]]; then
-                echo "$project" > "$CWD_FILE"
-                LAST_CWD="$project"
+        # Track focus stability for debounce.
+        if [ "$pts" = "$LAST_SEEN_PTS" ]; then
+            STABLE_COUNT=$(( STABLE_COUNT + 1 ))
+        else
+            LAST_SEEN_PTS="$pts"
+            STABLE_COUNT=1
+        fi
+
+        if [ "$STABLE_COUNT" -ge "$DEBOUNCE_COUNT" ]; then
+            cwd=$(fg_cwd_for_pts "$pts")
+            if [ -n "$cwd" ] && [ -d "$cwd" ]; then
+                # Resolve to git root so fp/lazygit get the project root,
+                # not a subdirectory like internal/commands/.
+                project=$(git_root "$cwd")
+                # Skip non-git dirs and dotfile/config repos (~/.config/*, ~/.claude, etc).
+                if [ -n "$project" ] && [ "$project" != "$LAST_CWD" ] \
+                   && [[ ! "$project" =~ ^${HOME}/\. ]]; then
+                    echo "$project" > "$CWD_FILE"
+                    LAST_CWD="$project"
+                fi
             fi
         fi
     fi
