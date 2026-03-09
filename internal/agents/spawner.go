@@ -422,15 +422,35 @@ func (s *Spawner) insertSession(ctx context.Context, sess *AgentSession) error {
 }
 
 // countSessionsInRun returns the next color index for a new agent.
-// Uses MAX(color_index)+1 instead of COUNT(*) to avoid color collisions
-// when agents start near-simultaneously or stale sessions skew the count.
+// Finds the lowest palette index not currently in use by any active session,
+// so parallel agents always get distinct colors regardless of completion order.
 func (s *Spawner) countSessionsInRun(ctx context.Context, _ string) (int, error) {
-	var nextIdx int
-	row := s.db.QueryRow(ctx, `SELECT COALESCE(MAX(color_index), -1) + 1 FROM sessions WHERE state != 'completed'`)
-	if err := row.Scan(&nextIdx); err != nil {
+	rows, err := s.db.Query(ctx,
+		`SELECT DISTINCT color_index FROM sessions WHERE state NOT IN ('completed', 'zombie')`)
+	if err != nil {
 		return 0, err
 	}
-	return nextIdx, nil
+	defer rows.Close()
+
+	used := make(map[int]bool)
+	for rows.Next() {
+		var idx int
+		if scanErr := rows.Scan(&idx); scanErr == nil {
+			used[idx] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	// Find the lowest unused palette slot; wrap after one full cycle.
+	for i := 0; i < PaletteSize; i++ {
+		if !used[i] {
+			return i, nil
+		}
+	}
+	// All palette slots occupied — pick next index past the highest used.
+	return len(used) % PaletteSize, nil
 }
 
 // findSessionByName locates a session by agent name.
