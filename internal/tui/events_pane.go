@@ -19,13 +19,14 @@ type Event struct {
 
 // EventsPane displays a merged system log and agent activity feed.
 type EventsPane struct {
-	db        db.DB
-	events    []Event
-	maxEvents int
-	theme     *Theme
-	width     int
-	height    int
-	offset    int // scroll offset
+	db            db.DB
+	events        []Event
+	maxEvents     int
+	theme         *Theme
+	colorResolver AgentColorResolver
+	width         int
+	height        int
+	offset        int // scroll offset
 }
 
 // NewEventsPane constructs an EventsPane.
@@ -39,6 +40,11 @@ func NewEventsPane(theme *Theme) *EventsPane {
 // SetDB wires an optional database so the pane can refresh from the events table.
 func (ep *EventsPane) SetDB(database db.DB) {
 	ep.db = database
+}
+
+// SetColorResolver sets the function used to resolve agent colors for source names.
+func (ep *EventsPane) SetColorResolver(resolver AgentColorResolver) {
+	ep.colorResolver = resolver
 }
 
 // Refresh reads the most recent events from the database and replaces the in-memory list.
@@ -180,7 +186,13 @@ func (ep *EventsPane) View() string {
 	for i := ep.offset; i < end; i++ {
 		e := ep.events[i]
 		ts := e.Time.Format("15:04:05")
-		source := fmt.Sprintf("[%-12s]", truncate(e.Source, 12))
+		sourceName := truncate(e.Source, 12)
+		if ep.colorResolver != nil {
+			if hex := ep.colorResolver(e.Source); hex != "" {
+				sourceName = AgentColorStyle(hex).Render(sourceName)
+			}
+		}
+		source := fmt.Sprintf("[%-12s]", sourceName)
 
 		var typeStr string
 		switch e.Type {

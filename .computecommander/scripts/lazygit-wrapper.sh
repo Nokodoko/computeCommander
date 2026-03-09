@@ -7,7 +7,7 @@ set -uo pipefail
 DEFAULT_DIR="${1:-/home/n0ko/Programs/ai/computeCommander}"
 # $2 is the tab hash passed from the KDL layout args at launch time.
 # Fall back to the compile-time hash so existing running instances stay valid.
-TAB_HASH="${2:-e191dbc7}"
+TAB_HASH="${2:-91204382}"
 export CMDR_TAB_HASH="$TAB_HASH"
 LG_PID=""
 HAS_INOTIFY=false

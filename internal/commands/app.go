@@ -260,26 +260,36 @@ func (a *App) RestoreSessionState(force bool) error {
 	return nil
 }
 
+// buildColorResolver returns the agent color resolver for TUI components.
+func (a *App) buildColorResolver() tui.AgentColorResolver {
+	if a.Spawner == nil {
+		return nil
+	}
+	return a.Spawner.BuildColorResolver(context.Background())
+}
+
 // NewDashboard creates a TUI Dashboard wired to the App's services.
 func (a *App) NewDashboard() *tui.Dashboard {
 	return tui.NewDashboard(tui.DashboardOpts{
-		Lister: a.Spawner,
-		Mail:   a.MailStore,
-		Queue:  a.MergeQueue,
-		Config: a.Config,
-		DB:     a.DB,
+		Lister:             a.Spawner,
+		Mail:               a.MailStore,
+		Queue:              a.MergeQueue,
+		Config:             a.Config,
+		DB:                 a.DB,
+		AgentColorResolver: a.buildColorResolver(),
 	})
 }
 
 // NewDashboardWithCmd creates a TUI Dashboard with a CLI-overridden agent command.
 func (a *App) NewDashboardWithCmd(agentCmd string) *tui.Dashboard {
 	return tui.NewDashboard(tui.DashboardOpts{
-		Lister:   a.Spawner,
-		Mail:     a.MailStore,
-		Queue:    a.MergeQueue,
-		Config:   a.Config,
-		DB:       a.DB,
-		AgentCmd: agentCmd,
+		Lister:             a.Spawner,
+		Mail:               a.MailStore,
+		Queue:              a.MergeQueue,
+		Config:             a.Config,
+		DB:                 a.DB,
+		AgentCmd:           agentCmd,
+		AgentColorResolver: a.buildColorResolver(),
 	})
 }
 
@@ -308,14 +318,15 @@ func (a *App) RunDashboardWithProject(ctx context.Context, agentCmd, projectID s
 	}
 
 	dash := tui.NewDashboard(tui.DashboardOpts{
-		Lister:      a.Spawner,
-		Mail:        a.MailStore,
-		Queue:       a.MergeQueue,
-		Config:      a.Config,
-		DB:          a.DB,
-		AgentCmd:    agentCmd,
-		ProjectName: projectName,
-		ProjectID:   projectID,
+		Lister:             a.Spawner,
+		Mail:               a.MailStore,
+		Queue:              a.MergeQueue,
+		Config:             a.Config,
+		DB:                 a.DB,
+		AgentCmd:           agentCmd,
+		ProjectName:        projectName,
+		ProjectID:          projectID,
+		AgentColorResolver: a.buildColorResolver(),
 	})
 	return dash.Run(ctx)
 }

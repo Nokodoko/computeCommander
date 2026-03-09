@@ -421,14 +421,36 @@ func (s *Spawner) insertSession(ctx context.Context, sess *AgentSession) error {
 	return nil
 }
 
-// countSessionsInRun counts existing sessions to determine the spawn index for color assignment.
+// countSessionsInRun returns the next color index for a new agent.
+// Finds the lowest palette index not currently in use by any active session,
+// so parallel agents always get distinct colors regardless of completion order.
 func (s *Spawner) countSessionsInRun(ctx context.Context, _ string) (int, error) {
-	var count int
-	row := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM sessions WHERE state != 'completed'`)
-	if err := row.Scan(&count); err != nil {
+	rows, err := s.db.Query(ctx,
+		`SELECT DISTINCT color_index FROM sessions WHERE state NOT IN ('completed', 'zombie')`)
+	if err != nil {
 		return 0, err
 	}
-	return count, nil
+	defer rows.Close()
+
+	used := make(map[int]bool)
+	for rows.Next() {
+		var idx int
+		if scanErr := rows.Scan(&idx); scanErr == nil {
+			used[idx] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	// Find the lowest unused palette slot; wrap after one full cycle.
+	for i := 0; i < PaletteSize; i++ {
+		if !used[i] {
+			return i, nil
+		}
+	}
+	// All palette slots occupied — pick next index past the highest used.
+	return len(used) % PaletteSize, nil
 }
 
 // findSessionByName locates a session by agent name.
@@ -520,8 +542,21 @@ func (s *Spawner) BuildColorResolver(ctx context.Context) func(string) string {
 	}
 
 	return func(agentName string) string {
-		return cache[agentName]
+		if hex, ok := cache[agentName]; ok {
+			return hex
+		}
+		return cache[normalizeAgentName(agentName)]
 	}
+}
+
+// normalizeAgentName strips the session UUID prefix from compound agent names.
+// Events may store agent names as "<uuid>-<short-name>" while sessions only
+// store the short form. A UUID prefix is 36 chars (8-4-4-4-12) followed by a dash.
+func normalizeAgentName(name string) string {
+	if len(name) > 37 && name[8] == '-' && name[13] == '-' && name[18] == '-' && name[23] == '-' && name[36] == '-' {
+		return name[37:]
+	}
+	return name
 }
 
 // defaultIDGenerator produces a timestamp-based unique ID.

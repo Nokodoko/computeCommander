@@ -288,6 +288,7 @@ conflict resolution.`,
 	addAppCmd(root, commands.WatchCmd(sharedApp))
 	addAppCmd(root, commands.DoctorCmd(sharedApp))
 	addAppCmd(root, commands.CleanCmd(sharedApp))
+	addAppCmd(root, commands.SweepCmd(sharedApp))
 	addAppCmd(root, commands.FeatureCmd(sharedApp))
 
 	// Agentic foundation commands (block, blueprint, gate, holdout, isolation).

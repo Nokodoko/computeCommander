@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -174,6 +173,11 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 	defer cancel()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	// Checkpoint the WAL every 30s to prevent the reader mark from pinning
+	// old WAL frames, which would cause the bridge's sqlite3 writes to fail
+	// with SQLITE_BUSY when WAL auto-checkpoint kicks in.
+	checkpointTicker := time.NewTicker(30 * time.Second)
+	defer checkpointTicker.Stop()
 
 	// Watch the SQLite DB file with fsnotify for instant refresh.
 	// When any process writes events to the DB, fsnotify fires
@@ -181,6 +185,8 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 	dbChanged := watchDBFile(app)
 
 	watcher := newBinaryWatcher()
+
+	colorResolver := app.Spawner.BuildColorResolver(ctx)
 
 	render := func() {
 		clearScreen()
@@ -208,9 +214,11 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 			case "debug":
 				levelColor = "\033[2m"
 			}
-			fmt.Printf("%s%-19s\033[0m \033[1m%-12s\033[0m %-12s %s\n",
+			displayName := normalizeEventAgentName(e.Agent)
+			agentName := colorizeAgent(truncate(displayName, 12), colorResolver(e.Agent))
+			fmt.Printf("%s%-19s\033[0m %s %-12s %s\n",
 				levelColor, timeStr,
-				truncate(e.Agent, 12),
+				agentName,
 				truncate(e.EventType, 12),
 				truncate(e.Data, 40),
 			)
@@ -227,6 +235,11 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 		case <-dbChanged:
 			// DB file changed (fsnotify) — instant refresh.
 			render()
+		case <-checkpointTicker.C:
+			// PASSIVE checkpoint: move WAL frames to the main DB file without
+			// blocking writers. Keeps the WAL small so the bridge's sqlite3
+			// calls don't hit SQLITE_BUSY during auto-checkpoint.
+			_ = app.DB.Exec(ctx, "PRAGMA wal_checkpoint(PASSIVE)")
 		case <-ticker.C:
 			if watcher.check() {
 				watcher.reexec()
@@ -236,7 +249,7 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 	}
 }
 
-func printEventPane(events []eventRow) error {
+func printEventPane(events []eventRow, colorResolver func(string) string) error {
 	header := fmt.Sprintf("%s%s── Events (%d) ──%s", ansiBold, ansiCyan, len(events), ansiReset)
 	fmt.Println(header)
 
@@ -247,14 +260,27 @@ func printEventPane(events []eventRow) error {
 
 	for _, e := range events {
 		ts := shortTime(e.CreatedAt)
-		agentColor := eventAgentColor(e.EventType)
-		fmt.Printf(" %s%s%s %s%s%s %s\n",
+		displayName := normalizeEventAgentName(e.Agent)
+		agentName := truncate(displayName, 16)
+		if colorResolver != nil {
+			agentName = colorizeAgent(agentName, colorResolver(e.Agent))
+		}
+		fmt.Printf(" %s%s%s %s %s\n",
 			ansiDim, ts, ansiReset,
-			agentColor, truncate(e.Agent, 16), ansiReset,
+			agentName,
 			truncate(e.Data, 40),
 		)
 	}
 	return nil
+}
+
+// normalizeEventAgentName strips a session UUID prefix from compound agent names.
+// Events may store names as "<uuid>-<short-name>" while sessions store the short form.
+func normalizeEventAgentName(name string) string {
+	if len(name) > 37 && name[8] == '-' && name[13] == '-' && name[18] == '-' && name[23] == '-' && name[36] == '-' {
+		return name[37:]
+	}
+	return name
 }
 
 // shortTime extracts HH:MM:SS from a timestamp string.
@@ -271,19 +297,6 @@ func shortTime(ts string) string {
 	return ts
 }
 
-// eventAgentColor returns an ANSI color based on event type keywords.
-func eventAgentColor(eventType string) string {
-	switch {
-	case strings.Contains(eventType, "completed"), strings.Contains(eventType, "done"):
-		return ansiGreen
-	case strings.Contains(eventType, "error"), strings.Contains(eventType, "fail"):
-		return ansiRed
-	case strings.Contains(eventType, "supervisor"), strings.Contains(eventType, "spawn"):
-		return ansiYellow
-	default:
-		return ansiCyan
-	}
-}
 
 // LogsCmd returns the "logs" command for querying agent logs.
 // Enhanced with --follow and --lines flags.

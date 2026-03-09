@@ -23,15 +23,16 @@ const DefaultAgentCommand = "claude --dangerously-skip-permissions --no-chrome -
 
 // DashboardOpts groups the dependencies for constructing a Dashboard.
 type DashboardOpts struct {
-	Lister      SessionLister
-	Mail        mail.MailStore
-	Queue       merge.MergeQueue
-	Config      *config.Config
-	DB          db.DB         // database handle for staleness reaping (nil-safe)
-	Interval    time.Duration
-	AgentCmd    string // CLI override for agent command
-	ProjectName string // display name for the active project (title bar)
-	ProjectID   string // project ID for filtering
+	Lister             SessionLister
+	Mail               mail.MailStore
+	Queue              merge.MergeQueue
+	Config             *config.Config
+	DB                 db.DB         // database handle for staleness reaping (nil-safe)
+	Interval           time.Duration
+	AgentCmd           string // CLI override for agent command
+	ProjectName        string // display name for the active project (title bar)
+	ProjectID          string // project ID for filtering
+	AgentColorResolver AgentColorResolver // resolves agent names to color hex strings
 }
 
 // Dashboard is the top-level TUI component implementing the redesigned layout:
@@ -148,6 +149,14 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		db:             opts.DB,
 		dbPath:         dbPathFromConfig(opts.Config),
 		staleThreshold: staleThreshold,
+	}
+
+	// Wire agent color resolver into all components that support it.
+	if opts.AgentColorResolver != nil {
+		d.eventsPane.SetColorResolver(opts.AgentColorResolver)
+		d.mail.SetColorResolver(opts.AgentColorResolver)
+		d.queue.SetColorResolver(opts.AgentColorResolver)
+		d.costs.SetColorResolver(opts.AgentColorResolver)
 	}
 
 	return d
