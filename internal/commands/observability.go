@@ -173,6 +173,11 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 	defer cancel()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	// Checkpoint the WAL every 30s to prevent the reader mark from pinning
+	// old WAL frames, which would cause the bridge's sqlite3 writes to fail
+	// with SQLITE_BUSY when WAL auto-checkpoint kicks in.
+	checkpointTicker := time.NewTicker(30 * time.Second)
+	defer checkpointTicker.Stop()
 
 	// Watch the SQLite DB file with fsnotify for instant refresh.
 	// When any process writes events to the DB, fsnotify fires
@@ -209,7 +214,8 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 			case "debug":
 				levelColor = "\033[2m"
 			}
-			agentName := colorizeAgent(truncate(e.Agent, 12), colorResolver(e.Agent))
+			displayName := normalizeEventAgentName(e.Agent)
+			agentName := colorizeAgent(truncate(displayName, 12), colorResolver(e.Agent))
 			fmt.Printf("%s%-19s\033[0m %s %-12s %s\n",
 				levelColor, timeStr,
 				agentName,
@@ -229,6 +235,11 @@ func runFeedPane(cmd *cobra.Command, app *App) error {
 		case <-dbChanged:
 			// DB file changed (fsnotify) — instant refresh.
 			render()
+		case <-checkpointTicker.C:
+			// PASSIVE checkpoint: move WAL frames to the main DB file without
+			// blocking writers. Keeps the WAL small so the bridge's sqlite3
+			// calls don't hit SQLITE_BUSY during auto-checkpoint.
+			_ = app.DB.Exec(ctx, "PRAGMA wal_checkpoint(PASSIVE)")
 		case <-ticker.C:
 			if watcher.check() {
 				watcher.reexec()
@@ -249,7 +260,8 @@ func printEventPane(events []eventRow, colorResolver func(string) string) error 
 
 	for _, e := range events {
 		ts := shortTime(e.CreatedAt)
-		agentName := truncate(e.Agent, 16)
+		displayName := normalizeEventAgentName(e.Agent)
+		agentName := truncate(displayName, 16)
 		if colorResolver != nil {
 			agentName = colorizeAgent(agentName, colorResolver(e.Agent))
 		}
@@ -260,6 +272,15 @@ func printEventPane(events []eventRow, colorResolver func(string) string) error 
 		)
 	}
 	return nil
+}
+
+// normalizeEventAgentName strips a session UUID prefix from compound agent names.
+// Events may store names as "<uuid>-<short-name>" while sessions store the short form.
+func normalizeEventAgentName(name string) string {
+	if len(name) > 37 && name[8] == '-' && name[13] == '-' && name[18] == '-' && name[23] == '-' && name[36] == '-' {
+		return name[37:]
+	}
+	return name
 }
 
 // shortTime extracts HH:MM:SS from a timestamp string.

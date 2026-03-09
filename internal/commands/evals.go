@@ -72,6 +72,7 @@ func EvalsCmd(app *App) *cobra.Command {
 	cmd.AddCommand(evalsAddCmd(app))
 	cmd.AddCommand(evalsRunCmd(app))
 	cmd.AddCommand(evalsRemoveCmd(app))
+	cmd.AddCommand(evalsEmitCmd(app))
 
 	return cmd
 }
@@ -396,6 +397,77 @@ func evalsRemoveCmd(app *App) *cobra.Command {
 		},
 	}
 
+	cmd.Flags().Bool("json", false, "JSON output")
+
+	return cmd
+}
+
+// evalsEmitCmd creates the "evals emit" subcommand for recording hook-driven eval results.
+// This is used by intent verification hooks to push per-objective results into the DB.
+func evalsEmitCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "emit",
+		Short: "Record a hook-driven eval result (upsert by id)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			id, _ := cmd.Flags().GetString("id")
+			project, _ := cmd.Flags().GetString("project")
+			task, _ := cmd.Flags().GetString("task")
+			evalType, _ := cmd.Flags().GetString("type")
+			passedFlag, _ := cmd.Flags().GetString("passed")
+			detail, _ := cmd.Flags().GetString("detail")
+			jsonOutput, _ := cmd.Flags().GetBool("json")
+
+			if project == "" {
+				return fmt.Errorf("--project is required")
+			}
+			if id == "" {
+				id = "eval-h-" + generateEvalID()[5:] // strip "eval-" prefix then re-prefix as hook variant
+			}
+
+			var passed *bool
+			switch passedFlag {
+			case "true", "1", "yes":
+				t := true
+				passed = &t
+			case "false", "0", "no":
+				f := false
+				passed = &f
+			}
+
+			now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+			command := "[hook:" + evalType + "]"
+
+			// Upsert: insert or replace so re-emitting the same id updates result.
+			err := app.DB.Exec(ctx,
+				`INSERT INTO evals (id, project_name, agent_task, eval_type, command, passed, error_detail, last_run_at, created_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+				 ON CONFLICT(id) DO UPDATE SET
+				   passed = excluded.passed,
+				   error_detail = excluded.error_detail,
+				   last_run_at = excluded.last_run_at`,
+				id, project, task, evalType, command, passed, detail, now, now,
+			)
+			if err != nil {
+				if jsonOutput {
+					return printJSON(map[string]any{"success": false, "command": "evals emit", "error": err.Error()})
+				}
+				return fmt.Errorf("emit eval: %w", err)
+			}
+
+			if jsonOutput {
+				return printJSON(map[string]any{"success": true, "command": "evals emit", "id": id})
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().String("id", "", "Eval ID (auto-generated if omitted)")
+	cmd.Flags().String("project", "", "Project name (required)")
+	cmd.Flags().String("task", "", "Agent task / objective ID")
+	cmd.Flags().String("type", "semantic_check", "Predicate type (semantic_check, structural_check, etc.)")
+	cmd.Flags().String("passed", "", "Pass result: true or false")
+	cmd.Flags().String("detail", "", "Error detail or evidence string")
 	cmd.Flags().Bool("json", false, "JSON output")
 
 	return cmd

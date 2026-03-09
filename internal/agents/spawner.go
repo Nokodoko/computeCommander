@@ -542,8 +542,21 @@ func (s *Spawner) BuildColorResolver(ctx context.Context) func(string) string {
 	}
 
 	return func(agentName string) string {
-		return cache[agentName]
+		if hex, ok := cache[agentName]; ok {
+			return hex
+		}
+		return cache[normalizeAgentName(agentName)]
 	}
+}
+
+// normalizeAgentName strips the session UUID prefix from compound agent names.
+// Events may store agent names as "<uuid>-<short-name>" while sessions only
+// store the short form. A UUID prefix is 36 chars (8-4-4-4-12) followed by a dash.
+func normalizeAgentName(name string) string {
+	if len(name) > 37 && name[8] == '-' && name[13] == '-' && name[18] == '-' && name[23] == '-' && name[36] == '-' {
+		return name[37:]
+	}
+	return name
 }
 
 // defaultIDGenerator produces a timestamp-based unique ID.
