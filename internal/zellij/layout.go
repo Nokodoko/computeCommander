@@ -138,10 +138,13 @@ func GenerateLayout(opts LayoutOpts) string {
 
 	return fmt.Sprintf(`layout {
     cwd "%s"
-    tab name="%s" {
+    default_tab_template {
         pane size=1 borderless=true {
-            plugin location="compact-bar"
+            plugin location="zellij:compact-bar"
         }
+        children
+    }
+    tab name="%s" {
 %s
         pane split_direction="horizontal" {
             pane split_direction="vertical" size="67%%" {
