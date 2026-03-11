@@ -467,7 +467,7 @@ Existing CI runs `go test ./...` and `go vet ./...`. New test files are automati
 | T6 | unix-coder | Register jira, openbrain, prompt commands in Cobra command tree | cmd/cc/main.go, internal/commands/app.go | cmd/cc/main.go | T1, T2, T4 | `cd /home/n0ko/Programs/ai/computeCommander && go build -o cmdr ./cmd/cc/ && ./cmdr jira --help && ./cmdr openbrain --help && ./cmdr prompt --help` |
 | T7 | unix-coder | Add `--cmdr` flag to claude_sessions.py | /home/n0ko/programming/python_projects/claude_sessions.py | /home/n0ko/programming/python_projects/claude_sessions.py | -- | `python3 /home/n0ko/programming/python_projects/claude_sessions.py --help 2>&1 \| grep -q cmdr` |
 | T8 | unix-coder | Integrate pane healer into watchdog Run loop and dashboard lifecycle | internal/watchdog/watchdog.go, internal/watchdog/health.go, internal/commands/dashboard.go | internal/watchdog/watchdog.go, internal/watchdog/health.go, internal/commands/dashboard.go | T3, T5 | `cd /home/n0ko/Programs/ai/computeCommander && go build ./... && go test ./internal/watchdog/ -count=1 -v && go test ./internal/commands/ -count=1 -v` |
-| T9 | code-review | Review all changes for consistency, DRY, Go style, test coverage | All written files from T1-T8 | -- | T5, T6, T7, T8 | -- |
+| T9 | code-review | Review all changes for consistency, DRY, Go style, test coverage | All written files from T1-T8 | -- | T5, T6, T7, T8 | `cd /home/n0ko/Programs/ai/computeCommander && go build ./... && go vet ./... && go test ./...` |
 
 > **WORKTREE DIRECTIVE:** Each of T1-T4 and T7 MUST execute in an independent git worktree branched from `agent-color-events`. Before beginning work, each worker runs:
 > ```bash
