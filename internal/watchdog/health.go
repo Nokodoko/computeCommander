@@ -169,6 +169,19 @@ func hasCode(issues []Issue, code string) bool {
 	return false
 }
 
+// --- Pane Health Issue Codes -------------------------------------------
+
+const (
+	// IssuePaneFrozen indicates a pane's content has not changed within the
+	// expected refresh interval (e.g., 30s without update for a pane that
+	// refreshes every 3s).
+	IssuePaneFrozen = "PANE_FROZEN"
+
+	// IssuePaneStale indicates a pane's process has exited (PID dead) but
+	// the pane is still visible with old content.
+	IssuePaneStale = "PANE_STALE"
+)
+
 // --- Tier 1: AI Triage (stub) ------------------------------------------
 
 // Tier1Classifier classifies failures and suggests recovery actions.
