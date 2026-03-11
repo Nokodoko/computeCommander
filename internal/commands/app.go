@@ -147,13 +147,25 @@ func newAppFromConfig(cfg *config.Config, version string) (*App, error) {
 	mq := merge.NewSQLQueue(database)
 	executor := merge.NewMergeExecutorWithQueue(mq, ".", nil, cfg.Merge.AIResolveEnabled, cfg.Merge.ReimagineEnabled)
 
-	wd := watchdog.NewWatchdog(watchdog.WatchdogOpts{
+	watchdogOpts := watchdog.WatchdogOpts{
 		DB:          database,
 		MailStore:   mailStore,
 		PaneManager: panes,
 		WatchdogCfg: cfg.Watchdog,
 		NudgeCfg:    cfg.Nudge,
-	})
+	}
+
+	// Wire pane healer into the watchdog if enabled in config.
+	if cfg.Watchdog.PaneHealer.Enabled {
+		watchdogOpts.PaneHealerOpts = &watchdog.PaneHealerOpts{
+			PaneManager:     panes,
+			CheckInterval:   time.Duration(cfg.Watchdog.PaneHealer.CheckIntervalMs) * time.Millisecond,
+			FrozenThreshold: time.Duration(cfg.Watchdog.PaneHealer.FrozenThresholdMs) * time.Millisecond,
+			MaxRestarts:     cfg.Watchdog.PaneHealer.MaxRestarts,
+		}
+	}
+
+	wd := watchdog.NewWatchdog(watchdogOpts)
 
 	gw := gateway.NewGateway(gateway.GatewayOpts{
 		DB:      database,

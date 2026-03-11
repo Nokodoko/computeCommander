@@ -190,13 +190,22 @@ type LoopDetection struct {
 }
 
 type WatchdogConfig struct {
-	Tier0Enabled      bool `yaml:"tier0_enabled"`
-	Tier0IntervalMs   int  `yaml:"tier0_interval_ms"`
-	Tier1Enabled      bool `yaml:"tier1_enabled"`
-	Tier2Enabled      bool `yaml:"tier2_enabled"`
-	StaleThresholdMs  int  `yaml:"stale_threshold_ms"`
-	ZombieThresholdMs int  `yaml:"zombie_threshold_ms"`
-	NudgeIntervalMs   int  `yaml:"nudge_interval_ms"`
+	Tier0Enabled      bool             `yaml:"tier0_enabled"`
+	Tier0IntervalMs   int              `yaml:"tier0_interval_ms"`
+	Tier1Enabled      bool             `yaml:"tier1_enabled"`
+	Tier2Enabled      bool             `yaml:"tier2_enabled"`
+	StaleThresholdMs  int              `yaml:"stale_threshold_ms"`
+	ZombieThresholdMs int              `yaml:"zombie_threshold_ms"`
+	NudgeIntervalMs   int              `yaml:"nudge_interval_ms"`
+	PaneHealer        PaneHealerConfig `yaml:"pane_healer"`
+}
+
+// PaneHealerConfig controls self-healing for frozen/stale dashboard panes.
+type PaneHealerConfig struct {
+	Enabled           bool `yaml:"enabled"`
+	CheckIntervalMs   int  `yaml:"check_interval_ms"`
+	FrozenThresholdMs int  `yaml:"frozen_threshold_ms"`
+	MaxRestarts       int  `yaml:"max_restarts"`
 }
 
 type MergeConfig struct {
@@ -311,6 +320,12 @@ func DefaultConfig() *Config {
 			StaleThresholdMs:  300000,
 			ZombieThresholdMs: 1800000,
 			NudgeIntervalMs:   60000,
+			PaneHealer: PaneHealerConfig{
+				Enabled:           true,
+				CheckIntervalMs:   10000,
+				FrozenThresholdMs: 30000,
+				MaxRestarts:       5,
+			},
 		},
 		Merge: MergeConfig{
 			AIResolveEnabled: true,
@@ -546,6 +561,14 @@ func LoadSystemConfig(projectPath string) (*Config, error) {
 	cfg.System.DBPath = expandTilde(cfg.System.DBPath)
 	cfg.System.DashboardLayout = expandTilde(cfg.System.DashboardLayout)
 	cfg.System.Home = expandTilde(cfg.System.Home)
+
+	// Resolve relative DB path against projectPath so that commands invoked
+	// from arbitrary CWDs (e.g. hooks running from ~/.claude) still find
+	// the project's database rather than a stray one under CWD.
+	if projectPath != "" && cfg.Database.SQLite.Path != "" &&
+		!filepath.IsAbs(cfg.Database.SQLite.Path) {
+		cfg.Database.SQLite.Path = filepath.Join(projectPath, cfg.Database.SQLite.Path)
+	}
 
 	return cfg, nil
 }

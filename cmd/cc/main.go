@@ -46,7 +46,28 @@ func appPreRun(cmd *cobra.Command, args []string) error {
 	}
 
 	// v2: Try system-wide config loading first, fall back to per-project.
-	wd, _ := os.Getwd()
+	// Prefer CMDR_PROJECT env var, then check the binary's own directory
+	// for .computecommander/ (hooks call the binary by absolute path from
+	// arbitrary CWDs like ~/.claude), then git root, then $PWD.
+	wd := os.Getenv("CMDR_PROJECT")
+	if wd == "" {
+		// Check the directory containing the cmdr binary itself.
+		if exe, err := os.Executable(); err == nil {
+			binDir := filepath.Dir(exe)
+			if _, err := os.Stat(filepath.Join(binDir, ".computecommander", "local.db")); err == nil {
+				wd = binDir
+			}
+		}
+	}
+	if wd == "" {
+		gitRoot, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+		if err == nil {
+			wd = strings.TrimSpace(string(gitRoot))
+		}
+	}
+	if wd == "" {
+		wd, _ = os.Getwd()
+	}
 	real, err := commands.NewAppSystemWide(wd, version)
 	if err != nil {
 		// Fallback: try loading per-project config directly
@@ -282,6 +303,11 @@ conflict resolution.`,
 	addAppCmd(root, commands.FpCmd(sharedApp))
 	addAppCmd(root, commands.SessionCmd(sharedApp))
 	addAppCmd(root, commands.SessionsCmd(sharedApp))
+
+	// Dashboard pane commands.
+	addAppCmd(root, commands.JiraCmd(sharedApp))
+	addAppCmd(root, commands.OpenBrainCmd(sharedApp))
+	addAppCmd(root, commands.PromptLineCmd(sharedApp))
 
 	// Infrastructure commands.
 	addAppCmd(root, commands.WorktreeCmd(sharedApp))

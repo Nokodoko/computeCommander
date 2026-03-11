@@ -40,22 +40,25 @@ type LayoutOpts struct {
 //
 // Each panel is a real zellij pane. The layout produces:
 //
-//	+------+------------------------------------------+--------+
-//	|      |                                          |        |
-//	|  fp  |         (borderless, no header)          | Agents |
-//	| (10%)|           agent session (67%)            | (23%)  |
-//	|      |              (focused)                   |        |
-//	+------+------------------------------------------+--------+
-//	| Event Log  |    Mail    |  Merge Queue  | Git Status    |
-//	|   (25%)    |   (25%)   |    (25%)      |  (25%)        |
-//	+-------------------------------------------------------------+
+//	+----------+------------------------------------------+-----------+
+//	| prompt   |                                          |           |
+//	| (1 row)  |                                          |  Agents   |
+//	+----------+     Agent Session (borderless)           |  (65%)    |
+//	|          |          67% width                        |           |
+//	|  fp      |          (focused)                        +-----------+
+//	|  (10%)   |                                          |  Jira     |
+//	|          |                                          |  (35%)    |
+//	+----------+------------------------------------------+-----------+
+//	| Event Log | Evals | Merge Q | OpenBrain | LazyGit              |
+//	|  (20%)    | (20%) |  (20%)  |  (20%)    |  (20%)               |
+//	+----------+-------+---------+-----------+----------------------+
 //
-// Top row: 67% height — fp (10%) | agent (67%, borderless) | Agents (23%)
-// Bottom row: 33% height — Event Log | Mail | Merge Queue | Git Status
+// Top row: 67% height — left column (prompt+fp, 10%) | agent (67%, borderless) | right column (Agents+Jira, 23%)
+// Bottom row: 33% height — Event Log | Evals | Merge Queue | OpenBrain | LazyGit
 //
 // The fp pane uses fp-wrapper.sh which watches the per-tab CWD file
 // so the file picker updates when the agent switches sessions.
-// The git-status pane also watches the same file to display the current project.
+// The lazygit pane also watches the same file to display the current project.
 //
 // Zellij KDL split_direction semantics:
 //   - "vertical"   = children arranged left-to-right (columns)
@@ -148,24 +151,32 @@ func GenerateLayout(opts LayoutOpts) string {
 %s
         pane split_direction="horizontal" {
             pane split_direction="vertical" size="67%%" {
-                pane size="10%%" {
-                    command "bash"
-                    args "%s" "%s" "%s"
+                pane split_direction="horizontal" size="10%%" {
+                    pane name="Prompt" size=1 borderless=true {
+                        command "%s"
+                        args "prompt" "--pane"
+                    }
+                    pane {
+                        command "bash"
+                        args "%s" "%s" "%s"
+                    }
                 }
 %s
-                pane name="Agents" size="23%%" {
-                    command "%s"
-                    args "status" "--pane"%s
+                pane split_direction="horizontal" size="23%%" {
+                    pane name="Agents" size="65%%" {
+                        command "%s"
+                        args "status" "--pane"%s
+                    }
+                    pane name="Jira" size="35%%" {
+                        command "%s"
+                        args "jira" "--pane"%s
+                    }
                 }
             }
             pane split_direction="vertical" size="33%%" {
                 pane name="Event Log" size="20%%" {
                     command "%s"
                     args "feed" "--pane"%s
-                }
-                pane name="Mail" size="20%%" {
-                    command "%s"
-                    args "mail" "list" "--pane"%s
                 }
                 pane name="Evals" size="20%%" {
                     command "%s"
@@ -175,6 +186,10 @@ func GenerateLayout(opts LayoutOpts) string {
                     command "%s"
                     args "merge" "list" "--pane"%s
                 }
+                pane name="OpenBrain" size="20%%" {
+                    command "%s"
+                    args "openbrain" "--pane"%s
+                }
                 pane size="20%%" {
                     command "bash"
                     args "%s" "%s" "%s"
@@ -183,7 +198,7 @@ func GenerateLayout(opts LayoutOpts) string {
         }
     }
 }
-`, projectDir, tabName, focusWatcherPane, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, lazygitWrapperPath, projectDir, opts.TabHash)
+`, projectDir, tabName, focusWatcherPane, cmdrBin, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, lazygitWrapperPath, projectDir, opts.TabHash)
 }
 
 
