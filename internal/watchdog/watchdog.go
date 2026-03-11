@@ -19,6 +19,7 @@ type WatchdogOpts struct {
 	PaneManager zellij.PaneManager
 	WatchdogCfg config.WatchdogConfig
 	NudgeCfg    config.NudgeConfig
+	PaneHealerOpts *PaneHealerOpts // Optional: enables pane self-healing when set.
 }
 
 // Watchdog is the main daemon that periodically checks agent health and nudges
@@ -31,7 +32,8 @@ type Watchdog struct {
 	classifier  Tier1Classifier
 	cfg         config.WatchdogConfig
 	nudgeCfg    config.NudgeConfig
-	projectID   string // Optional project filter for scoped monitoring.
+	projectID   string       // Optional project filter for scoped monitoring.
+	paneHealer  *PaneHealer  // Optional pane self-healing daemon.
 }
 
 // SetProjectFilter restricts health checks to sessions belonging to the given project.
@@ -41,7 +43,7 @@ func (w *Watchdog) SetProjectFilter(projectID string) {
 
 // NewWatchdog creates a Watchdog with the given options.
 func NewWatchdog(opts WatchdogOpts) *Watchdog {
-	return &Watchdog{
+	w := &Watchdog{
 		db:         opts.DB,
 		mailStore:  opts.MailStore,
 		panes:      opts.PaneManager,
@@ -50,6 +52,18 @@ func NewWatchdog(opts WatchdogOpts) *Watchdog {
 		cfg:        opts.WatchdogCfg,
 		nudgeCfg:   opts.NudgeCfg,
 	}
+
+	// Initialize pane healer if configured.
+	if opts.PaneHealerOpts != nil {
+		// Fill in PaneManager from watchdog opts if not set explicitly.
+		healerOpts := *opts.PaneHealerOpts
+		if healerOpts.PaneManager == nil {
+			healerOpts.PaneManager = opts.PaneManager
+		}
+		w.paneHealer = NewPaneHealer(healerOpts)
+	}
+
+	return w
 }
 
 // SetClassifier replaces the default stub Tier 1 classifier.
@@ -59,6 +73,7 @@ func (w *Watchdog) SetClassifier(c Tier1Classifier) {
 
 // Run starts the watchdog main loop. It ticks at the configured interval and
 // runs CheckAll on each tick. It blocks until the context is cancelled.
+// If a PaneHealer is configured, it runs concurrently in a background goroutine.
 func (w *Watchdog) Run(ctx context.Context) error {
 	interval := time.Duration(w.cfg.Tier0IntervalMs) * time.Millisecond
 	if interval <= 0 {
@@ -66,6 +81,15 @@ func (w *Watchdog) Run(ctx context.Context) error {
 	}
 
 	log.Printf("watchdog: starting with interval %s", interval)
+
+	// Start pane healer in background if configured.
+	if w.paneHealer != nil {
+		go func() {
+			if err := w.paneHealer.Run(ctx); err != nil && ctx.Err() == nil {
+				log.Printf("watchdog: pane healer error: %v", err)
+			}
+		}()
+	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
