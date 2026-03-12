@@ -10,6 +10,7 @@
 
 # Compiled binary
 /cc
+/cmdr
 
 # Campaign
 CAMPAIGN.md
