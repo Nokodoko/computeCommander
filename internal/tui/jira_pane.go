@@ -37,8 +37,9 @@ type jiraNode struct {
 
 // JiraPane renders a hierarchical Jira task view.
 type JiraPane struct {
-	lister JiraLister
-	theme  *Theme
+	lister     JiraLister
+	theme      *Theme
+	projectKey string // optional project filter; empty = all
 
 	// Hierarchical data.
 	roots []*jiraNode // top-level project nodes
@@ -69,7 +70,7 @@ func (p *JiraPane) Refresh(ctx context.Context) error {
 		return nil
 	}
 
-	issues, err := p.lister.GetCachedIssues(ctx, "", "")
+	issues, err := p.lister.GetCachedIssues(ctx, p.projectKey, "")
 	if err != nil {
 		p.lastErr = err
 		return fmt.Errorf("jira pane refresh: %w", err)
@@ -267,6 +268,12 @@ func (p *JiraPane) IssueCount() int {
 func (p *JiraPane) SetSize(w, h int) {
 	p.width = w
 	p.height = h
+}
+
+// SetProject restricts Refresh to a specific Jira project key.
+// An empty string fetches issues from all projects.
+func (p *JiraPane) SetProject(key string) {
+	p.projectKey = key
 }
 
 // --- Rendering ---

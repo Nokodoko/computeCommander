@@ -10,7 +10,9 @@ import (
 	"time"
 	"unsafe"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/noko/computecommander/internal/config"
+	"github.com/noko/computecommander/internal/tui"
 	"github.com/noko/computecommander/pkg/integrations/jira"
 	"github.com/spf13/cobra"
 )
@@ -680,20 +682,86 @@ func renderJiraLegacyPane(ctx context.Context, app *App) {
 
 // --- Jira pane mode (with Jira API) ---
 
+// runJiraPaneLoop launches a standalone BubbleTea program rendering the JiraPane.
+// This is invoked by `cmdr jira --pane` and is intended to run inside a zellij
+// pane as a self-contained TUI. Navigation mirrors the dashboard JiraPane keys.
 func runJiraPaneLoop(ctx context.Context, app *App, instanceName, projectKey string) error {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-	renderJiraPane(ctx, app, instanceName, projectKey)
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			renderJiraPane(ctx, app, instanceName, projectKey)
-		}
+	inst, err := resolveInstance(app.Config, instanceName)
+	if err != nil {
+		return err
 	}
+	engine := newSyncEngine(app, inst)
+
+	theme := tui.DefaultTheme()
+	pane := tui.NewJiraPane(engine, theme)
+	if projectKey != "" {
+		pane.SetProject(projectKey)
+	}
+
+	m := &jiraPaneModel{
+		ctx:    ctx,
+		pane:   pane,
+		engine: engine,
+	}
+
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	_, runErr := p.Run()
+	return runErr
 }
 
+// jiraPaneModel is a minimal bubbletea.Model wrapping JiraPane.
+type jiraPaneModel struct {
+	ctx    context.Context
+	pane   *tui.JiraPane
+	engine interface {
+		GetCachedIssues(ctx context.Context, projectKey, status string) ([]jira.JiraIssue, error)
+	}
+	width  int
+	height int
+}
+
+type jiraPaneTickMsg time.Time
+
+func (m *jiraPaneModel) Init() tea.Cmd {
+	_ = m.pane.Refresh(m.ctx)
+	return tea.Batch(
+		tea.Tick(10*time.Second, func(t time.Time) tea.Msg { return jiraPaneTickMsg(t) }),
+	)
+}
+
+func (m *jiraPaneModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.pane.SetSize(msg.Width-2, msg.Height-3)
+	case jiraPaneTickMsg:
+		_ = m.pane.Refresh(m.ctx)
+		return m, tea.Tick(10*time.Second, func(t time.Time) tea.Msg { return jiraPaneTickMsg(t) })
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			return m, tea.Quit
+		case "j", "down":
+			m.pane.CursorDown()
+		case "k", "up":
+			m.pane.CursorUp()
+		case "l", "enter", "right":
+			m.pane.Expand()
+		case "h", "left":
+			m.pane.Collapse()
+		case "?":
+			m.pane.ToggleHelp()
+		}
+	}
+	return m, nil
+}
+
+func (m *jiraPaneModel) View() string {
+	return m.pane.View()
+}
+
+// renderJiraPane is kept for the legacy ANSI loop path (runJiraLegacyPane).
 func renderJiraPane(ctx context.Context, app *App, instanceName, projectKey string) {
 	inst, err := resolveInstance(app.Config, instanceName)
 	if err != nil {
