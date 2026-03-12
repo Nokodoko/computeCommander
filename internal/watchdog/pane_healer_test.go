@@ -9,10 +9,16 @@ import (
 
 // mockPaneManager implements zellij.PaneManager for testing.
 type mockPaneManager struct {
-	panes          []*zellij.Pane
+	panes           []*zellij.Pane
 	capturedContent map[string]string
-	closedPanes    []string
-	createdPanes   []zellij.CreatePaneOpts
+	closedPanes     []string
+	createdPanes    []zellij.CreatePaneOpts
+	sentKeys        []sentKeyEntry
+}
+
+type sentKeyEntry struct {
+	PaneID string
+	Keys   string
 }
 
 func newMockPaneManager() *mockPaneManager {
@@ -32,6 +38,7 @@ func (m *mockPaneManager) ListPanes() ([]*zellij.Pane, error) {
 }
 
 func (m *mockPaneManager) SendKeys(paneID string, keys string) error {
+	m.sentKeys = append(m.sentKeys, sentKeyEntry{PaneID: paneID, Keys: keys})
 	return nil
 }
 
@@ -56,10 +63,10 @@ func TestPaneHealerHealthyPane(t *testing.T) {
 	mock.capturedContent["pane-1"] = "content-frame-1"
 
 	healer := NewPaneHealer(PaneHealerOpts{
-		PaneManager:    mock,
-		CheckInterval:  100 * time.Millisecond,
+		PaneManager:     mock,
+		CheckInterval:   100 * time.Millisecond,
 		FrozenThreshold: 1 * time.Second,
-		MaxRestarts:    3,
+		MaxRestarts:     3,
 	})
 
 	// First check: establishes baseline.
@@ -80,7 +87,7 @@ func TestPaneHealerHealthyPane(t *testing.T) {
 	}
 }
 
-func TestPaneHealerFrozenPane(t *testing.T) {
+func TestPaneHealerFrozenPaneUseSendKeys(t *testing.T) {
 	mock := newMockPaneManager()
 	mock.panes = []*zellij.Pane{
 		{ID: "pane-1", Name: "Agents", Command: "cmdr status --pane"},
@@ -88,10 +95,10 @@ func TestPaneHealerFrozenPane(t *testing.T) {
 	mock.capturedContent["pane-1"] = "static-content"
 
 	healer := NewPaneHealer(PaneHealerOpts{
-		PaneManager:    mock,
-		CheckInterval:  100 * time.Millisecond,
-		FrozenThreshold: 50 * time.Millisecond, // Very short for testing.
-		MaxRestarts:    3,
+		PaneManager:     mock,
+		CheckInterval:   100 * time.Millisecond,
+		FrozenThreshold: 50 * time.Millisecond,
+		MaxRestarts:     3,
 	})
 
 	// First check: establishes baseline.
@@ -100,15 +107,31 @@ func TestPaneHealerFrozenPane(t *testing.T) {
 	// Wait past threshold.
 	time.Sleep(100 * time.Millisecond)
 
-	// Second check: same content, should detect frozen and restart.
+	// Second check: same content, should detect frozen and restart in-place.
 	healer.checkPanes(nil)
 
-	// Verify that a close and create happened.
-	if len(mock.closedPanes) != 1 {
-		t.Errorf("expected 1 close, got %d", len(mock.closedPanes))
+	// Verify that SendKeys was used (not ClosePane+CreatePane).
+	if len(mock.closedPanes) != 0 {
+		t.Errorf("expected 0 closes (in-place restart), got %d", len(mock.closedPanes))
 	}
-	if len(mock.createdPanes) != 1 {
-		t.Errorf("expected 1 create, got %d", len(mock.createdPanes))
+	if len(mock.createdPanes) != 0 {
+		t.Errorf("expected 0 creates (in-place restart), got %d", len(mock.createdPanes))
+	}
+
+	// Should have sent Ctrl-C followed by the command.
+	if len(mock.sentKeys) < 2 {
+		t.Fatalf("expected at least 2 SendKeys calls (ctrl-c + command), got %d", len(mock.sentKeys))
+	}
+
+	// First call should be Ctrl-C.
+	if mock.sentKeys[0].Keys != "\x03" {
+		t.Errorf("expected first SendKeys to be Ctrl-C, got %q", mock.sentKeys[0].Keys)
+	}
+
+	// Second call should be the command + newline.
+	expected := "cmdr status --pane\n"
+	if mock.sentKeys[1].Keys != expected {
+		t.Errorf("expected second SendKeys to be %q, got %q", expected, mock.sentKeys[1].Keys)
 	}
 }
 
@@ -120,10 +143,10 @@ func TestPaneHealerMaxRestarts(t *testing.T) {
 	mock.capturedContent["pane-1"] = "frozen-content"
 
 	healer := NewPaneHealer(PaneHealerOpts{
-		PaneManager:    mock,
-		CheckInterval:  10 * time.Millisecond,
+		PaneManager:     mock,
+		CheckInterval:   10 * time.Millisecond,
 		FrozenThreshold: 1 * time.Millisecond,
-		MaxRestarts:    2,
+		MaxRestarts:     2,
 	})
 
 	// Simulate exceeding max restarts.
@@ -166,10 +189,10 @@ func TestPaneHealerSkipsUnnamedPanes(t *testing.T) {
 	}
 
 	healer := NewPaneHealer(PaneHealerOpts{
-		PaneManager:    mock,
-		CheckInterval:  100 * time.Millisecond,
+		PaneManager:     mock,
+		CheckInterval:   100 * time.Millisecond,
 		FrozenThreshold: 1 * time.Second,
-		MaxRestarts:    3,
+		MaxRestarts:     3,
 	})
 
 	healer.checkPanes(nil)
