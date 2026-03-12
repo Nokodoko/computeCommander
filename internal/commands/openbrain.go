@@ -269,10 +269,23 @@ func runOpenBrainPane(ctx context.Context, projectDir string) error {
 
 	paths := openBrainMemoryPaths(projectDir)
 
-	// Snapshot initial state.
+	// Snapshot initial state and populate recentEntries with existing sections.
+	now := time.Now().Format(time.RFC3339)
 	for _, p := range paths {
 		hashes[p] = hashFileContent(p)
 		sections[p] = extractSections(p)
+		for heading, content := range sections[p] {
+			recentEntries = append(recentEntries, memoryEntry{
+				File:      p,
+				Section:   heading,
+				Operation: "present",
+				Timestamp: now,
+				Preview:   truncate(strings.TrimSpace(content), 80),
+			})
+		}
+	}
+	if len(recentEntries) > maxRecent {
+		recentEntries = recentEntries[len(recentEntries)-maxRecent:]
 	}
 
 	// Try fsnotify, fall back to polling.
