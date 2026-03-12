@@ -46,9 +46,10 @@ type JiraPane struct {
 	flat  []*jiraNode // flattened visible rows (rebuilt on expand/collapse)
 
 	// Navigation state.
-	cursor int
-	width  int
-	height int
+	cursor     int
+	pageOffset int
+	width      int
+	height     int
 
 	// Help overlay.
 	showHelp bool
@@ -78,6 +79,16 @@ func (p *JiraPane) Refresh(ctx context.Context) error {
 
 	p.lastErr = nil
 	p.buildHierarchy(issues)
+
+	// Auto-expand all root project nodes on initial load (no prior expansion state).
+	if len(p.roots) > 0 {
+		for _, root := range p.roots {
+			if !root.Expanded {
+				root.Expanded = true
+			}
+		}
+	}
+
 	p.rebuildFlat()
 
 	if p.cursor >= len(p.flat) && len(p.flat) > 0 {
@@ -96,7 +107,11 @@ func (p *JiraPane) buildHierarchy(issues []jira.JiraIssue) {
 
 	for _, issue := range issues {
 		// Ensure project node exists.
+		// Extract human-readable project key from issue.Key (e.g. "ES-123" → "ES").
 		projKey := issue.ProjectID
+		if parts := strings.SplitN(issue.Key, "-", 2); len(parts) == 2 && parts[0] != "" {
+			projKey = parts[0]
+		}
 		if projKey == "" {
 			projKey = "(none)"
 		}
@@ -189,17 +204,71 @@ func (p *JiraPane) rebuildFlat() {
 
 // --- Navigation ---
 
-// CursorUp moves the cursor up.
+// CursorUp moves the cursor up and auto-scrolls to keep it visible.
 func (p *JiraPane) CursorUp() {
 	if p.cursor > 0 {
 		p.cursor--
+		p.scrollToCursor(p.visibleRows())
 	}
 }
 
-// CursorDown moves the cursor down.
+// CursorDown moves the cursor down and auto-scrolls to keep it visible.
 func (p *JiraPane) CursorDown() {
 	if p.cursor < len(p.flat)-1 {
 		p.cursor++
+		p.scrollToCursor(p.visibleRows())
+	}
+}
+
+// PageDown advances the page offset by maxRows.
+func (p *JiraPane) PageDown() {
+	maxRows := p.visibleRows()
+	p.pageOffset += maxRows
+	last := len(p.flat) - 1
+	if last < 0 {
+		last = 0
+	}
+	if p.pageOffset > last {
+		p.pageOffset = last
+	}
+	// Move cursor into view.
+	if p.cursor < p.pageOffset {
+		p.cursor = p.pageOffset
+	}
+}
+
+// PageUp decreases the page offset by maxRows.
+func (p *JiraPane) PageUp() {
+	maxRows := p.visibleRows()
+	p.pageOffset -= maxRows
+	if p.pageOffset < 0 {
+		p.pageOffset = 0
+	}
+	// Move cursor into view.
+	if p.cursor >= p.pageOffset+maxRows {
+		p.cursor = p.pageOffset + maxRows - 1
+		if p.cursor < 0 {
+			p.cursor = 0
+		}
+	}
+}
+
+// visibleRows returns the number of rows that fit in the pane.
+func (p *JiraPane) visibleRows() int {
+	h := p.height
+	if h < 3 {
+		h = 10
+	}
+	// Reserve last line for footer.
+	return min(h-1, 15)
+}
+
+// scrollToCursor adjusts pageOffset so cursor stays within the visible window.
+func (p *JiraPane) scrollToCursor(maxRows int) {
+	if p.cursor < p.pageOffset {
+		p.pageOffset = p.cursor
+	} else if p.cursor >= p.pageOffset+maxRows {
+		p.pageOffset = p.cursor - maxRows + 1
 	}
 }
 
@@ -301,26 +370,32 @@ func (p *JiraPane) View() string {
 	if w < 40 {
 		w = 60
 	}
-	h := p.height
-	if h < 3 {
-		h = 10
+
+	maxRows := p.visibleRows()
+	total := len(p.flat)
+
+	// Clamp pageOffset in case flat shrunk after a refresh.
+	if p.pageOffset >= total {
+		p.pageOffset = max(0, total-1)
 	}
 
-	// Reserve last line for key hints.
-	maxRows := h - 1
+	end := p.pageOffset + maxRows
+	if end > total {
+		end = total
+	}
 
 	var lines []string
-	for i, n := range p.flat {
-		if i >= maxRows {
-			lines = append(lines, p.theme.Subtitle.Render(
-				fmt.Sprintf("  ... +%d more", len(p.flat)-maxRows)))
-			break
-		}
-		lines = append(lines, p.renderNode(n, i, w))
+	for i := p.pageOffset; i < end; i++ {
+		lines = append(lines, p.renderNode(p.flat[i], i, w))
 	}
 
-	// Key hints footer.
-	lines = append(lines, p.theme.HelpBar.Render("j/k:nav  l/h:expand  s:sync  x:exec  ?:help"))
+	// Page indicator + key hints footer.
+	pageInfo := ""
+	if total > maxRows {
+		pageEnd := end
+		pageInfo = fmt.Sprintf(" [%d-%d/%d]", p.pageOffset+1, pageEnd, total)
+	}
+	lines = append(lines, p.theme.HelpBar.Render("j/k:nav  n/N:page  l/h:expand  s:sync  x:exec  ?:help"+pageInfo))
 
 	return strings.Join(lines, "\n")
 }
@@ -418,18 +493,20 @@ func (p *JiraPane) renderHelp() string {
 	lines := []string{
 		p.theme.Title.Render("Jira Pane Help"),
 		"",
-		"  j/k       Navigate up/down",
-		"  Enter/l   Expand / drill into",
-		"  h/Esc     Collapse / go up",
-		"  s         Sync from Jira",
-		"  e         Edit/generate prompt",
-		"  p         Preview generated prompt",
-		"  x         Execute task (spawn agent)",
-		"  i         Switch Jira instance",
-		"  f         Dark factory mode",
-		"  v         Verify intent/outcomes",
-		"  ?         Toggle this help",
-		"  q         Quit / close pane",
+		"  j/k         Navigate up/down",
+		"  n/pgdn/C-d  Page down",
+		"  N/pgup/C-u  Page up",
+		"  Enter/l     Expand / drill into",
+		"  h/Esc       Collapse / go up",
+		"  s           Sync from Jira",
+		"  e           Edit/generate prompt",
+		"  p           Preview generated prompt",
+		"  x           Execute task (spawn agent)",
+		"  i           Switch Jira instance",
+		"  f           Dark factory mode",
+		"  v           Verify intent/outcomes",
+		"  ?           Toggle this help",
+		"  q           Quit / close pane",
 		"",
 		p.theme.Subtitle.Render("  Press ? to close"),
 	}

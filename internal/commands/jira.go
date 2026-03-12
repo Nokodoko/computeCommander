@@ -31,12 +31,24 @@ func JiraCmd(app *App) *cobra.Command {
 			project, _ := cmd.Flags().GetString("project")
 			status, _ := cmd.Flags().GetString("status")
 
-			if !hasJiraConfig(app) {
-				return runJiraFallback(cmd.Context(), app, pane, jsonOut)
+			if pane {
+				if !hasJiraConfig(app) {
+					// No Jira config: run BubbleTea pane with nil lister (shows "No Jira issues")
+					theme := tui.DefaultTheme()
+					p := tui.NewJiraPane(nil, theme)
+					m := &jiraPaneModel{
+						ctx:  cmd.Context(),
+						pane: p,
+					}
+					prog := tea.NewProgram(m, tea.WithAltScreen())
+					_, err := prog.Run()
+					return err
+				}
+				return runJiraPaneLoop(cmd.Context(), app, instance, project)
 			}
 
-			if pane {
-				return runJiraPaneLoop(cmd.Context(), app, instance, project)
+			if !hasJiraConfig(app) {
+				return runJiraFallback(cmd.Context(), app, false, jsonOut)
 			}
 
 			return listJiraIssues(cmd.Context(), app, instance, project, status, jsonOut)
@@ -793,6 +805,10 @@ func (m *jiraPaneModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pane.CursorDown()
 		case "k", "up":
 			m.pane.CursorUp()
+		case "n", "pgdown", "ctrl+d":
+			m.pane.PageDown()
+		case "N", "pgup", "ctrl+u":
+			m.pane.PageUp()
 		case "l", "enter", "right":
 			m.pane.Expand()
 		case "h", "left":
@@ -800,6 +816,9 @@ func (m *jiraPaneModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "?":
 			m.pane.ToggleHelp()
 		case "s":
+			if m.syncEngine == nil {
+				return m, m.setStatus("No Jira instance configured")
+			}
 			return m, tea.Batch(m.setStatus("Syncing..."), m.syncCmd())
 		case "e":
 			selected := m.pane.SelectedKey()
@@ -820,6 +839,9 @@ func (m *jiraPaneModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.setStatus(fmt.Sprintf("Execute: use 'cmdr jira execute %s'", selected))
 		case "i":
+			if m.inst == nil {
+				return m, m.setStatus("No Jira instance configured")
+			}
 			return m, m.setStatus(fmt.Sprintf("Instance: %s (switching requires restart)", m.inst.Name))
 		case "f":
 			return m, m.setStatus("Factory: use 'cmdr jira factory --project <key>'")
