@@ -276,6 +276,11 @@ func (p *JiraPane) SetProject(key string) {
 	p.projectKey = key
 }
 
+// ProjectKey returns the current project filter key.
+func (p *JiraPane) ProjectKey() string {
+	return p.projectKey
+}
+
 // --- Rendering ---
 
 // View renders the Jira pane as a string.
@@ -424,6 +429,7 @@ func (p *JiraPane) renderHelp() string {
 		"  f         Dark factory mode",
 		"  v         Verify intent/outcomes",
 		"  ?         Toggle this help",
+		"  q         Quit / close pane",
 		"",
 		p.theme.Subtitle.Render("  Press ? to close"),
 	}

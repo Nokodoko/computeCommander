@@ -698,10 +698,17 @@ func runJiraPaneLoop(ctx context.Context, app *App, instanceName, projectKey str
 		pane.SetProject(projectKey)
 	}
 
+	// Resolve project key once: prefer explicit flag, fall back to instance default.
+	if projectKey == "" {
+		projectKey = inst.DefaultProject
+	}
+
 	m := &jiraPaneModel{
-		ctx:    ctx,
-		pane:   pane,
-		engine: engine,
+		ctx:        ctx,
+		pane:       pane,
+		syncEngine: engine,
+		inst:       inst,
+		projectKey: projectKey,
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -709,35 +716,75 @@ func runJiraPaneLoop(ctx context.Context, app *App, instanceName, projectKey str
 	return runErr
 }
 
-// jiraPaneModel is a minimal bubbletea.Model wrapping JiraPane.
-type jiraPaneModel struct {
-	ctx    context.Context
-	pane   *tui.JiraPane
-	engine interface {
-		GetCachedIssues(ctx context.Context, projectKey, status string) ([]jira.JiraIssue, error)
-	}
-	width  int
-	height int
+// jiraSyncResultMsg carries the outcome of an async SyncProject call.
+type jiraSyncResultMsg struct {
+	count int
+	err   error
 }
 
+// jiraPaneTickMsg drives periodic refresh.
 type jiraPaneTickMsg time.Time
+
+// jiraPaneStatusClearMsg signals that the ephemeral status line should be cleared.
+type jiraPaneStatusClearMsg struct{}
+
+// jiraPaneModel is a bubbletea.Model wrapping JiraPane with full keybind support.
+type jiraPaneModel struct {
+	ctx          context.Context
+	pane         *tui.JiraPane
+	syncEngine   *jira.SyncEngine
+	inst         *config.JiraInstance
+	projectKey   string
+	statusMsg    string
+	statusExpiry time.Time
+}
 
 func (m *jiraPaneModel) Init() tea.Cmd {
 	_ = m.pane.Refresh(m.ctx)
-	return tea.Batch(
-		tea.Tick(10*time.Second, func(t time.Time) tea.Msg { return jiraPaneTickMsg(t) }),
-	)
+	return tea.Tick(10*time.Second, func(t time.Time) tea.Msg { return jiraPaneTickMsg(t) })
+}
+
+// setStatus stores an ephemeral status message and returns a Cmd to clear it after 5s.
+func (m *jiraPaneModel) setStatus(msg string) tea.Cmd {
+	m.statusMsg = msg
+	m.statusExpiry = time.Now().Add(5 * time.Second)
+	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return jiraPaneStatusClearMsg{} })
+}
+
+// syncCmd spawns an async SyncProject and returns the result as jiraSyncResultMsg.
+func (m *jiraPaneModel) syncCmd() tea.Cmd {
+	return func() tea.Msg {
+		result, err := m.syncEngine.SyncProject(m.ctx, m.projectKey)
+		if err != nil {
+			return jiraSyncResultMsg{err: err}
+		}
+		return jiraSyncResultMsg{count: result.IssuesSync}
+	}
 }
 
 func (m *jiraPaneModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-		m.pane.SetSize(msg.Width-2, msg.Height-3)
+		// Reserve 1 line for status bar at bottom.
+		m.pane.SetSize(msg.Width-2, msg.Height-4)
+
 	case jiraPaneTickMsg:
 		_ = m.pane.Refresh(m.ctx)
 		return m, tea.Tick(10*time.Second, func(t time.Time) tea.Msg { return jiraPaneTickMsg(t) })
+
+	case jiraSyncResultMsg:
+		if msg.err != nil {
+			return m, m.setStatus(fmt.Sprintf("Sync error: %v", msg.err))
+		}
+		_ = m.pane.Refresh(m.ctx)
+		return m, m.setStatus(fmt.Sprintf("Synced %d issues", msg.count))
+
+	case jiraPaneStatusClearMsg:
+		if time.Now().After(m.statusExpiry) {
+			m.statusMsg = ""
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
@@ -752,13 +799,47 @@ func (m *jiraPaneModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pane.Collapse()
 		case "?":
 			m.pane.ToggleHelp()
+		case "s":
+			return m, tea.Batch(m.setStatus("Syncing..."), m.syncCmd())
+		case "e":
+			selected := m.pane.SelectedKey()
+			if selected == "" {
+				return m, m.setStatus("Prompt: use 'cmdr jira prompt <key>'")
+			}
+			return m, m.setStatus(fmt.Sprintf("Prompt: use 'cmdr jira prompt %s'", selected))
+		case "p":
+			selected := m.pane.SelectedKey()
+			if selected == "" {
+				return m, m.setStatus("Preview: use 'cmdr jira prompt --dry-run <key>'")
+			}
+			return m, m.setStatus(fmt.Sprintf("Preview: use 'cmdr jira prompt --dry-run %s'", selected))
+		case "x":
+			selected := m.pane.SelectedKey()
+			if selected == "" {
+				return m, m.setStatus("Execute: use 'cmdr jira execute <key>'")
+			}
+			return m, m.setStatus(fmt.Sprintf("Execute: use 'cmdr jira execute %s'", selected))
+		case "i":
+			return m, m.setStatus(fmt.Sprintf("Instance: %s (switching requires restart)", m.inst.Name))
+		case "f":
+			return m, m.setStatus("Factory: use 'cmdr jira factory --project <key>'")
+		case "v":
+			selected := m.pane.SelectedKey()
+			if selected == "" {
+				return m, m.setStatus("Verify: use 'cmdr jira execute <key> --verify'")
+			}
+			return m, m.setStatus(fmt.Sprintf("Verify: use 'cmdr jira execute %s --verify'", selected))
 		}
 	}
 	return m, nil
 }
 
 func (m *jiraPaneModel) View() string {
-	return m.pane.View()
+	paneView := m.pane.View()
+	if m.statusMsg == "" {
+		return paneView
+	}
+	return paneView + "\n" + m.statusMsg
 }
 
 // renderJiraPane is kept for the legacy ANSI loop path (runJiraLegacyPane).
