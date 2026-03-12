@@ -1,56 +1,84 @@
-# Spec Review: ComputeCommander Evals Pane
+# Spec Review Report
 
-**Iteration:** 1/3
-**Date:** 2026-03-05
-**Verdict:** PASS WITH WARNINGS
+**Spec:** ./SPEC.md
+**Iteration:** 2 of 3
+**Date:** 2026-03-12
+
+## Verdict: PASS WITH WARNINGS
 
 ## Summary
 
-The spec is well-structured and provides substantial detail for implementing an Evals pane across both the KDL layout and BubbleTea TUI. Most sections are thorough, with complete SQL migrations, Go struct definitions, and CLI specifications. However, there are two critical issues (incorrect pattern claim leading agents to the wrong reference files, and missing test file updates that will cause T8 to fail) and several warnings around inconsistencies between the spec and the actual codebase that could lead to implementation errors.
+The spec has been substantially rewritten since iteration 1 and now addresses the original feature request for Jira Integration. It delivers real Jira REST API connectivity, multi-instance YAML config, hierarchical data model (Project > Epic > Task), rate limit batching, machine-readable prompt generation, intent verification, dark factory mode, mnemonic keybinds, and multiple execution modes. All 19 sections are present and substantive. The critical failures from iteration 1 (scope misalignment, TypeScript interfaces, broken pane healer) are resolved. Several warnings remain around edge cases, missing `agentic_instructions.md` files for new packages, and a few minor consistency gaps.
 
 ## Dimension Scores
 
-| Dimension | Rating | Critical | Warnings |
-|-----------|--------|----------|----------|
-| Completeness | WARN | 1 | 2 |
-| Clarity | PASS | 0 | 2 |
-| Correctness | WARN | 1 | 3 |
-| Consistency | WARN | 0 | 3 |
-| SDLC | PASS | 0 | 1 |
-| Actionability | PASS | 0 | 1 |
+| Dimension | Score | Findings |
+|-----------|-------|----------|
+| Completeness | PASS | 3 warnings |
+| Clarity | PASS | 1 warning |
+| Correctness | PASS | 2 warnings |
+| Consistency | PASS | 2 warnings |
+| SDLC | PASS | 2 warnings |
+| Actionability | PASS | 3 warnings |
 
-## Findings
+## Feature Request Alignment
 
-### Critical (must fix)
+| # | Requirement | Addressed | Location |
+|---|-------------|-----------|----------|
+| 1 | Real Jira REST API connectivity | YES | Section 4 (Data Model), Section 7 (Concurrency), `pkg/integrations/jira/client.go` |
+| 2 | Hierarchical view: Projects > Epics > Tasks | YES | Section 4 (JiraProject, JiraEpic, JiraIssue structs), Section 3 (DB schema) |
+| 3 | Machine-readable prompt generation for `/sr --review --loop` | YES | Section 5 (`cmdr jira prompt`, `cmdr jira execute --review`), Section 3 (jira-prompt.tmpl) |
+| 4 | Intent-management verification with `# Outcomes` review | YES | Section 9 (Intent Verification Pipeline), `internal/darkfactory/intent.go` |
+| 5 | Dark factory mode (full automation) | YES | Section 4 (DarkFactoryConfig, Execution Modes), Section 5 (`cmdr jira factory`), `internal/darkfactory/executor.go` |
+| 6 | Multi-instance Jira support with YAML config | YES | Section 3 (config.yaml), Section 4 (JiraConfig, JiraInstance structs), Section 5 (`cmdr jira instances`) |
+| 7 | Rate limit batching | YES | Section 7 (Token bucket, adaptive backoff, RateLimiter struct), `pkg/integrations/jira/ratelimit.go` |
+| 8 | Mnemonic keybinds | YES | Section 5 (Mnemonic Keybinds table) |
+| 9 | Agent/State columns in UI | YES | Section 4 (JiraIssue struct: AgentType, AgentState, SessionID fields), Section 6 (JSON output with agentType/agentState) |
+| 10 | Multiple execution modes | YES | Section 4 (Execution Modes table: full_auto, stepped, scoped) |
 
-- [C1] **Incorrect pattern claim in Design Principles (Section: Design Principles, line 15).** The spec states: "The new Evals pane mirrors `MergeQueueView` / `MailSummary` in structure: a Go struct with `View()`, `Refresh()`, `SetSize()`." Neither `MergeQueueView` (`internal/tui/merge_view.go`) nor `MailSummary` (`internal/tui/mail_summary.go`) implements `SetSize()`. Verified by searching both files -- zero matches. The panes that DO have `SetSize()` are `EventsPane` (`internal/tui/events_pane.go`), `GitStatusPane` (`internal/tui/git_status.go`), `FilePicker`, and `AgentSession`. The EvalsPane must follow the `EventsPane`/`GitStatusPane` pattern (which includes `SetSize`, `width`, `height` fields). Furthermore, in `updatePaneSizes()` (`dashboard.go` line 427), `SetSize` is called for `eventsPane` and `gitStatus` but NOT for `mail` or `queue`. Task T3's read scope lists `internal/tui/merge_view.go` as the primary reference -- this will mislead the implementing agent. The correct primary references are `internal/tui/events_pane.go` and `internal/tui/git_status.go`.
+All 10 feature request items are addressed.
 
-- [C2] **Missing test file in task write scopes (Section: Task Manifest, T4/T5).** `internal/tui/dashboard_test.go` contains `TestPaneNavigation` (line 171) which hardcodes `PaneGitStatus` as the last pane in wrap-around assertions (lines 190-200: `nextPane(PaneGitStatus)` expects `PaneFilePicker`, and `prevPane(PaneFilePicker)` expects `PaneGitStatus`). After adding `PaneEvals` to the end of the iota block and `paneOrder`, the wrap-around target changes from `PaneGitStatus` to `PaneEvals`, breaking this test. Neither T4 nor T5 includes `internal/tui/dashboard_test.go` in their write scope, and T8's verify command (`go test ./internal/tui/...`) will fail. Additionally, the Failure Modes section (line 531) references `TestPaneCycle` and `TestPaneMetaByID` -- `TestPaneCycle` does not exist; the actual test name is `TestPaneNavigation`.
+## Critical Findings (must fix)
 
-### Warnings (should fix)
+None. All critical issues from iteration 1 have been resolved.
 
-- [W1] **SQL parameter style not specified (Section: Implementation Details, T3).** The spec's `Refresh()` query uses no parameters, but `RunAll()` and the `--pane` mode (T2) will need parameterized queries for UPDATE and filtered SELECT. The codebase uses mixed conventions: `$1` positional params in newer code (`internal/agents/spawner.go`, `internal/tui/dashboard.go`, `internal/commands/status.go`) and `?` params in older code (`internal/mail/sql_store.go`, `internal/merge/queue.go`). The `internal/agents/agentic_instructions.md` explicitly says "SQL uses `$1` positional params (compatible with both postgres and sqlite)." The spec should state which convention to use to prevent the implementing agent from picking the wrong one.
+## Warnings (should fix)
 
-- [W2] **KDL layout Sprintf argument mapping not provided (Section: Implementation Details, T6, lines 628-641).** `GenerateLayout()` (`internal/zellij/layout.go` line 101-146) uses a single large `fmt.Sprintf` with 16 positional arguments. Adding a 5th bottom-row pane requires inserting 2+ new format arguments (`cmdrBin` and `projectFlag`) at the correct position in the Sprintf call. The spec shows the KDL template snippet but does not provide the complete argument list or the positional index where new arguments should be inserted. Given this Sprintf has 16 args already, off-by-one errors are likely without an explicit argument map.
+1. **[Section 3, 12] No `agentic_instructions.md` for new packages.** The project convention (visible in `internal/commands/`, `internal/agents/`, `internal/zellij/`, `pkg/integrations/github/`, `pkg/integrations/linear/`) places an `agentic_instructions.md` in every package directory. The spec creates two new packages (`pkg/integrations/jira/`, `internal/darkfactory/`) but does not include `agentic_instructions.md` files in the Target State or Task Manifest. Workers in later tasks (T5, T6) that need to read these packages will lack scope documentation. Add these files to T1 and T6 write scopes respectively.
 
-- [W3] **`updatePaneSizes()` inconsistency not addressed (Section: Implementation Details, T5, line 613).** The spec says to add `d.evals.SetSize(bottomPaneW-2, bottomH-3)` in `updatePaneSizes()`. This is correct. However, the existing `mail` and `queue` components do NOT have SetSize called on them in `updatePaneSizes()` (they render without explicit sizing). The spec does not explain this asymmetry, which could confuse the implementer into thinking they need to add SetSize calls for mail/queue as well, or conversely, that EvalsPane doesn't need SetSize because other bottom panes don't have it.
+2. **[Section 4] `SyncedAt` field type mismatch with DB schema.** The Go structs define `SyncedAt time.Time` but the SQL schema stores it as `TEXT NOT NULL DEFAULT (datetime('now'))`. SQLite's `datetime()` produces `YYYY-MM-DD HH:MM:SS` strings, not RFC3339. The sync engine or a custom scanner will need to parse this format. The spec should note the required time format or add a `db:"synced_at"` scan helper. This is a correctness risk that could produce zero-value timestamps silently.
 
-- [W4] **T2 implementation details are sparse compared to T3 (Section: Implementation Details).** T2's `--pane` mode runs as a separate OS process (`cmdr evals --pane`) with its own ticker loop querying the database independently. The spec says "Follows the `GitStatusCmd` / `FeedCmd` pattern for `--pane` mode with a ticker loop" (line 169) but provides no code skeleton for T2, while T3 gets a full struct definition, method signatures, and column widths. The T2 implementer must: (a) understand that `--pane` mode is a completely separate code path from the TUI EvalsPane, (b) use `app.DB` for queries, (c) implement `clearScreen()` + render loop, (d) format output with ANSI colors matching the lipgloss styles. These are all inferrable from the referenced files but should be more explicit.
+3. **[Section 5] `cmdr jira factory --mode` flag inconsistency.** The `cmdr jira factory` command lists `--max-concurrent` and `--dry-run` flags but does not show `--mode`. However, the DarkFactoryConfig has `execution_mode` and the agent-facing commands section (Section 9) shows `cmdr jira factory --project ENG --mode full_auto`. Either add `--mode` to the factory command definition in Section 5, or clarify that factory always uses the config-file mode.
 
-- [W5] **Bottom row pane count mismatch between KDL and TUI (Section: Integration, line 327).** In KDL mode, the 4th bottom pane is "LazyGit" (a bash wrapper). In TUI mode, the 4th bottom pane is "Git Status" (an in-process component). The spec adds "Evals" as the 5th pane in both modes, making KDL have 5 panes (Event Log, Mail, Merge Queue, LazyGit, Evals) and TUI have 5 panes (Events, Mail, Merge Queue, Git Status, Evals). This asymmetry is inherited from the existing codebase and is not a spec bug, but the spec does not acknowledge it. An implementer might be confused by the discrepancy.
+4. **[Section 7] `time.AfterFunc` in RateLimiter creates a goroutine leak risk.** The `AdaptFromHeaders` method uses `time.AfterFunc(retryAfter, func() { r.limiter.SetLimit(r.baseRate) })` but the timer is not tracked or cancellable. If `AdaptFromHeaders` is called multiple times with `retryAfter > 0` before the first timer fires, multiple timers accumulate. The spec should note that previous timers should be cancelled or that the `RateLimiter` struct should hold a `*time.Timer` field for cancellation.
 
-- [W6] **Section numbering is inconsistent.** The spec has 23 top-level `##` sections total but numbers only sections 15-19. Sections 1-14 are implied by ordering, and sections 20-23 (Agent Assignments, Execution Order, Failure Modes, Implementation Details) are unnumbered. This makes it difficult to reference specific sections by number.
+5. **[Section 8] Migration fallback behavior underspecified.** The spec says `cmdr jira` falls back to `task_groups` when no Jira instances are configured (line 549), but the existing `jira.go` reads from `task_groups` today. The spec should clarify: does T5 preserve the existing `task_groups` read path as a fallback within the rewritten `jira.go`, or does it delegate to `cmdr group` commands? The current wording could lead to two implementations of `task_groups` reading logic.
 
-- [W7] **Color scheme references external hook files that are not in the repo.** The Color Scheme section references `~/.claude/hooks/intent/eval_loop.py:PREDICATE_NOTIFICATION_COLORS`, `intent-eval-posttool.py`, and `intent-build-verify.py` as the source of truth for color values. These files are user-specific and not part of the computeCommander repository. The hex color values are explicitly provided (so implementation doesn't depend on the files), but the provenance claim is unverifiable by another implementer.
+6. **[Section 9] Hooks JSON block uses wrong format.** The hooks integration (lines 583-599) uses a JSON format for hooks configuration, but Claude Code hooks are configured in `~/.claude/settings.json` under a specific schema. The spec should either reference the actual settings.json path and format, or note that this is pseudo-config showing the intended hook behavior rather than a literal configuration block.
 
-- [W8] **`NewEvalsPane` needs DB handle from `NewDashboard` but spec doesn't show DashboardOpts change.** The spec's T5 instructions (line 610) say to add `evals: NewEvalsPane(opts.DB, theme),` in `NewDashboard()`. This works because `DashboardOpts` already has a `DB db.DB` field (dashboard.go line 27). However, the spec does not mention that `DashboardOpts` does NOT need modification, which is good -- but an explicit "DashboardOpts already has DB; no change needed" note would prevent unnecessary modifications.
+7. **[Section 9] `cmdr jira check-completion --session $SESSION_ID` not in CLI section.** The SubagentStop hook references this command, but it is not listed in the CLI commands in Section 5. Workers implementing T5 will not know this command exists unless they read Section 9. Add it to Section 5 or note it as an internal-only command.
 
-### Notes (informational)
+8. **[Section 15] T2 depends on T4 but dependency graph shows T2 depends on T1 and T4.** This is correct in the Task Manifest table (T2 depends on T1, T4) and correct in the Dependency Graph (Phase 2 after Phase 1). However, T2's read scope lists `internal/platform/db/db.go` but not the migration file `005_jira_cache.sql`. The sync engine needs to know the exact table schema to write SQL queries. Add `internal/platform/db/migrations/sqlite/005_jira_cache.sql` to T2's read scope.
 
-- [N1] **Go 1.25 reference.** The Tech Stack section says "Go 1.25". As of March 2026, this is plausible if the project tracks the latest Go release. No action needed.
+9. **[Section 15] T6 read scope missing `internal/darkfactory/` for intent.go.** T6 writes both `executor.go` and `intent.go` to `internal/darkfactory/`, and lists several read dependencies. However, T6 does not list `internal/agents/types.go` in its read scope, which it will need for `SpawnRequest`, `SpawnResult`, `AgentSession`, and `SessionState` types referenced by the executor.
 
-- [N2] **Migration 002 and 003 exist as untracked files.** Both `internal/platform/db/migrations/sqlite/002_system_wide.sql` and `003_agentic_foundation.sql` show as untracked (`??`) in git status. If these haven't been committed when an agent runs T1, migration 004 would numerically follow untracked files. This won't break the embed directive (`//go:embed migrations/sqlite/*.sql`) since it embeds all `.sql` files in the directory, but if 002/003 are not committed, the 004 migration could run on a database that lacks the 002/003 tables. This is a project state issue, not a spec issue.
+10. **[Section 17] Target State line counts may be low.** The `client.go` estimate is ~200 lines for a full Jira REST API client covering 8 operations (search, get issue, get project, list epics, transition, comment, list fields, bulk search) plus authentication for 3 auth types plus response parsing. This is likely closer to 300-400 lines. Similarly `executor.go` at ~250 lines must implement sync-prompt-spawn-verify-transition pipeline with concurrency control. Underestimates are not blocking but set incorrect expectations for workers.
 
-- [N3] **No new Go dependencies confirmed.** All required packages (`os/exec`, `database/sql`, `crypto/rand`, `charmbracelet/lipgloss`, etc.) are already imported elsewhere in the project.
+11. **[Section 19] Success criteria missing dark factory verification.** The success criteria check for file existence and CLI help output, but do not verify that `cmdr jira factory --help` works or that the dark factory executor can be instantiated. Add: `./cmdr jira factory --help 2>&1 | grep -q 'project'`.
 
-- [N4] **The `_migrations` table's `applied_at` default uses `datetime('now')` (SQLite syntax).** This is fine for SQLite but would break on PostgreSQL if the same DDL were used. The `Migrate()` function uses the same DDL for both drivers (line 37-40 of migrate.go). However, since the migrations tracking table already exists on any initialized database, this is not a concern for the new 004 migration.
+## Positive Observations
+
+- The spec is a dramatic improvement from iteration 1. Every critical finding has been addressed, and the spec now genuinely implements Jira integration rather than a local DB pane.
+- Data models are proper Go structs with correct `json`, `yaml`, and `db` tags matching existing project conventions.
+- The pane healer fix correctly uses `SendKeys` to restart processes in existing panes, matching the `zellij.PaneManager` interface that already exposes `SendKeys(paneID string, keys string) error`.
+- The rate limiter design using `golang.org/x/time/rate.Limiter` with adaptive header-based backoff is well-specified with concrete code.
+- The dependency graph is logically sound: Phase 1 (client, config, migration, healer) is fully parallel, Phase 2 (sync) blocks correctly on client + schema, Phase 3 (CLI, dark factory, template) fans out after sync.
+- The issue lifecycle mapping (Jira Status to cmdr Agent State) is clear and covers all terminal states.
+- Failure modes are comprehensive with detection and recovery strategies for each failure type.
+- Test coverage guidance is detailed per test file with specific test cases enumerated.
+- The CLI command pattern `JiraCmd(app *App) *cobra.Command` matches the existing codebase convention exactly.
+- The `pkg/integrations/jira/` placement follows the existing pattern set by `pkg/integrations/github/` and `pkg/integrations/linear/`.
+- JSON output formats are fully specified with success, error, and factory status examples.
+- The T9 verify command is now concrete (`test -f REVIEW-T9.md && grep -q 'APPROVED' REVIEW-T9.md`), resolving the validation error from iteration 1.
+- The worktree base branch is correctly set to `main`.
+- Section numbering is consistent (1-19).

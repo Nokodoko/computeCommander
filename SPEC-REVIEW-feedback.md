@@ -1,72 +1,118 @@
-# Spec Review Feedback (Iteration 1)
+# Spec Review Feedback (for spec-builder)
 
-## Critical Fixes Required
+**Iteration:** 2 of 3
+**Date:** 2026-03-12
 
-1. **[Section: Design Principles, line 15]** Fix incorrect pattern reference. The spec claims EvalsPane mirrors `MergeQueueView` / `MailSummary` but neither has `SetSize()`. The correct pattern references are `EventsPane` and `GitStatusPane`.
+## No Critical Fixes Required
 
-   Current: "The new Evals pane mirrors `MergeQueueView` / `MailSummary` in structure: a Go struct with `View()`, `Refresh()`, `SetSize()`, registered in `Dashboard`, wired via `NewDashboard()`, rendered in `View()`."
-
-   Correct: "The new Evals pane mirrors `EventsPane` / `GitStatusPane` in structure: a Go struct with `View()`, `Refresh()`, `SetSize(w, h int)`, registered in `Dashboard`, wired via `NewDashboard()`, rendered in `View()`. It is queried from the database like `MergeQueueView.Refresh()`, but sized explicitly like `EventsPane.SetSize()`."
-
-   Also update Task T3's read scope:
-
-   Current: `internal/tui/merge_view.go`, `internal/tui/events_pane.go`, `internal/tui/theme.go`, `internal/platform/db/db.go`
-
-   Correct: `internal/tui/events_pane.go`, `internal/tui/git_status.go`, `internal/tui/merge_view.go`, `internal/tui/theme.go`, `internal/platform/db/db.go`
-
-   (Move `events_pane.go` and add `git_status.go` as the primary structural references; keep `merge_view.go` for the DB query pattern only.)
-
-2. **[Section: Task Manifest, T4]** Add `internal/tui/dashboard_test.go` to T4's write scope and update the task description to include fixing `TestPaneNavigation` wrap-around assertions.
-
-   Current T4 write scope: `internal/tui/pane.go`, `internal/tui/render.go`
-
-   Correct T4 write scope: `internal/tui/pane.go`, `internal/tui/render.go`, `internal/tui/dashboard_test.go`
-
-   Add to T4 description: "Update `TestPaneNavigation` in `dashboard_test.go` to expect `PaneEvals` (not `PaneGitStatus`) as the last pane in wrap-around assertions."
-
-   Also in the Failure Modes section (line 531), fix the test name reference:
-
-   Current: "Tests in `dashboard_test.go` (`TestPaneCycle`, `TestPaneMetaByID`) fail"
-
-   Correct: "Tests in `dashboard_test.go` (`TestPaneNavigation`, `TestPaneMetaByID`) fail"
+All critical issues from iteration 1 are resolved. The remaining items are warnings that should be addressed but do not block execution.
 
 ## Warnings to Address
 
-1. **[Section: Implementation Details, T2/T3]** Add a note specifying SQL parameter convention. Add after the `Refresh()` query specification:
+### 1. [Section 3, 12, 15] Add `agentic_instructions.md` for new packages
 
-   "All SQL queries in both `evals.go` (CLI) and `evals_pane.go` (TUI) must use `$1` positional parameter style, matching the project convention established in `internal/agents/spawner.go` and `internal/agents/agentic_instructions.md`."
+The project places an `agentic_instructions.md` in every package directory (verified in `internal/commands/`, `internal/agents/`, `internal/zellij/`, `pkg/integrations/github/`, `pkg/integrations/linear/`). Add to the spec:
 
-2. **[Section: Implementation Details, T6, lines 628-641]** Add an explicit Sprintf argument position guide for the new pane. After the KDL template snippet, add:
+- Add `pkg/integrations/jira/agentic_instructions.md` to T1's write scope in the Task Manifest
+- Add `internal/darkfactory/agentic_instructions.md` to T6's write scope in the Task Manifest
+- Add both files to the Target State table (Section 17)
+- Add both files to the Directory Structure in Section 12
 
-   "In the `GenerateLayout()` Sprintf call, the new Evals pane requires two additional arguments after the existing lazygit arguments: `cmdrBin` (for the command path) and `projectFlag` (for the optional `--project` flag). The full argument list for the Sprintf becomes: `projectDir, tabName, tabHash, projectDir, fpWrapperPath, projectDir, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, lazygitWrapperPath, projectDir, cmdrBin, projectFlag` (last two are new)."
+### 2. [Section 4] Document `SyncedAt` time format parsing
 
-3. **[Section: Implementation Details, T5]** Add a note explaining the `updatePaneSizes()` asymmetry. After the `d.evals.SetSize(bottomPaneW-2, bottomH-3)` instruction, add:
+The SQL schema stores `synced_at` as `TEXT DEFAULT (datetime('now'))` which produces `YYYY-MM-DD HH:MM:SS` (no timezone, no T separator). The Go structs use `time.Time`. Add a note in Section 4 near the struct definitions:
 
-   "Note: `MailSummary` and `MergeQueueView` do not have `SetSize()` methods and are not sized in `updatePaneSizes()`. They render without explicit dimensions, relying on `RenderPane()` to constrain content. `EvalsPane`, like `EventsPane` and `GitStatusPane`, uses explicit sizing for scroll/cursor support."
+```
+Note: SQLite stores synced_at as "YYYY-MM-DD HH:MM:SS" text. The sync engine must
+use time.Parse("2006-01-02 15:04:05", raw) when scanning from SQLite, and
+time.Parse(time.RFC3339, raw) when scanning from PostgreSQL.
+```
 
-4. **[Section: Implementation Details, T2]** Expand T2 implementation details with a code skeleton:
+### 3. [Section 5] Add `--mode` flag to `cmdr jira factory`
 
-   ```
-   T2's `--pane` mode should follow this pattern from `runGitStatusPane`:
-   - Use `app.DB` for all database queries
-   - Ticker loop with 3-second interval
-   - `clearScreen()` before each render
-   - ANSI color output using the `evalTypeANSI` and `ansiPass/ansiFail/ansiPending` constants defined in the Color Scheme section
-   - The `--pane` mode is a completely separate code path from the TUI `EvalsPane` component; it does NOT import or call any `internal/tui` code
-   ```
+The factory command definition in Section 5 is missing `--mode`. Add:
 
-5. **[Section: Integration, line 327]** Add a note acknowledging the KDL vs TUI bottom-row asymmetry:
+```
+cmdr jira factory                          Start dark factory mode
+  --project <key>     (required)           Project scope for automation
+  --epic <key>                             Narrow to specific epic
+  --mode <mode>       (default: from config) Override execution mode
+  --max-concurrent <n>                     Override max concurrent tasks
+  --dry-run                                Show execution plan without running
+```
 
-   "Note: The 4th bottom pane differs between modes -- KDL uses LazyGit (interactive git TUI) while TUI uses Git Status (read-only git summary). This asymmetry is inherited from the existing architecture. The new Evals pane is the 5th pane in both modes."
+### 4. [Section 7] Track `time.AfterFunc` timer in RateLimiter
 
-6. **[Section: All]** Fix section numbering. Either number all sections 1-23, or remove the numbers from sections 15-19 and use titles only.
+Add a `retryTimer *time.Timer` field to the `RateLimiter` struct and cancel it before creating a new one:
 
-7. **[Section: Color Scheme]** Remove or soften the external hook file references. Change the provenance note from asserting the colors "match" specific hook files to simply defining the Dracula palette subset used:
+```go
+type RateLimiter struct {
+    limiter    *rate.Limiter
+    mu         sync.Mutex
+    baseRate   rate.Limit
+    reduced    bool
+    retryTimer *time.Timer  // ADD THIS
+}
 
-   Current: "Eval type colors are drawn from the existing hook dunst notification palette to ensure visual consistency..."
+func (r *RateLimiter) AdaptFromHeaders(remaining int, retryAfter time.Duration) {
+    r.mu.Lock()
+    defer r.mu.Unlock()
+    if retryAfter > 0 {
+        if r.retryTimer != nil {
+            r.retryTimer.Stop()  // ADD THIS
+        }
+        r.limiter.SetLimit(0)
+        r.retryTimer = time.AfterFunc(retryAfter, func() {  // CHANGED
+            r.mu.Lock()
+            r.limiter.SetLimit(r.baseRate)
+            r.mu.Unlock()
+        })
+        return
+    }
+    // ... rest unchanged
+}
+```
 
-   Correct: "Eval type colors use a Dracula palette subset. These colors are consistent with the project's notification system."
+Note: the callback also needs to acquire `r.mu` before modifying the limiter, since it runs in a separate goroutine.
 
-8. **[Section: Implementation Details, T5, line 610]** Add a note confirming `DashboardOpts` does not need modification:
+### 5. [Section 5, 9] Add `check-completion` to CLI commands
 
-   "The `DashboardOpts` struct already has a `DB db.DB` field (dashboard.go line 27), so no changes to the opts struct are needed. Pass `opts.DB` directly to `NewEvalsPane()`."
+Section 9 references `cmdr jira check-completion --session $SESSION_ID` in the SubagentStop hook, but this command is not listed in Section 5. Either:
+
+- Add it to Section 5 as an internal command:
+  ```
+  cmdr jira check-completion               Check if agent completed a Jira task (internal, called by hooks)
+    --session <id>                          Session ID to check
+  ```
+- Or note in Section 9 that this is implemented as a hidden subcommand (not shown in help output)
+
+### 6. [Section 15] Expand T2 and T6 read scopes
+
+**T2:** Add `internal/platform/db/migrations/sqlite/005_jira_cache.sql` to T2's read scope. The sync engine needs the exact table/column names to write correct SQL.
+
+**T6:** Add `internal/agents/types.go` to T6's read scope. The executor needs `SpawnRequest`, `SpawnResult`, `AgentSession`, and `SessionState` types.
+
+### 7. [Section 8] Clarify `task_groups` fallback ownership
+
+Add a sentence to Section 8 clarifying:
+
+"When no Jira instances are configured, `cmdr jira` delegates to the existing `cmdr group list` logic rather than duplicating the `task_groups` read path. This keeps a single code path for local task groups."
+
+Or alternatively: "The rewritten `jira.go` retains the existing `task_groups` query functions as a fallback code path, gated by `len(cfg.Jira.Instances) == 0`."
+
+### 8. [Section 19] Add dark factory help check to success criteria
+
+Add:
+```
+- [ ] `/home/n0ko/Programs/ai/computeCommander/cmdr jira factory --help` contains "project"
+```
+
+## Items That Are Fine (No Action Needed)
+
+- **T9 verify command** is now concrete and passes validation.
+- **Worktree base branch** correctly uses `main`.
+- **Section numbering** is consistent (1-19).
+- **Data models** are proper Go structs with correct tags.
+- **Pane healer** correctly uses `SendKeys` matching the existing `PaneManager` interface.
+- **Existing file acknowledgment** (Section 17 note about prior implementation pass) is present.
+- **Test coverage guidance** per test file is thorough.
