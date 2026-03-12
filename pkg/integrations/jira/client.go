@@ -170,21 +170,38 @@ func (c *Client) ListProjects(ctx context.Context) ([]APIProject, error) {
 	return result.Values, nil
 }
 
-// SearchIssues performs a JQL search and returns matching issues.
+// SearchIssues performs a JQL search using the /rest/api/3/search/jql endpoint (POST).
+// The legacy GET /rest/api/3/search endpoint was removed by Atlassian (HTTP 410).
 func (c *Client) SearchIssues(ctx context.Context, jql string, maxResults int) (*SearchResult, error) {
 	if maxResults <= 0 {
 		maxResults = 50
 	}
-	path := fmt.Sprintf("/rest/api/3/search?jql=%s&maxResults=%d",
-		strings.ReplaceAll(jql, " ", "%20"), maxResults)
 
-	resp, err := c.do(ctx, http.MethodGet, path, nil)
+	reqBody := struct {
+		JQL        string   `json:"jql"`
+		MaxResults int      `json:"maxResults"`
+		Fields     []string `json:"fields"`
+	}{
+		JQL:        jql,
+		MaxResults: maxResults,
+		Fields: []string{
+			"summary", "description", "status", "issuetype",
+			"priority", "assignee", "labels", "project",
+			"epic", "parent",
+		},
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("jira: marshal search request: %w", err)
+	}
+
+	resp, err := c.do(ctx, http.MethodPost, "/rest/api/3/search/jql", strings.NewReader(string(bodyBytes)))
 	if err != nil {
 		return nil, err
 	}
 	var result SearchResult
 	if err := decodeResponse(resp, &result); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("search issues: %w", err)
 	}
 	return &result, nil
 }

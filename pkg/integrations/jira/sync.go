@@ -77,6 +77,19 @@ func (s *SyncEngine) SyncProject(ctx context.Context, projectKey string) (*SyncR
 		return result, fmt.Errorf("search issues: %w", err)
 	}
 
+	// First pass: upsert epics so their IDs exist before non-epic issues reference them.
+	for _, apiIssue := range searchResult.Issues {
+		if apiIssue.Fields.IssueType.Name != "Epic" {
+			continue
+		}
+		if err := s.upsertEpic(ctx, apiIssue, proj.ID); err != nil {
+			result.Error = err.Error()
+			return result, fmt.Errorf("upsert epic %s: %w", apiIssue.Key, err)
+		}
+		result.EpicsSync++
+	}
+
+	// Second pass: upsert all issues.
 	for _, apiIssue := range searchResult.Issues {
 		if err := s.upsertIssue(ctx, apiIssue, proj.ID); err != nil {
 			result.Error = err.Error()
@@ -101,8 +114,23 @@ func (s *SyncEngine) SyncProject(ctx context.Context, projectKey string) (*SyncR
 	return result, nil
 }
 
+// upsertEpic inserts or updates an Epic-type issue into jira_epics.
+func (s *SyncEngine) upsertEpic(ctx context.Context, issue APIIssue, projectID string) error {
+	return s.db.Exec(ctx, `
+		INSERT INTO jira_epics (id, instance_name, project_id, key, summary, status, synced_at)
+		VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT(id) DO UPDATE SET
+			key = excluded.key,
+			summary = excluded.summary,
+			status = excluded.status,
+			synced_at = excluded.synced_at`,
+		issue.ID, s.instanceName, projectID, issue.Key,
+		issue.Fields.Summary, issue.Fields.Status.Name)
+}
+
 // upsertIssue inserts or updates a single issue in the cache.
 func (s *SyncEngine) upsertIssue(ctx context.Context, issue APIIssue, projectID string) error {
+	// Resolve epic_id only from IDs that exist in jira_epics to satisfy FK.
 	var epicID *string
 	if issue.Fields.Parent != nil && issue.Fields.Parent.Fields.IssueType.Name == "Epic" {
 		id := issue.Fields.Parent.ID
@@ -127,6 +155,16 @@ func (s *SyncEngine) upsertIssue(ctx context.Context, issue APIIssue, projectID 
 		INSERT INTO jira_issues (id, instance_name, project_id, epic_id, key, summary,
 			description, status, issue_type, priority, assignee, labels, synced_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+		ON CONFLICT(id) DO UPDATE SET
+			key = excluded.key,
+			summary = excluded.summary,
+			description = excluded.description,
+			status = excluded.status,
+			issue_type = excluded.issue_type,
+			priority = excluded.priority,
+			assignee = excluded.assignee,
+			labels = excluded.labels,
+			synced_at = excluded.synced_at
 		ON CONFLICT(instance_name, key) DO UPDATE SET
 			summary = excluded.summary,
 			description = excluded.description,
