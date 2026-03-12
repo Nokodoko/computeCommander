@@ -1,37 +1,63 @@
 layout {
     cwd "/home/n0ko/Programs/ai/computeCommander"
-    tab name="[CMDR] Dashboard" {
+    default_tab_template {
+        pane size=1 borderless=true {
+            plugin location="zellij:compact-bar"
+        }
+        children
+    }
+    tab name="[CMDR] Dashboard v0.2.0" {
+        pane size=1 borderless=true {
+            command "bash"
+            args "/home/n0ko/.computecommander/scripts/focus-watcher-wrapper.sh"
+        }
         pane split_direction="horizontal" {
             pane split_direction="vertical" size="67%" {
-                pane name="fp" size="10%" {
-                    command "fp"
-                    args "/home/n0ko/Programs/ai/computeCommander"
+                pane split_direction="horizontal" size="10%" {
+                    pane name="Prompt" size=1 borderless=true {
+                        command "cmdr"
+                        args "prompt" "--pane"
+                    }
+                    pane {
+                        command "bash"
+                        args "/home/n0ko/.computecommander/scripts/fp-wrapper.sh" "/home/n0ko/Programs/ai/computeCommander" "e33fa584"
+                    }
                 }
-                pane size="65%" focus=true {
-                    command "claude"
-                    args "--dangerously-skip-permissions" "--no-chrome" "--disallowedTools" "WebSearch" "WebFetch" "NotebookEdit"
+                pane size="67%" focus=true borderless=true {
+                    command "bash"
+                    args "/home/n0ko/.computecommander/scripts/cmdr-agent-wrapper.sh" "e33fa584"
                 }
-                pane name="Agents" size="25%" {
-                    command "/home/n0ko/Programs/ai/computeCommander/cmdr"
-                    args "status" "--pane"
+                pane split_direction="horizontal" size="23%" {
+                    pane name="Agents" size="65%" {
+                        command "cmdr"
+                        args "status" "--pane"
+                    }
+                    pane name="Jira" size="35%" {
+                        command "cmdr"
+                        args "jira" "--pane"
+                    }
                 }
             }
             pane split_direction="vertical" size="33%" {
-                pane name="Event Log" size="25%" {
-                    command "/home/n0ko/Programs/ai/computeCommander/cmdr"
+                pane name="Event Log" size="20%" {
+                    command "cmdr"
                     args "feed" "--pane"
                 }
-                pane name="Mail" size="25%" {
-                    command "/home/n0ko/Programs/ai/computeCommander/cmdr"
-                    args "mail" "list" "--pane"
+                pane name="Evals" size="20%" {
+                    command "cmdr"
+                    args "evals" "--pane"
                 }
-                pane name="Merge Queue" size="25%" {
-                    command "/home/n0ko/Programs/ai/computeCommander/cmdr"
+                pane name="Merge Queue" size="20%" {
+                    command "cmdr"
                     args "merge" "list" "--pane"
                 }
-                pane name="Git Status" size="25%" {
-                    command "/home/n0ko/Programs/ai/computeCommander/cmdr"
-                    args "git-status" "--pane"
+                pane name="OpenBrain" size="20%" {
+                    command "cmdr"
+                    args "openbrain" "--pane"
+                }
+                pane size="20%" {
+                    command "bash"
+                    args "/home/n0ko/.computecommander/scripts/lazygit-wrapper.sh" "/home/n0ko/Programs/ai/computeCommander" "e33fa584"
                 }
             }
         }
