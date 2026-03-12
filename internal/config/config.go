@@ -28,6 +28,46 @@ type Config struct {
 	Logging   LoggingConfig    `yaml:"logging"`
 	Runtimes  RuntimesConfig   `yaml:"runtimes"`
 	Agentic   AgenticConfig    `yaml:"agentic"`
+	Jira      JiraConfig       `yaml:"jira"`
+}
+
+// JiraConfig holds multi-instance Jira integration configuration.
+type JiraConfig struct {
+	Instances      []JiraInstance    `yaml:"instances"`
+	RateLimit      JiraRateLimitCfg  `yaml:"rate_limit"`
+	PromptTemplate string            `yaml:"prompt_template"`
+	DarkFactory    DarkFactoryConfig `yaml:"dark_factory"`
+}
+
+// JiraInstance represents a single Jira server connection.
+type JiraInstance struct {
+	Name           string   `yaml:"name"`
+	BaseURL        string   `yaml:"base_url"`
+	Auth           JiraAuth `yaml:"auth"`
+	DefaultProject string   `yaml:"default_project"`
+	SyncInterval   string   `yaml:"sync_interval"`
+}
+
+// JiraAuth configures authentication for a Jira instance.
+type JiraAuth struct {
+	Type     string `yaml:"type"`     // "pat", "oauth2", "basic"
+	Token    string `yaml:"token"`    // PAT or OAuth token (supports ${ENV_VAR})
+	Username string `yaml:"username"` // For basic auth
+	Password string `yaml:"password"` // For basic auth (supports ${ENV_VAR})
+}
+
+// JiraRateLimitCfg controls API request throttling.
+type JiraRateLimitCfg struct {
+	RequestsPerSecond int `yaml:"requests_per_second"`
+	Burst             int `yaml:"burst"`
+}
+
+// DarkFactoryConfig controls autonomous execution.
+type DarkFactoryConfig struct {
+	Enabled            bool   `yaml:"enabled"`
+	ExecutionMode      string `yaml:"execution_mode"` // "full_auto", "stepped", "scoped"
+	UATTimeout         string `yaml:"uat_timeout"`
+	MaxConcurrentTasks int    `yaml:"max_concurrent_tasks"`
 }
 
 // SystemConfig holds system-wide configuration for ccv2.
@@ -388,6 +428,20 @@ func DefaultConfig() *Config {
 				Enabled:        true,
 				BlueprintDir:   ".computecommander/blueprints",
 				DefaultTimeout: "30m",
+			},
+		},
+		Jira: JiraConfig{
+			Instances: []JiraInstance{},
+			RateLimit: JiraRateLimitCfg{
+				RequestsPerSecond: 10,
+				Burst:             20,
+			},
+			PromptTemplate: ".computecommander/templates/jira-prompt.tmpl",
+			DarkFactory: DarkFactoryConfig{
+				Enabled:            false,
+				ExecutionMode:      "stepped",
+				UATTimeout:         "15m",
+				MaxConcurrentTasks: 3,
 			},
 		},
 		Runtimes: RuntimesConfig{
