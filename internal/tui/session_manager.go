@@ -14,6 +14,7 @@ import (
 type DirectorySession struct {
 	ID             string     `json:"id"`
 	Directory      string     `json:"directory"`
+	Name           string     `json:"name,omitempty"`
 	DisplayName    string     `json:"displayName"`
 	ProjectID      string     `json:"projectId,omitempty"`
 	AgentSessionID string     `json:"agentSessionId,omitempty"`
@@ -88,14 +89,15 @@ func (sm *SessionManager) CreateSession(directory, runtime string) *DirectorySes
 	return sess
 }
 
-// SwitchSession changes the active session to the one at the given directory.
-// Returns the session, or nil if no session exists for that directory.
-func (sm *SessionManager) SwitchSession(directory string) *DirectorySession {
+// SwitchSession changes the active session to the one matching target.
+// Target is matched against directory path, session ID, or friendly name.
+// Returns the session, or nil if no match is found.
+func (sm *SessionManager) SwitchSession(target string) *DirectorySession {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	sess, ok := sm.sessions[directory]
-	if !ok {
+	sess := sm.findSession(target)
+	if sess == nil {
 		return nil
 	}
 
@@ -106,18 +108,61 @@ func (sm *SessionManager) SwitchSession(directory string) *DirectorySession {
 
 	sess.Active = true
 	sess.LastAccessedAt = time.Now()
-	sm.activeDir = directory
+	sm.activeDir = sess.Directory
 	return sess
 }
 
-// StopSession stops the session for the given directory.
-func (sm *SessionManager) StopSession(directory string) error {
+// findSession locates a session by directory path, ID, or friendly name.
+// Caller must hold mu (read or write).
+func (sm *SessionManager) findSession(target string) *DirectorySession {
+	// Direct directory-path lookup (most common).
+	if sess, ok := sm.sessions[target]; ok {
+		return sess
+	}
+	// Scan in-memory sessions for ID or Name match.
+	for _, sess := range sm.sessions {
+		if sess.ID == target || sess.Name == target {
+			return sess
+		}
+	}
+	// When DB-backed, query for a match by project id, path, or friendly_name.
+	if sm.db != nil {
+		ctx := context.Background()
+		row := sm.db.QueryRow(ctx,
+			`SELECT id, name, COALESCE(friendly_name, ''), path, registered_at, last_accessed_at
+			FROM projects
+			WHERE id = ? OR path = ? OR friendly_name = ?
+			LIMIT 1`,
+			target, target, target)
+		var projID, name, friendlyName, path, registeredAt, lastAccessedAt string
+		if err := row.Scan(&projID, &name, &friendlyName, &path, &registeredAt, &lastAccessedAt); err == nil {
+			regTime, _ := time.Parse(time.RFC3339, registeredAt)
+			accessTime, _ := time.Parse(time.RFC3339, lastAccessedAt)
+			sess := &DirectorySession{
+				ID:             projID,
+				Directory:      path,
+				DisplayName:    name,
+				Name:           friendlyName,
+				ProjectID:      projID,
+				LastAccessedAt: accessTime,
+				CreatedAt:      regTime,
+			}
+			// Cache in-memory so subsequent calls within the same lock can find it.
+			sm.sessions[path] = sess
+			return sess
+		}
+	}
+	return nil
+}
+
+// StopSession stops the session matching target (directory path, ID, or name).
+func (sm *SessionManager) StopSession(target string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	sess, ok := sm.sessions[directory]
-	if !ok {
-		return fmt.Errorf("no session for directory: %s", directory)
+	sess := sm.findSession(target)
+	if sess == nil {
+		return fmt.Errorf("no session found for %q", target)
 	}
 
 	now := time.Now()
@@ -125,7 +170,7 @@ func (sm *SessionManager) StopSession(directory string) error {
 	sess.StoppedAt = &now
 
 	// If this was the active session, clear the active directory.
-	if sm.activeDir == directory {
+	if sm.activeDir == sess.Directory {
 		sm.activeDir = ""
 	}
 
@@ -159,7 +204,7 @@ func (sm *SessionManager) listSessionsFromDB(includeStopped bool) []*DirectorySe
 	ctx := context.Background()
 
 	rows, err := sm.db.Query(ctx,
-		`SELECT p.id, p.name, p.path, p.active, p.registered_at, p.last_accessed_at,
+		`SELECT p.id, p.name, COALESCE(p.friendly_name, ''), p.path, p.active, p.registered_at, p.last_accessed_at,
 			(SELECT COUNT(*) FROM sessions s WHERE s.project_id = p.id AND s.state NOT IN ('completed', 'zombie')) AS active_agents
 		FROM projects p
 		ORDER BY p.last_accessed_at DESC`)
@@ -178,10 +223,10 @@ func (sm *SessionManager) listSessionsFromDB(includeStopped bool) []*DirectorySe
 
 	var result []*DirectorySession
 	for rows.Next() {
-		var projID, name, path, registeredAt, lastAccessedAt string
+		var projID, name, friendlyName, path, registeredAt, lastAccessedAt string
 		var active int
 		var activeAgents int
-		if err := rows.Scan(&projID, &name, &path, &active, &registeredAt, &lastAccessedAt, &activeAgents); err != nil {
+		if err := rows.Scan(&projID, &name, &friendlyName, &path, &active, &registeredAt, &lastAccessedAt, &activeAgents); err != nil {
 			continue
 		}
 
@@ -193,6 +238,7 @@ func (sm *SessionManager) listSessionsFromDB(includeStopped bool) []*DirectorySe
 			ID:             projID,
 			Directory:      path,
 			DisplayName:    name,
+			Name:           friendlyName,
 			ProjectID:      projID,
 			Runtime:        "",
 			Active:         activeAgents > 0,
@@ -220,6 +266,33 @@ func (sm *SessionManager) listSessionsFromDB(includeStopped bool) []*DirectorySe
 	}
 
 	return result
+}
+
+// RenameSession sets a friendly name on the session matching target.
+// Target is matched against directory path, session ID, or current friendly name.
+// When DB-backed, the name is persisted to the projects table.
+func (sm *SessionManager) RenameSession(target, name string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	sess := sm.findSession(target)
+	if sess == nil {
+		return fmt.Errorf("no session found for %q", target)
+	}
+
+	sess.Name = name
+
+	if sm.db != nil {
+		ctx := context.Background()
+		err := sm.db.Exec(ctx,
+			`UPDATE projects SET friendly_name = ? WHERE id = ? OR path = ?`,
+			name, sess.ID, sess.Directory)
+		if err != nil {
+			return fmt.Errorf("persist session name: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // GetSession returns the session for the given directory, or nil.
