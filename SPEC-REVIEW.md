@@ -1,56 +1,99 @@
-# Spec Review: ComputeCommander Evals Pane
+# Spec Review Report
 
-**Iteration:** 1/3
-**Date:** 2026-03-05
-**Verdict:** PASS WITH WARNINGS
+| Field | Value |
+|-------|-------|
+| Spec | `/home/n0ko/Programs/ai/computeCommander/SPEC.md` |
+| Reviewed | 2026-03-13T00:00:00Z |
+| Iteration | 2 of 3 |
+| Verdict | **PASS WITH WARNINGS** (0 critical, 5 warnings, 4 info) |
 
 ## Summary
 
-The spec is well-structured and provides substantial detail for implementing an Evals pane across both the KDL layout and BubbleTea TUI. Most sections are thorough, with complete SQL migrations, Go struct definitions, and CLI specifications. However, there are two critical issues (incorrect pattern claim leading agents to the wrong reference files, and missing test file updates that will cause T8 to fail) and several warnings around inconsistencies between the spec and the actual codebase that could lead to implementation errors.
+All 4 critical issues from iteration 1 have been addressed. The spec is now well-structured with a clear partials architecture (Design Principle #8), resolved open questions, consistent file counts, and no write conflicts. Five warnings remain around section numbering, Go version, dependency graph scheduling, verify command vacuity, and a minor clarity issue. None block swarm execution.
 
-## Dimension Scores
+## Dimension Results
 
-| Dimension | Rating | Critical | Warnings |
+| Dimension | Status | Findings | Critical |
 |-----------|--------|----------|----------|
-| Completeness | WARN | 1 | 2 |
-| Clarity | PASS | 0 | 2 |
-| Correctness | WARN | 1 | 3 |
-| Consistency | WARN | 0 | 3 |
-| SDLC | PASS | 0 | 1 |
-| Actionability | PASS | 0 | 1 |
+| completeness | PASS | 2 | 0 |
+| clarity | PASS | 1 | 0 |
+| correctness | PASS | 2 | 0 |
+| consistency | PASS | 2 | 0 |
+| sdlc | PASS | 1 | 0 |
+| actionability | PASS | 1 | 0 |
+| rebuild fidelity | N/A | 0 | 0 |
 
 ## Findings
 
-### Critical (must fix)
+---
 
-- [C1] **Incorrect pattern claim in Design Principles (Section: Design Principles, line 15).** The spec states: "The new Evals pane mirrors `MergeQueueView` / `MailSummary` in structure: a Go struct with `View()`, `Refresh()`, `SetSize()`." Neither `MergeQueueView` (`internal/tui/merge_view.go`) nor `MailSummary` (`internal/tui/mail_summary.go`) implements `SetSize()`. Verified by searching both files -- zero matches. The panes that DO have `SetSize()` are `EventsPane` (`internal/tui/events_pane.go`), `GitStatusPane` (`internal/tui/git_status.go`), `FilePicker`, and `AgentSession`. The EvalsPane must follow the `EventsPane`/`GitStatusPane` pattern (which includes `SetSize`, `width`, `height` fields). Furthermore, in `updatePaneSizes()` (`dashboard.go` line 427), `SetSize` is called for `eventsPane` and `gitStatus` but NOT for `mail` or `queue`. Task T3's read scope lists `internal/tui/merge_view.go` as the primary reference -- this will mislead the implementing agent. The correct primary references are `internal/tui/events_pane.go` and `internal/tui/git_status.go`.
+### Dimension 1: Completeness
 
-- [C2] **Missing test file in task write scopes (Section: Task Manifest, T4/T5).** `internal/tui/dashboard_test.go` contains `TestPaneNavigation` (line 171) which hardcodes `PaneGitStatus` as the last pane in wrap-around assertions (lines 190-200: `nextPane(PaneGitStatus)` expects `PaneFilePicker`, and `prevPane(PaneFilePicker)` expects `PaneGitStatus`). After adding `PaneEvals` to the end of the iota block and `paneOrder`, the wrap-around target changes from `PaneGitStatus` to `PaneEvals`, breaking this test. Neither T4 nor T5 includes `internal/tui/dashboard_test.go` in their write scope, and T8's verify command (`go test ./internal/tui/...`) will fail. Additionally, the Failure Modes section (line 531) references `TestPaneCycle` and `TestPaneMetaByID` -- `TestPaneCycle` does not exist; the actual test name is `TestPaneNavigation`.
+### COMP-001 [WARNING] — Section numbering inconsistency
+**Section:** All sections
+**Issue:** Sections use numbered `##` headers starting at `## 1. Why` through `## 13. Estimated Size`, then the Task Manifest at `## 14. Task Manifest`, but the 19-section template expects sections named by their canonical titles. The mapping works but is inconsistent: section 4 is titled `## 4. Data Model` (mapping to spec-template section 5), and `## 3. On-Disk Format` maps to spec-template section 4. The numbering in SPEC.md runs 1-18 for 19 conceptual sections because the Title (H1) serves as section 1.
+**Suggestion:** This is cosmetic and does not affect execution. If desired, renumber to align with the 19-section template where Title = section 1, Why = section 2, etc. No action required for swarm execution.
 
-### Warnings (should fix)
+### COMP-002 [INFO] — Extra sections provide useful supplementary context
+**Section:** Agent Assignments, Execution Order, Failure Modes, Open Questions, Datadog Integration Reference
+**Issue:** Five sections beyond the 19-section template exist. All add value: Agent Assignments cross-references task-to-agent mapping, Execution Order visualizes the dependency graph, Failure Modes documents error handling, Open Questions tracks non-blocking decisions, and Datadog Integration Reference provides domain context for workers implementing T7.
+**Suggestion:** None. These are beneficial supplementary sections.
 
-- [W1] **SQL parameter style not specified (Section: Implementation Details, T3).** The spec's `Refresh()` query uses no parameters, but `RunAll()` and the `--pane` mode (T2) will need parameterized queries for UPDATE and filtered SELECT. The codebase uses mixed conventions: `$1` positional params in newer code (`internal/agents/spawner.go`, `internal/tui/dashboard.go`, `internal/commands/status.go`) and `?` params in older code (`internal/mail/sql_store.go`, `internal/merge/queue.go`). The `internal/agents/agentic_instructions.md` explicitly says "SQL uses `$1` positional params (compatible with both postgres and sqlite)." The spec should state which convention to use to prevent the implementing agent from picking the wrong one.
+---
 
-- [W2] **KDL layout Sprintf argument mapping not provided (Section: Implementation Details, T6, lines 628-641).** `GenerateLayout()` (`internal/zellij/layout.go` line 101-146) uses a single large `fmt.Sprintf` with 16 positional arguments. Adding a 5th bottom-row pane requires inserting 2+ new format arguments (`cmdrBin` and `projectFlag`) at the correct position in the Sprintf call. The spec shows the KDL template snippet but does not provide the complete argument list or the positional index where new arguments should be inserted. Given this Sprintf has 16 args already, off-by-one errors are likely without an explicit argument map.
+### Dimension 2: Clarity
 
-- [W3] **`updatePaneSizes()` inconsistency not addressed (Section: Implementation Details, T5, line 613).** The spec says to add `d.evals.SetSize(bottomPaneW-2, bottomH-3)` in `updatePaneSizes()`. This is correct. However, the existing `mail` and `queue` components do NOT have SetSize called on them in `updatePaneSizes()` (they render without explicit sizing). The spec does not explain this asymmetry, which could confuse the implementer into thinking they need to add SetSize calls for mail/queue as well, or conversely, that EvalsPane doesn't need SetSize because other bottom panes don't have it.
+### CLAR-001 [WARNING] — Remaining open questions have "suggested defaults" but are not formally resolved
+**Section:** Open Questions
+**Issue:** Open Questions #2, #3, and #4 remain with "Suggested Default" entries. While each has a clear default, the questions are not formally marked as resolved. A worker implementing T5 (publisher) may wonder whether custom Jira fields should be supported. A worker implementing T3 (expander) may hesitate on whether template-default environments exist.
+**Suggestion:** Mark each remaining open question with a `[RESOLVED]` tag and move the suggested default into the main spec body as a definitive statement. For example, in section 10 (What It Does NOT Do), add: "Does not support custom Jira fields (Story Points, Sprint) in v1. All metadata uses labels." This removes all ambiguity for workers.
 
-- [W4] **T2 implementation details are sparse compared to T3 (Section: Implementation Details).** T2's `--pane` mode runs as a separate OS process (`cmdr evals --pane`) with its own ticker loop querying the database independently. The spec says "Follows the `GitStatusCmd` / `FeedCmd` pattern for `--pane` mode with a ticker loop" (line 169) but provides no code skeleton for T2, while T3 gets a full struct definition, method signatures, and column widths. The T2 implementer must: (a) understand that `--pane` mode is a completely separate code path from the TUI EvalsPane, (b) use `app.DB` for queries, (c) implement `clearScreen()` + render loop, (d) format output with ANSI colors matching the lipgloss styles. These are all inferrable from the referenced files but should be more explicit.
+---
 
-- [W5] **Bottom row pane count mismatch between KDL and TUI (Section: Integration, line 327).** In KDL mode, the 4th bottom pane is "LazyGit" (a bash wrapper). In TUI mode, the 4th bottom pane is "Git Status" (an in-process component). The spec adds "Evals" as the 5th pane in both modes, making KDL have 5 panes (Event Log, Mail, Merge Queue, LazyGit, Evals) and TUI have 5 panes (Events, Mail, Merge Queue, Git Status, Evals). This asymmetry is inherited from the existing codebase and is not a spec bug, but the spec does not acknowledge it. An implementer might be confused by the discrepancy.
+### Dimension 3: Correctness
 
-- [W6] **Section numbering is inconsistent.** The spec has 23 top-level `##` sections total but numbers only sections 15-19. Sections 1-14 are implied by ordering, and sections 20-23 (Agent Assignments, Execution Order, Failure Modes, Implementation Details) are unnumbered. This makes it difficult to reference specific sections by number.
+### CORR-001 [WARNING] — Go 1.25 is not yet released
+**Section:** Tech Stack (section 11)
+**Issue:** The spec states "Go 1.25" and `go.mod` confirms `go 1.25.0`. Go 1.25 is not yet released as of the current Go release cycle. The project is using a pre-release or tip version.
+**Suggestion:** This is a fact about the project, not a spec error. If the `go.mod` says `1.25.0`, the spec is consistent. No change needed, but workers should be aware they need a compatible Go toolchain.
 
-- [W7] **Color scheme references external hook files that are not in the repo.** The Color Scheme section references `~/.claude/hooks/intent/eval_loop.py:PREDICATE_NOTIFICATION_COLORS`, `intent-eval-posttool.py`, and `intent-build-verify.py` as the source of truth for color values. These files are user-specific and not part of the computeCommander repository. The hex color values are explicitly provided (so implementation doesn't depend on the files), but the provenance claim is unverifiable by another implementer.
+### CORR-002 [INFO] — All agents and dependencies are valid
+**Section:** Task Manifest, Dependency Graph
+**Issue:** All 13 tasks use valid agents (`unix-coder` for T1-T12, `code-review` for T13). The dependency graph is acyclic. File paths are syntactically valid. TypeScript interfaces use valid syntax with proper types and closed braces. CLI command syntax is consistent with Cobra conventions.
+**Suggestion:** None.
 
-- [W8] **`NewEvalsPane` needs DB handle from `NewDashboard` but spec doesn't show DashboardOpts change.** The spec's T5 instructions (line 610) say to add `evals: NewEvalsPane(opts.DB, theme),` in `NewDashboard()`. This works because `DashboardOpts` already has a `DB db.DB` field (dashboard.go line 27). However, the spec does not mention that `DashboardOpts` does NOT need modification, which is good -- but an explicit "DashboardOpts already has DB; no change needed" note would prevent unnecessary modifications.
+---
 
-### Notes (informational)
+### Dimension 4: Consistency
 
-- [N1] **Go 1.25 reference.** The Tech Stack section says "Go 1.25". As of March 2026, this is plausible if the project tracks the latest Go release. No action needed.
+### CONS-001 [WARNING] — T11 could run earlier than Phase 3
+**Section:** Dependency Graph, Execution Order
+**Issue:** The Dependency Graph places T11 (tests) in Phase 3 alongside T10 (CLI). However, T11 only depends on T2 and T3 — it does not need T4, T5, or T10. Since T2 and T3 complete in Phase 2, T11 could theoretically start as soon as Phase 2 completes, running in parallel with T10. The current Execution Order annotation `[parallel, needs T2+T3 only]` correctly notes this, but the phase grouping still places T11 in Phase 3.
+**Suggestion:** This is a scheduling optimization, not an error. The current phasing is conservative and correct. If maximum parallelism is desired, T11 could be moved to start as soon as T2+T3 complete (overlapping with Phase 2b/Phase 3). No change required for correctness.
 
-- [N2] **Migration 002 and 003 exist as untracked files.** Both `internal/platform/db/migrations/sqlite/002_system_wide.sql` and `003_agentic_foundation.sql` show as untracked (`??`) in git status. If these haven't been committed when an agent runs T1, migration 004 would numerically follow untracked files. This won't break the embed directive (`//go:embed migrations/sqlite/*.sql`) since it embeds all `.sql` files in the directory, but if 002/003 are not committed, the 004 migration could run on a database that lacks the 002/003 tables. This is a project state issue, not a spec issue.
+### CONS-002 [INFO] — Estimated Size matches Target State
+**Section:** Estimated Size, Target State
+**Issue:** Estimated Size reports 19 files / ~2,450 LOC. Target State lists 18 created files + 1 modified file = 19 total files. The LOC breakdown (920 + 200 + 250 + 400 + 150 + 80 + 400 + 50 = 2,450) matches the total. File counts per area are consistent with Target State file listings.
+**Suggestion:** None. Counts are reconciled.
 
-- [N3] **No new Go dependencies confirmed.** All required packages (`os/exec`, `database/sql`, `crypto/rand`, `charmbracelet/lipgloss`, etc.) are already imported elsewhere in the project.
+---
 
-- [N4] **The `_migrations` table's `applied_at` default uses `datetime('now')` (SQLite syntax).** This is fine for SQLite but would break on PostgreSQL if the same DDL were used. The `Migrate()` function uses the same DDL for both drivers (line 37-40 of migrate.go). However, since the migrations tracking table already exists on any initialized database, this is not a concern for the new 004 migration.
+### Dimension 5: SDLC Alignment
+
+### SDLC-001 [INFO] — Success Criteria map cleanly to predicate types
+**Section:** Success Criteria (section 18)
+**Issue:** All 20 success criteria map to valid predicate types: `test -f` = `structural_check`, `go build` = `ast_check`, `go test` = `semantic_check`, `grep -q` = `contains_pattern`, `! grep` = `negation_check`. The spec includes both structural checks (file existence), behavioral checks (build, test, vet), content checks (grep for expected strings), and negation checks (no unresolved placeholders). This is a well-rounded verification suite.
+**Suggestion:** None. Objectives files are empty placeholders, so no alignment scoring is possible.
+
+---
+
+### Dimension 6: Actionability
+
+### ACTN-001 [WARNING] — T4 verify command has no behavioral validation
+**Section:** Task Manifest (T4)
+**Issue:** T4's verify command is `go build ./internal/jiraboard/...`. This verifies compilation but not that the renderer correctly produces output from templates. T11 creates tests, but T11 does not depend on T4 — it depends on T2 and T3. The renderer tests (if any) would be in T11's scope but T4's renderer code may not be tested until T11 runs. The verify command is not wrong (compilation is valid), but it provides no functional validation specific to T4's output.
+**Suggestion:** This is acceptable given that T11's tests and T13's code review cover functional validation. For stronger per-task verification, T4 could add a simple `go test` invocation, but this would require test files that do not yet exist at T4 execution time. No change required.
+
+---
+
+## End of Review

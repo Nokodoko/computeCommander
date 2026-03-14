@@ -156,7 +156,10 @@ func (h *PaneHealer) checkPane(pane *zellij.Pane) {
 	}
 }
 
-// healPane attempts to restart a frozen or stale pane.
+// healPane attempts to restart a frozen or stale pane in-place using SendKeys.
+// This sends Ctrl-C to kill the existing process, then re-types the original
+// command and presses Enter. This preserves the pane's position in the KDL
+// layout, unlike the old ClosePane+CreatePane approach which broke layouts.
 func (h *PaneHealer) healPane(pane *zellij.Pane, snap *paneSnapshot) {
 	if snap.Restarts >= h.maxRestarts {
 		log.Printf("pane-healer: pane %q exceeded max restarts (%d), marking abandoned",
@@ -174,43 +177,36 @@ func (h *PaneHealer) healPane(pane *zellij.Pane, snap *paneSnapshot) {
 		backoff = 60 * time.Second
 	}
 
-	log.Printf("pane-healer: restarting pane %q (attempt %d/%d, backoff %s)",
+	log.Printf("pane-healer: restarting pane %q in-place (attempt %d/%d, backoff %s)",
 		pane.Name, snap.Restarts, h.maxRestarts, backoff)
 
-	// Close the old pane.
-	if err := h.panes.ClosePane(pane.ID); err != nil {
-		log.Printf("pane-healer: close error for %s: %v", pane.Name, err)
+	// Send Ctrl-C to kill the existing process.
+	if err := h.panes.SendKeys(pane.ID, "\x03"); err != nil {
+		log.Printf("pane-healer: send ctrl-c error for %s: %v", pane.Name, err)
 	}
 
 	// Wait for backoff.
 	time.Sleep(backoff)
 
-	// Recreate the pane with its original command.
+	// Re-type the original command in the existing pane shell.
 	cmd := snap.Command
 	if cmd == "" {
 		cmd = pane.Command
 	}
 
-	var cmdParts []string
 	if cmd != "" {
-		cmdParts = splitCommand(cmd)
+		if err := h.panes.SendKeys(pane.ID, cmd+"\n"); err != nil {
+			log.Printf("pane-healer: send command error for %s: %v", pane.Name, err)
+			return
+		}
 	}
 
-	_, err := h.panes.CreatePane(zellij.CreatePaneOpts{
-		Name:    pane.Name,
-		Command: cmdParts,
-	})
-	if err != nil {
-		log.Printf("pane-healer: recreate error for %s: %v", pane.Name, err)
-		return
-	}
-
-	// Reset state for the new pane.
+	// Reset state for the restarted process.
 	snap.ContentHash = ""
 	snap.LastChange = time.Now()
 	snap.Status = PaneHealthy
 
-	log.Printf("pane-healer: pane %q restarted successfully", pane.Name)
+	log.Printf("pane-healer: pane %q restarted in-place successfully", pane.Name)
 }
 
 // GetStatus returns the health status of all tracked panes.

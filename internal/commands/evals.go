@@ -507,14 +507,31 @@ func runEvalsPane(cmd *cobra.Command, app *App) error {
 		}
 		defer rows.Close()
 
+		// Determine how many eval rows fit in the pane.
+		// Reserve 2 lines for header ("Evals" + blank) and 2 for footer (blank + keyhints).
+		maxRows := 15 // conservative default
+		if th := terminalHeight(); th > 0 {
+			maxRows = th - 4
+			if maxRows < 1 {
+				maxRows = 1
+			}
+		}
+
 		fmt.Printf("\033[1mEvals\033[0m\n\n")
 
 		count := 0
+		total := 0
 		for rows.Next() {
 			var id, project, task, evalType string
 			var passed *bool
 			var errorDetail, lastRunAt *string
 			if err := rows.Scan(&id, &project, &task, &evalType, &passed, &errorDetail, &lastRunAt); err != nil {
+				continue
+			}
+			total++
+
+			// Only print rows that fit in the visible pane area.
+			if count >= maxRows {
 				continue
 			}
 			count++
@@ -533,11 +550,17 @@ func runEvalsPane(cmd *cobra.Command, app *App) error {
 			typeColor := evalTypeANSI[evalType]
 			typeName := typeColor + evalType + ansiReset
 
+			_ = project // consumed by scan but not displayed in compact view
 			fmt.Printf("  %s %-12s %s %s\n", status, typeName, truncate(id, 14), truncate(task, 30))
 		}
 
-		if count == 0 {
+		if total == 0 {
 			fmt.Println("  No evals registered.")
+		}
+
+		// Show overflow indicator if there are more evals than fit.
+		if total > count {
+			fmt.Printf("  %s... +%d more%s\n", evalAnsiPending, total-count, ansiReset)
 		}
 
 		fmt.Printf("\n\033[2m[r] Run All  [a] Add\033[0m\n")

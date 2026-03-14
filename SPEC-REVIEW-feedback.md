@@ -1,72 +1,17 @@
-# Spec Review Feedback (Iteration 1)
+# Spec Review Feedback — Iteration 2
 
-## Critical Fixes Required
+All 4 critical issues from iteration 1 have been resolved. No critical fixes remain. The spec is ready for swarm execution.
 
-1. **[Section: Design Principles, line 15]** Fix incorrect pattern reference. The spec claims EvalsPane mirrors `MergeQueueView` / `MailSummary` but neither has `SetSize()`. The correct pattern references are `EventsPane` and `GitStatusPane`.
+## Critical Fixes (must address)
 
-   Current: "The new Evals pane mirrors `MergeQueueView` / `MailSummary` in structure: a Go struct with `View()`, `Refresh()`, `SetSize()`, registered in `Dashboard`, wired via `NewDashboard()`, rendered in `View()`."
+None.
 
-   Correct: "The new Evals pane mirrors `EventsPane` / `GitStatusPane` in structure: a Go struct with `View()`, `Refresh()`, `SetSize(w, h int)`, registered in `Dashboard`, wired via `NewDashboard()`, rendered in `View()`. It is queried from the database like `MergeQueueView.Refresh()`, but sized explicitly like `EventsPane.SetSize()`."
+## Warnings (should address)
 
-   Also update Task T3's read scope:
+1. **Formally resolve remaining open questions.** Open Questions #2, #3, #4 still have "Suggested Default" status. Mark them `[RESOLVED]` and integrate the decisions into the relevant spec sections (e.g., add "No custom Jira fields in v1" to section 10 "What It Does NOT Do"). This eliminates any worker hesitation.
 
-   Current: `internal/tui/merge_view.go`, `internal/tui/events_pane.go`, `internal/tui/theme.go`, `internal/platform/db/db.go`
+2. **T4 verify command lacks functional validation.** T4 (renderer) verifies only via `go build`. Consider noting in the Task Manifest that functional validation of the renderer is deferred to T11 (tests) and T13 (code review). Alternatively, no change is needed — the current verify command is valid, just minimal.
 
-   Correct: `internal/tui/events_pane.go`, `internal/tui/git_status.go`, `internal/tui/merge_view.go`, `internal/tui/theme.go`, `internal/platform/db/db.go`
+3. **Section numbering is cosmetic only.** The H1 title serves as section 1, making the numbered `##` headers offset by 1 from the 19-section template. This does not affect execution but may confuse automated section validators.
 
-   (Move `events_pane.go` and add `git_status.go` as the primary structural references; keep `merge_view.go` for the DB query pattern only.)
-
-2. **[Section: Task Manifest, T4]** Add `internal/tui/dashboard_test.go` to T4's write scope and update the task description to include fixing `TestPaneNavigation` wrap-around assertions.
-
-   Current T4 write scope: `internal/tui/pane.go`, `internal/tui/render.go`
-
-   Correct T4 write scope: `internal/tui/pane.go`, `internal/tui/render.go`, `internal/tui/dashboard_test.go`
-
-   Add to T4 description: "Update `TestPaneNavigation` in `dashboard_test.go` to expect `PaneEvals` (not `PaneGitStatus`) as the last pane in wrap-around assertions."
-
-   Also in the Failure Modes section (line 531), fix the test name reference:
-
-   Current: "Tests in `dashboard_test.go` (`TestPaneCycle`, `TestPaneMetaByID`) fail"
-
-   Correct: "Tests in `dashboard_test.go` (`TestPaneNavigation`, `TestPaneMetaByID`) fail"
-
-## Warnings to Address
-
-1. **[Section: Implementation Details, T2/T3]** Add a note specifying SQL parameter convention. Add after the `Refresh()` query specification:
-
-   "All SQL queries in both `evals.go` (CLI) and `evals_pane.go` (TUI) must use `$1` positional parameter style, matching the project convention established in `internal/agents/spawner.go` and `internal/agents/agentic_instructions.md`."
-
-2. **[Section: Implementation Details, T6, lines 628-641]** Add an explicit Sprintf argument position guide for the new pane. After the KDL template snippet, add:
-
-   "In the `GenerateLayout()` Sprintf call, the new Evals pane requires two additional arguments after the existing lazygit arguments: `cmdrBin` (for the command path) and `projectFlag` (for the optional `--project` flag). The full argument list for the Sprintf becomes: `projectDir, tabName, tabHash, projectDir, fpWrapperPath, projectDir, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, lazygitWrapperPath, projectDir, cmdrBin, projectFlag` (last two are new)."
-
-3. **[Section: Implementation Details, T5]** Add a note explaining the `updatePaneSizes()` asymmetry. After the `d.evals.SetSize(bottomPaneW-2, bottomH-3)` instruction, add:
-
-   "Note: `MailSummary` and `MergeQueueView` do not have `SetSize()` methods and are not sized in `updatePaneSizes()`. They render without explicit dimensions, relying on `RenderPane()` to constrain content. `EvalsPane`, like `EventsPane` and `GitStatusPane`, uses explicit sizing for scroll/cursor support."
-
-4. **[Section: Implementation Details, T2]** Expand T2 implementation details with a code skeleton:
-
-   ```
-   T2's `--pane` mode should follow this pattern from `runGitStatusPane`:
-   - Use `app.DB` for all database queries
-   - Ticker loop with 3-second interval
-   - `clearScreen()` before each render
-   - ANSI color output using the `evalTypeANSI` and `ansiPass/ansiFail/ansiPending` constants defined in the Color Scheme section
-   - The `--pane` mode is a completely separate code path from the TUI `EvalsPane` component; it does NOT import or call any `internal/tui` code
-   ```
-
-5. **[Section: Integration, line 327]** Add a note acknowledging the KDL vs TUI bottom-row asymmetry:
-
-   "Note: The 4th bottom pane differs between modes -- KDL uses LazyGit (interactive git TUI) while TUI uses Git Status (read-only git summary). This asymmetry is inherited from the existing architecture. The new Evals pane is the 5th pane in both modes."
-
-6. **[Section: All]** Fix section numbering. Either number all sections 1-23, or remove the numbers from sections 15-19 and use titles only.
-
-7. **[Section: Color Scheme]** Remove or soften the external hook file references. Change the provenance note from asserting the colors "match" specific hook files to simply defining the Dracula palette subset used:
-
-   Current: "Eval type colors are drawn from the existing hook dunst notification palette to ensure visual consistency..."
-
-   Correct: "Eval type colors use a Dracula palette subset. These colors are consistent with the project's notification system."
-
-8. **[Section: Implementation Details, T5, line 610]** Add a note confirming `DashboardOpts` does not need modification:
-
-   "The `DashboardOpts` struct already has a `DB db.DB` field (dashboard.go line 27), so no changes to the opts struct are needed. Pass `opts.DB` directly to `NewEvalsPane()`."
+4. **T11 scheduling is conservative.** T11 could start as soon as T2+T3 complete, rather than waiting for all of Phase 2. The Execution Order annotation already notes this. Consider moving T11 to Phase 2b for maximum parallelism if execution speed matters.

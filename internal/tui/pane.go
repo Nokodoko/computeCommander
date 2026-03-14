@@ -19,6 +19,7 @@ const (
 	PaneMergeQueue
 	PaneGitStatus
 	PaneEvals
+	PaneJira
 )
 
 // PaneMeta holds display metadata for a pane.
@@ -40,6 +41,7 @@ func AllPanes() []PaneMeta {
 		{ID: PaneEvals, Title: "Evals", FocusKey: "6"},
 		{ID: PaneMergeQueue, Title: "Merge Queue", FocusKey: "7"},
 		{ID: PaneGitStatus, Title: "Git Status", FocusKey: "8"},
+		{ID: PaneJira, Title: "Jira", FocusKey: "9"},
 	}
 }
 
@@ -53,6 +55,7 @@ var paneOrder = []PaneID{
 	PaneEvals,
 	PaneMergeQueue,
 	PaneGitStatus,
+	PaneJira,
 }
 
 // nextPane returns the next pane in tab order.

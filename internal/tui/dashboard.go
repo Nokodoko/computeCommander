@@ -33,6 +33,7 @@ type DashboardOpts struct {
 	ProjectName        string // display name for the active project (title bar)
 	ProjectID          string // project ID for filtering
 	AgentColorResolver AgentColorResolver // resolves agent names to color hex strings
+	JiraLister         JiraLister // optional; nil disables the Jira pane
 }
 
 // Dashboard is the top-level TUI component implementing the redesigned layout:
@@ -64,6 +65,7 @@ type Dashboard struct {
 	queue        *MergeQueueView
 	gitStatus    *GitStatusPane
 	evals        *EvalsPane
+	jira         *JiraPane
 	costs        *CostTracker
 	palette      *CommandPalette
 
@@ -138,6 +140,7 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		queue:          NewMergeQueueView(opts.Queue, theme),
 		gitStatus:      NewGitStatusPane(theme),
 		evals:          NewEvalsPane(opts.DB, theme),
+		jira:           NewJiraPane(opts.JiraLister, theme),
 		costs:          NewCostTracker(theme),
 		palette:        NewCommandPalette(theme),
 		focusedPane:    PaneAgentSession,
@@ -300,6 +303,9 @@ func (d *Dashboard) Refresh() error {
 	if err := d.evals.Refresh(); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := d.jira.Refresh(ctx); err != nil {
+		errs = append(errs, err.Error())
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("refresh errors: %s", strings.Join(errs, "; "))
@@ -431,6 +437,8 @@ func (d *Dashboard) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		d.focusedPane = PaneMergeQueue
 	case "8":
 		d.focusedPane = PaneGitStatus
+	case "9":
+		d.focusedPane = PaneJira
 	default:
 		d.handleFocusedPaneKey(msg)
 	}
@@ -531,6 +539,19 @@ func (d *Dashboard) handleFocusedPaneKey(msg tea.KeyMsg) {
 		case "r":
 			_ = d.evals.RunAll()
 		}
+	case PaneJira:
+		switch key {
+		case "j", "down":
+			d.jira.CursorDown()
+		case "k", "up":
+			d.jira.CursorUp()
+		case "l", "enter", "right":
+			d.jira.Expand()
+		case "h", "left":
+			d.jira.Collapse()
+		case "?":
+			d.jira.ToggleHelp()
+		}
 	}
 }
 
@@ -630,7 +651,12 @@ func (d *Dashboard) forwardToPTY(msg tea.KeyMsg, writeFn func([]byte)) (tea.Mode
 }
 
 // View renders the full dashboard layout.
+// When PaneJira is focused it renders a full-screen Jira overlay instead of
+// the normal grid so the issue tree has maximum space.
 func (d *Dashboard) View() string {
+	if d.focusedPane == PaneJira {
+		return d.viewJira()
+	}
 	topH, bottomH, fpW, asW, agW, bottomPaneW := d.calculateLayout()
 
 	// --- Top Row ---
@@ -709,6 +735,39 @@ func (d *Dashboard) View() string {
 	}
 
 	return layout
+}
+
+// viewJira renders a full-screen Jira pane (active when key 9 is pressed).
+func (d *Dashboard) viewJira() string {
+	w := d.width
+	h := d.height
+	if w < 40 {
+		w = 80
+	}
+	if h < 10 {
+		h = 24
+	}
+
+	// Reserve 2 lines for status/help bars.
+	innerH := h - 2
+	d.jira.SetSize(w-2, innerH-3)
+
+	jiraMeta := paneMetaByID(PaneJira)
+	content := d.jira.View()
+	jiraPane := RenderPane(content, jiraMeta, true, w, innerH, d.theme)
+
+	statusBar := renderStatusBarWithProject(
+		d.projectName,
+		len(d.agents.Sessions()),
+		d.mail.UnreadCount(),
+		d.queue.PendingCount(),
+		d.costs.TotalCost(),
+		d.theme,
+	)
+
+	helpBar := d.theme.HelpBar.Render("9=jira  j/k:nav  l/h:expand  ?:help  Tab:back  q:quit")
+
+	return lipgloss.JoinVertical(lipgloss.Left, jiraPane, statusBar, helpBar)
 }
 
 // overlayPalette centers the command palette over the dashboard.

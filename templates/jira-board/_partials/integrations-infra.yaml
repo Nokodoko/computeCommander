@@ -1,0 +1,17 @@
+# OS + Infrastructure Dimension Catalog
+# Merged into org-generator.yaml dimensions.os
+
+dimensions:
+  os:
+    - id: "linux"
+      label: "Linux"
+      variants: ["ubuntu-22.04", "rhel-9", "amazon-linux-2023"]
+      agent_install: "DD_API_KEY=<key> DD_SITE=<site> bash -c \"$(curl -L https://install.datadoghq.com/scripts/install_script_agent7.sh)\""
+    - id: "windows"
+      label: "Windows"
+      variants: ["server-2022", "server-2019"]
+      agent_install: "Start-Process -Wait msiexec -ArgumentList '/qn /i datadog-agent-7-latest.amd64.msi APIKEY=<key> SITE=<site>'"
+    - id: "macos"
+      label: "macOS"
+      variants: ["14-sonoma"]
+      agent_install: "DD_API_KEY=<key> DD_SITE=<site> bash -c \"$(curl -L https://install.datadoghq.com/scripts/install_script_agent7.sh)\""

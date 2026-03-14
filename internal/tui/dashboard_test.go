@@ -187,8 +187,8 @@ func TestPaneNavigation(t *testing.T) {
 		t.Errorf("expected PaneAgentSession after Shift+Tab from Agents, got %d", current)
 	}
 
-	// Test wrap-around.
-	current = PaneGitStatus
+	// Test wrap-around (PaneJira is now the last pane in paneOrder).
+	current = PaneJira
 	current = nextPane(current)
 	if current != PaneFilePicker {
 		t.Errorf("expected wrap to FilePicker, got %d", current)
@@ -196,8 +196,8 @@ func TestPaneNavigation(t *testing.T) {
 
 	current = PaneFilePicker
 	current = prevPane(current)
-	if current != PaneGitStatus {
-		t.Errorf("expected wrap to GitStatus, got %d", current)
+	if current != PaneJira {
+		t.Errorf("expected wrap to Jira, got %d", current)
 	}
 }
 

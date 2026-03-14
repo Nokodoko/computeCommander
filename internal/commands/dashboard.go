@@ -56,11 +56,9 @@ Use --agent-cmd to override the default agent command in the center pane.`,
 				resolvedAgentCmd = tui.DefaultAgentCommand
 			}
 
-			// Resolve the cmdr binary path for dashboard sub-panes.
-			cmdrBin, err := os.Executable()
-			if err != nil || cmdrBin == "" {
-				cmdrBin = "cmdr"
-			}
+			// Use "cmdr" from PATH for dashboard sub-panes so the layout
+			// always references the installed binary, not the build artifact.
+			cmdrBin := "cmdr"
 
 			// Resolve project directory.
 			projectDir, err := os.Getwd()

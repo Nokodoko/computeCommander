@@ -1,0 +1,16 @@
+# Log Management Integration Catalog
+# Supplementary metadata for log-management track templates
+
+log_integrations:
+  - id: "journald"
+    label: "systemd Journal"
+    config_path: "/etc/datadog-agent/conf.d/journald.d/conf.yaml"
+    os_constraint: ["linux"]
+  - id: "windows-event-log"
+    label: "Windows Event Log"
+    config_path: "C:\\ProgramData\\Datadog\\conf.d\\win32_event_log.d\\conf.yaml"
+    os_constraint: ["windows"]
+  - id: "file-tailing"
+    label: "File Tailing"
+    config_path: "/etc/datadog-agent/conf.d/<integration>.d/conf.yaml"
+    os_constraint: ["linux", "macos"]

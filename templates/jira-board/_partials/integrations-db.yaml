@@ -1,0 +1,41 @@
+# Database Integration Dimension Catalog
+# Merged into org-generator.yaml dimensions.database during LoadTemplate()
+
+dimensions:
+  database:
+    - id: "postgres"
+      label: "PostgreSQL"
+      integration_path: "integrations-core/postgres"
+      conf_spec: "assets/configuration/spec.yaml"
+      required_params: ["host", "port", "username", "password", "dbname"]
+      optional_params: ["ssl", "reported_hostname", "dbm", "collect_activity_metrics"]
+    - id: "mysql"
+      label: "MySQL"
+      integration_path: "integrations-core/mysql"
+      conf_spec: "assets/configuration/spec.yaml"
+      required_params: ["host", "port", "username", "password"]
+      optional_params: ["ssl", "dbm", "reported_hostname"]
+    - id: "sqlserver"
+      label: "SQL Server"
+      integration_path: "integrations-core/sqlserver"
+      conf_spec: "assets/configuration/spec.yaml"
+      required_params: ["host", "username", "password"]
+      optional_params: ["database", "adoprovider"]
+    - id: "mongodb"
+      label: "MongoDB"
+      integration_path: "integrations-core/mongo"
+      conf_spec: "assets/configuration/spec.yaml"
+      required_params: ["hosts", "username", "password"]
+      optional_params: ["database", "replica_check", "ssl"]
+    - id: "redis"
+      label: "Redis"
+      integration_path: "integrations-core/redisdb"
+      conf_spec: "assets/configuration/spec.yaml"
+      required_params: ["host", "port"]
+      optional_params: ["password", "slowlog-max-len"]
+    - id: "elasticsearch"
+      label: "Elasticsearch"
+      integration_path: "integrations-core/elastic"
+      conf_spec: "assets/configuration/spec.yaml"
+      required_params: ["url"]
+      optional_params: ["username", "password", "ssl_verify", "cluster_stats"]

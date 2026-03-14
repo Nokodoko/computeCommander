@@ -1,0 +1,46 @@
+type: object
+required: [meta, dimensions, tracks, stories, columns, phases]
+properties:
+  meta:
+    type: object
+    required: [version, project_type, description]
+    properties:
+      version: { type: string, pattern: "^\\d+\\.\\d+\\.\\d+$" }
+      project_type: { type: string }
+      description: { type: string }
+      default_project_key: { type: string, pattern: "^[A-Z]{2,10}$" }
+      default_board_type: { type: string, enum: ["kanban", "scrum"] }
+  dimensions:
+    type: object
+    additionalProperties:
+      type: array
+      items:
+        type: object
+        required: [id, label]
+  tracks:
+    type: array
+    items:
+      type: object
+      required: [id, name, description, phase]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        phase: { type: string }
+        depends_on: { type: array, items: { type: string } }
+        applies_when: { type: object }
+  stories:
+    type: array
+    items:
+      type: object
+      required: [track, id, name]
+  columns:
+    type: array
+    items:
+      type: object
+      required: [name, status_category]
+  phases:
+    type: array
+    items:
+      type: object
+      required: [id, label, order]

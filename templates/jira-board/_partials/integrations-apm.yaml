@@ -1,0 +1,21 @@
+# App Architecture Dimension Catalog
+# Merged into org-generator.yaml dimensions.app_architecture
+
+dimensions:
+  app_architecture:
+    - id: "containerized"
+      label: "Containerized (Docker/K8s)"
+      agent_type: "datadog-agent (DaemonSet)"
+      autodiscovery: true
+    - id: "vm-based"
+      label: "VM-Based"
+      agent_type: "datadog-agent (host)"
+      autodiscovery: false
+    - id: "serverless"
+      label: "Serverless"
+      agent_type: "datadog-lambda-extension"
+      autodiscovery: false
+    - id: "hybrid"
+      label: "Hybrid"
+      agent_type: "mixed"
+      autodiscovery: true

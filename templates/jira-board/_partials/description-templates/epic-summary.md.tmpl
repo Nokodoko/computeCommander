@@ -1,0 +1,25 @@
+## {{ .TrackName }}
+
+{{ .Context }}
+
+## Phase
+
+**{{ .Phase }}**
+
+## Scope
+
+This epic covers all stories and tasks within the {{ .TrackName }} work track. Stories are organized by integration and expanded across target environments.
+
+## Dependencies
+
+{{ if .Integration.RequiredParams -}}
+This track depends on: {{ range .Integration.RequiredParams }}{{ . }}, {{ end }}
+{{ else -}}
+No external dependencies beyond prerequisite tracks.
+{{ end }}
+
+## Completion Criteria
+
+- [ ] All child stories completed
+- [ ] Track-level validation passed
+- [ ] Ready for monitors and dashboards phase

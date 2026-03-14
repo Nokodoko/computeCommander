@@ -1,0 +1,20 @@
+# {{ .Key }}: {{ .Summary }}
+
+{{ .Description }}
+
+## Acceptance Criteria
+
+{{ .AcceptanceCriteria }}
+
+## Outcomes
+
+{{ range .Outcomes -}}
+- {{ . }}
+{{ end }}
+
+## Constraints
+
+- Parent epic: {{ .EpicKey }}{{ if .EpicSummary }} ({{ .EpicSummary }}){{ end }}
+- Project: {{ .ProjectKey }}
+- Priority: {{ .Priority }}
+- Labels: {{ join .Labels ", " }}
