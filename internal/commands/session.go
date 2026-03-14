@@ -33,6 +33,7 @@ func SessionCmd(app *App) *cobra.Command {
 	cmd.AddCommand(SessionListCmd(app))
 	cmd.AddCommand(SessionSwitchCmd(app))
 	cmd.AddCommand(SessionStopCmd(app))
+	cmd.AddCommand(SessionRenameCmd(app))
 
 	return cmd
 }
@@ -82,14 +83,15 @@ func SessionListCmd(app *App) *cobra.Command {
 				return nil
 			}
 
-			fmt.Printf("%-12s %-30s %-10s %-8s\n", "ID", "DIRECTORY", "RUNTIME", "ACTIVE")
+			fmt.Printf("%-12s %-20s %-30s %-10s %-8s\n", "ID", "NAME", "DIRECTORY", "RUNTIME", "ACTIVE")
 			for _, s := range sessions {
 				active := "no"
 				if s.Active {
 					active = "yes"
 				}
-				fmt.Printf("%-12s %-30s %-10s %-8s\n",
+				fmt.Printf("%-12s %-20s %-30s %-10s %-8s\n",
 					truncate(s.ID, 12),
+					truncate(s.Name, 20),
 					truncate(s.Directory, 30),
 					truncate(s.Runtime, 10),
 					active,
@@ -159,6 +161,41 @@ func SessionSwitchCmd(app *App) *cobra.Command {
 
 	cmd.Flags().Bool("create", false, "Create a new session if none exists for this directory")
 	return cmd
+}
+
+// SessionRenameCmd returns the "session rename" command.
+func SessionRenameCmd(app *App) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rename <id|path|name> <new-name>",
+		Short: "Rename a directory session",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := args[0]
+			name := args[1]
+			jsonOut, _ := cmd.Root().Flags().GetBool("json")
+
+			if err := GetSessionManager(app).RenameSession(target, name); err != nil {
+				if jsonOut {
+					return json.NewEncoder(os.Stdout).Encode(map[string]any{
+						"success": false,
+						"command": "session rename",
+						"error":   err.Error(),
+					})
+				}
+				return err
+			}
+
+			if jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(map[string]any{
+					"success": true,
+					"command": "session rename",
+				})
+			}
+
+			fmt.Printf("Session %s renamed to %s\n", target, name)
+			return nil
+		},
+	}
 }
 
 // SessionStopCmd returns the "session stop" command.
