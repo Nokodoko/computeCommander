@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	version = "0.1.0"
+	version = "0.2.0"
 	commit  = "dev"
 )
 
@@ -306,6 +306,7 @@ conflict resolution.`,
 
 	// Dashboard pane commands.
 	addAppCmd(root, commands.JiraCmd(sharedApp))
+	addAppCmd(root, commands.JiraBoardCmd(sharedApp))
 	addAppCmd(root, commands.OpenBrainCmd(sharedApp))
 	addAppCmd(root, commands.PromptLineCmd(sharedApp))
 

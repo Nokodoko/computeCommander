@@ -44,6 +44,9 @@ type JiraIssue struct {
 	Labels             []string `json:"labels"`
 	AcceptanceCriteria string   `json:"acceptanceCriteria" db:"acceptance_criteria"`
 
+	// Hierarchy
+	ParentKey string `json:"parentKey" db:"parent_key"`
+
 	// Agent tracking
 	AgentType  string `json:"agentType"  db:"agent_type"`
 	AgentState string `json:"agentState" db:"agent_state"`
@@ -114,8 +117,9 @@ type APIProject struct {
 	ID          string `json:"id"`
 	Key         string `json:"key"`
 	Name        string `json:"name"`
-	Description string `json:"description"`
-	Lead        *APIUser `json:"lead"`
+	Description    string   `json:"description"`
+	ProjectTypeKey string   `json:"projectTypeKey"`
+	Lead           *APIUser `json:"lead"`
 }
 
 // APIEpicLink represents the epic field on a Jira issue.
@@ -155,6 +159,20 @@ type TransitionsResponse struct {
 // CommentBody represents a Jira comment payload.
 type CommentBody struct {
 	Body string `json:"body"`
+}
+
+// APIComment represents a Jira comment.
+type APIComment struct {
+	ID      string   `json:"id"`
+	Body    string   `json:"body"`
+	Author  *APIUser `json:"author"`
+	Created string   `json:"created"`
+}
+
+// CommentsResponse holds the response from the comments endpoint.
+type CommentsResponse struct {
+	Comments []APIComment `json:"comments"`
+	Total    int          `json:"total"`
 }
 
 // ProjectListResponse holds the response from the projects endpoint.

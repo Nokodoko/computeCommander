@@ -1,0 +1,49 @@
+## Context
+
+{{ .Context }}
+
+## Integration Reference
+
+- **Integration**: {{ .Integration.Label }}
+- **Repository**: `~/Programs/{{ .Integration.Path }}`
+- **Conf Spec**: `{{ .Integration.Path }}/{{ .Integration.ConfSpec }}`
+- **Environment**: {{ .Environment }}
+- **Cloud Provider**: {{ .CloudProvider.Label }}
+- **OS**: {{ .OS.Label }}
+- **Architecture**: {{ .AppArchitecture.Label }}
+
+## Required Parameters
+
+{{ range .Integration.RequiredParams -}}
+- `{{ . }}`: {{ index $.ParamDescriptions . }}
+{{ end }}
+
+## Optional Parameters
+
+{{ range .Integration.OptionalParams -}}
+- `{{ . }}`: {{ index $.ParamDescriptions . }}
+{{ end }}
+
+## Acceptance Criteria
+
+- [ ] conf.yaml written to `/etc/datadog-agent/conf.d/{{ .Integration.ID }}.d/conf.yaml`
+- [ ] `datadog-agent check {{ .Integration.ID }}` exits 0
+- [ ] Metrics visible in Datadog UI within 5 minutes
+- [ ] No errors in `/var/log/datadog/agent.log` related to {{ .Integration.Label }}
+{{ if .Integration.DBM -}}
+- [ ] DBM query samples visible in Datadog UI
+{{ end }}
+
+## Spec Hints
+
+Use these references when generating a spec via `/spec`:
+
+- **conf.yaml spec**: Read `~/Programs/{{ .Integration.Path }}/{{ .Integration.ConfSpec }}` for all parameter definitions
+- **Check source**: `~/Programs/{{ .Integration.Path }}/datadog_checks/{{ .Integration.CheckDir }}/`
+- **Example conf**: `~/Programs/{{ .Integration.Path }}/datadog_checks/{{ .Integration.CheckDir }}/data/conf.yaml.example`
+- **Agent install command**: `{{ .OS.AgentInstall }}`
+
+## Labels
+
+{{ range .Labels -}}
+`{{ . }}` {{ end }}

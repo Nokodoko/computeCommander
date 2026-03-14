@@ -1,617 +1,1338 @@
-# ComputeCommander Dashboard Enhancement Suite
+# Jira Board Generator — Datadog Onboarding Template System
 
-Five feature additions to the cmdr KDL dashboard layout and supporting infrastructure: Jira task pane, OpenBrain memory pane, self-healing for frozen/stale panes, prompt-line tool suite replacing the fp pane header area, and a `--cmdr` flag for the external `claude-sessions` Python script.
+Machine-readable YAML template engine for generating Jira boards that onboard corporate clients into Datadog. Produces agent-ready tickets with descriptions rich enough for one-shot `/spec --review --loop` execution. Go CLI integration via `cmdr jira-board`, YAML template storage, six-sigma parallelizable work tracks.
 
-Spec type: **Feature**
+## 1. Why
 
-## Why
+Manual Jira board creation for Datadog client onboarding is slow, inconsistent, and produces tickets that lack the context agents need for one-shot execution:
 
-The cmdr dashboard currently provides real-time visibility into agent sessions, mail, merge queue, event logs, and git status. But several pain points remain:
+- **No permutation handling.** Each client has a unique stack (cloud provider, OS, databases, app frameworks, storage systems). Manually creating tickets for every combination means missed integrations, duplicated effort, and inconsistent coverage. A single client onboarding with 15 integrations across 3 environments generates ~200 tickets — doing this by hand takes hours and guarantees drift.
+- **Tickets lack agent context.** Current Jira tickets contain one-line summaries like "Set up PostgreSQL monitoring." An agent receiving this cannot generate a spec without extensive exploration. Tickets must contain: conf.yaml reference paths, required parameters, environment-specific configuration, acceptance criteria, and links to the `integrations-core`/`integrations-extras` repos.
+- **No pipeline integration.** The `/sr` pipeline (`/spec --review --loop`) needs tickets with structured descriptions that map directly to spec sections. Current tickets require human interpretation before an agent can act on them.
+- **Inconsistent work decomposition.** Without a template, epics/stories/tasks are structured differently per engagement. Six-sigma principles demand parallelizable, predictable, isolated work tracks — the template enforces this structure.
 
-- **No task visibility.** Agents work on tasks, but there is no dashboard pane showing task state. Users must Alt-Tab to Jira/Linear or run ad-hoc CLI commands. A Jira pane positioned between Agents and Lazygit gives immediate task context.
-- **Memory is opaque.** Claude's MEMORY.md and per-project memory writes happen silently. The user has no way to see what memories are being stored/updated during a session without manually reading files.
-- **Frozen panes require manual intervention.** Pane commands (`cmdr status --pane`, `cmdr feed --pane`, etc.) can hang, crash, or go stale. The user must manually restart them via zellij. A self-healing watchdog should detect and restart frozen panes automatically.
-- **No prompt-line tools.** The area above the fp pane is dead space where accidental typing occurs. This should be a prompt-line with a session picker, current session indicator, and quick-action tools.
-- **claude-sessions is disconnected from cmdr.** The external Python script (`~/programming/python_projects/claude_sessions.py`) can pick and resume Claude sessions, but cannot spawn a cmdr dashboard in the target project directory. Adding a `--cmdr` flag bridges this gap.
+The `/jira-board` command generates ~50-200 tickets from a single YAML template, with every ticket containing enough context for autonomous agent execution.
 
-These five features address ~80% of remaining dashboard friction. Each is independently implementable and testable.
+## 2. Design Principles
 
-## Design Principles
+1. **Template-driven, not code-driven.** All board structure lives in YAML templates. Adding a new integration or workflow phase means editing YAML, not Go code. The engine is generic; the templates are specific.
+2. **Permutation-aware.** Templates define a matrix of dimensions (cloud provider, OS, database, app architecture, storage). The engine expands the matrix into concrete tickets, pruning irrelevant combinations. A PostgreSQL ticket for AWS Linux differs from one for Azure Windows — the template captures both.
+3. **Agent-ready descriptions.** Every generated ticket description contains: (a) a one-paragraph context statement, (b) the conf.yaml reference path in `integrations-core` or `integrations-extras`, (c) required and optional parameters with types, (d) environment-specific notes, (e) acceptance criteria as a checkbox list, and (f) a `## Spec Hints` section with file paths and data model references for the `/spec` builder.
+4. **Six-sigma work tracks.** Tickets are organized into parallelizable tracks (epics) with explicit dependencies. No ticket in track A depends on a ticket in track B unless the dependency is declared in the template. This enables `/loop` fan-out execution.
+5. **Intake-pruned.** The `/org-generator` pipeline passes an intake file that prunes the template to only the integrations, environments, and phases relevant to the specific client. The full template covers all integrations cataloged in `_partials/`; a typical client uses 10-20.
+6. **Idempotent generation.** Running `/jira-board` twice with the same intake produces the same board. Existing tickets are matched by a deterministic key (`{project}-{epic}-{integration}-{environment}`) and updated rather than duplicated.
+7. **Hierarchical: Epic > Story > Task.** Epics represent work tracks (e.g., "Database Monitoring", "APM Instrumentation"). Stories represent integrations within a track (e.g., "PostgreSQL Monitoring"). Tasks represent environment-specific work items (e.g., "PostgreSQL conf.yaml for prod-us-east-1").
+8. **Partials are the single source of truth for dimension data.** The `org-generator.yaml` template file is a slim orchestration file that defines tracks, stories, phases, and columns. It does NOT inline dimension catalog data. All dimension values (database definitions, cloud provider details, OS variants, etc.) live exclusively in `_partials/*.yaml` files. During `LoadTemplate()`, the engine auto-discovers all `*.yaml` files in the `_partials/` directory and merges their `dimensions:` maps into the loaded template. This eliminates data duplication and makes partials independently maintainable. *(Resolves former Open Question #1.)*
 
-1. **Pane commands are self-contained.** Each new pane runs a `cmdr <subcmd> --pane` command that loops, refreshes, and handles its own lifecycle. No inter-pane IPC beyond the existing per-tab CWD file mechanism.
-2. **KDL layout is the single source of truth.** All pane positions, sizes, and commands are defined in the generated KDL layout via `GenerateLayout()` in `internal/zellij/layout.go`. No pane is added dynamically at runtime.
-3. **Self-healing is opt-out, not opt-in.** The pane health checker runs by default inside the dashboard's focus-watcher-wrapper or as a sibling borderless pane. It detects frozen panes and restarts them without user interaction.
-4. **Wrapper script pattern.** New panes that need session-switch tracking follow the existing wrapper pattern (fp-wrapper.sh, lazygit-wrapper.sh) with inotifywait watching the per-tab CWD file.
-5. **Worktree isolation for development.** Each feature task executes in its own git worktree to enable parallel development without merge conflicts.
-
-## On-Disk Format
+## 3. On-Disk Format
 
 ```
 computeCommander/
+  templates/
+    jira-board/
+      schema.yaml                    # JSON Schema for template validation
+      org-generator.yaml             # Slim orchestration template (no inline dimensions)
+      _partials/
+        integrations-db.yaml         # Database integration dimension catalog
+        integrations-apm.yaml        # APM integration dimension catalog
+        integrations-infra.yaml      # Infrastructure integration dimension catalog
+        integrations-log.yaml        # Log management dimension catalog
+        integrations-cloud.yaml      # Cloud provider dimension catalog
+        description-templates/
+          integration-task.md.tmpl   # Go text/template for task descriptions
+          integration-story.md.tmpl  # Go text/template for story descriptions
+          epic-summary.md.tmpl       # Go text/template for epic descriptions
   internal/
-    zellij/
-      layout.go                    # KDL layout generation (MODIFIED)
     commands/
-      jira.go                      # Jira pane --pane command (NEW)
-      openbrain.go                 # OpenBrain memory pane --pane command (NEW)
-      prompt_line.go               # Prompt-line tool suite (NEW)
-      session_picker.go            # Session picker (MODIFIED - awareness of prompt pane)
-      dashboard.go                 # Dashboard command (MODIFIED)
-    watchdog/
-      pane_healer.go               # Pane self-healing logic (NEW)
-      watchdog.go                  # Watchdog (MODIFIED -- integrate pane healing)
-      health.go                    # Health checks (MODIFIED -- add pane health check type)
-  ~/programming/python_projects/
-    claude_sessions.py             # Python session picker (MODIFIED)
+      jira_board.go                  # CLI command handler
+    jiraboard/
+      engine.go                      # Template engine: load, merge partials, validate
+      expander.go                    # Matrix expansion: dimensions -> tickets
+      renderer.go                    # Description renderer using text/template
+      publisher.go                   # Jira API publisher: create/update issues
+      types.go                       # Data types for templates and tickets
+      engine_test.go                 # Engine unit tests
+      expander_test.go               # Expander unit tests
+  .claude/
+    commands/
+      jira-board.md                  # Skill definition (updated)
 ```
 
-### jira.go
+### org-generator.yaml
 
-New Cobra command `cmdr jira --pane` that renders a task list in the dashboard pane. Reads tasks from the `task_groups` and `task_group_members` DB tables (already exist in the schema). Loops with a configurable refresh interval, prints ANSI-styled task list to stdout. In `--pane` mode, runs a ticker-based loop with terminal-height-aware truncation (same pattern as `status.go:printAgentsPane`).
+The primary template file. Defines the board structure (tracks, stories, phases, columns) but does NOT contain dimension catalog data. Dimension data is loaded from `_partials/*.yaml` files and merged by the engine at load time.
 
-```go
-// Representative structure
-func JiraCmd(app *App) *cobra.Command {
-    cmd := &cobra.Command{
-        Use:     "jira",
-        Short:   "Task group status for dashboard pane",
-        GroupID: "CORE",
-        RunE: func(cmd *cobra.Command, args []string) error {
-            pane, _ := cmd.Flags().GetBool("pane")
-            if pane {
-                return runJiraPane(cmd.Context(), app)
-            }
-            return printJiraSummary(cmd.Context(), app)
-        },
-    }
-    cmd.Flags().Bool("pane", false, "Dashboard pane mode (loop + ANSI)")
-    return cmd
-}
-```
-
-### openbrain.go
-
-New Cobra command `cmdr openbrain --pane` that watches MEMORY.md files for changes using fsnotify. Displays recently written/modified memory entries with timestamps. Monitors `~/.claude/MEMORY.md` (global) and project-local MEMORY.md (derived from per-tab CWD file). In `--pane` mode, streams updates as they happen with ANSI-styled output.
-
-```go
-// Watches these paths:
-// 1. ~/.claude/MEMORY.md (global Claude memory)
-// 2. <project>/.claude/MEMORY.md (project-local, follows CWD file)
-// 3. <project>/.claude/projects/*/MEMORY.md (per-project memories)
-func runOpenBrainPane(ctx context.Context, app *App) error {
-    // fsnotify watcher + polling fallback
-    // diff detection: compare file content hashes on change events
-    // render changed sections with timestamps
-}
-```
-
-### pane_healer.go
-
-Self-healing daemon that runs alongside the dashboard. Uses `zellij action list-clients` and pane content capture via `zellij action dump-screen` to detect frozen/stale panes:
-- **Frozen**: pane content unchanged for >30s when the pane command should be refreshing (e.g., `cmdr status --pane` refreshes every 3s)
-- **Stale**: pane process exited (PID dead) but pane still visible with old content
-- Recovery: `zellij action close-pane <id>` followed by recreating the pane with its original command
-
-```go
-type PaneHealer struct {
-    panes       PaneManager
-    interval    time.Duration
-    snapshots   map[string]paneSnapshot // paneName -> last known state
-    maxRestarts int                      // per-pane restart cap (default: 5)
-}
-
-type paneSnapshot struct {
-    contentHash string
-    lastChange  time.Time
-    restarts    int
-    command     string
-}
-```
-
-### prompt_line.go
-
-New Cobra command `cmdr prompt --pane` that renders a single-line prompt bar showing:
-- Current session name/ID (from the per-tab CWD file or agent wrapper state)
-- Project directory basename (from CWD file)
-- Visual indicators: active session count, memory writes pending
-- Key legend: `[Ctrl+Space S] Sessions  [Ctrl+Space ?] Help`
-
-Runs in a 1-row borderless pane at the top of the left column (above fp). This is an info-display pane, not an interactive input. Session switching remains via `Ctrl+Space > S` (existing keybind that launches `cmdr sessions` as a floating pane).
-
-## Data Model
-
-### JiraPaneState
-
-```typescript
-interface JiraPaneState {
-  // Display
-  tasks: TaskEntry[];           // current task list from DB
-  cursor: number;               // selected row index (for future keyboard nav)
-  lastRefresh: string;          // ISO 8601 timestamp of last DB read
-
-  // Config
-  refreshInterval: number;      // milliseconds between DB polls (default: 5000)
-  maxRows: number;              // terminal height - header/footer
-}
-```
-
-### TaskEntry
-
-```typescript
-interface TaskEntry {
-  id: string;                   // task_group ID from DB, e.g. "tg-a1b2c3d4"
-  name: string;                 // task group name, e.g. "Implement auth middleware"
-  status: string;               // "pending" | "active" | "completed" | "failed"
-  memberCount: number;          // number of agents assigned to this task group
-  activeMembers: number;        // agents currently in "working" state
-  createdAt: string;            // ISO 8601, e.g. "2026-03-11T14:30:00Z"
-}
-```
-
-### MemoryEntry
-
-```typescript
-interface MemoryEntry {
-  file: string;                 // path to MEMORY.md file
-  section: string;              // heading that changed (e.g., "## Architecture Decisions")
-  operation: "added" | "modified" | "deleted";
-  timestamp: string;            // ISO 8601 when change was detected
-  preview: string;              // first 80 chars of the changed content
-}
-```
-
-### PaneHealth
-
-```typescript
-interface PaneHealth {
-  paneName: string;             // "Agents", "Event Log", "Mail", "Evals", "Merge Queue"
-  paneId: string;               // zellij terminal pane ID (from list-clients output)
-  command: string;              // original command + args for restart
-  lastContentHash: string;      // SHA-256 of last captured pane content
-  lastChangeAt: string;         // ISO 8601 when content last changed
-  status: "healthy" | "frozen" | "stale" | "restarting";
-  restartCount: number;         // times this pane has been auto-restarted this session
-}
-```
-
-### Pane Health Lifecycle
-
-```
-healthy ──> frozen ──> restarting ──> healthy
-   |                       ^
-   +──> stale ─────────────+
-```
-
-Transitions:
-- `healthy -> frozen`: content hash unchanged for >30s on a pane with expected refresh
-- `healthy -> stale`: pane process PID no longer alive
-- `frozen -> restarting`: healer closes and recreates the pane
-- `stale -> restarting`: healer closes and recreates the pane
-- `restarting -> healthy`: new pane process started and producing output
-
-## CLI
-
-Binary name: `cmdr`
-
-### Jira Pane
-
-```
-cmdr jira                              List task groups with status summary
-  --pane                               Dashboard pane mode (loop + ANSI styling)
-  --project <id>                       Filter by project ID
-  --json                               JSON output
-
-cmdr jira show <id>                    Show task group detail with member agents
-  --json                               JSON output
-```
-
-### OpenBrain Pane
-
-```
-cmdr openbrain                         Show recent memory file changes
-  --pane                               Dashboard pane mode (watch + stream ANSI)
-  --project <dir>                      Override project directory for memory watch
-  --json                               JSON output
-```
-
-### Prompt Line
-
-```
-cmdr prompt                            Show current session info (one-shot)
-  --pane                               Dashboard pane mode (live-updating single line)
-```
-
-### Self-Healing (no user-facing CLI)
-
-Pane healing is triggered by the focus-watcher-wrapper or a dedicated healer borderless pane. No standalone CLI command. Configuration via existing `config.yaml`:
+The `dimensions:` section in this file declares which dimension keys are used by the template. The actual dimension values (with `id`, `label`, `integration_path`, `required_params`, etc.) are defined exclusively in the partial files.
 
 ```yaml
-watchdog:
-  pane_healer:
-    enabled: true
-    check_interval_ms: 10000     # check every 10s
-    frozen_threshold_ms: 30000   # 30s without content change = frozen
-    max_restarts: 5              # per-pane restart cap per dashboard session
+# Datadog Client Onboarding — Jira Board Template
+# Version: 1.0.0
+# Project Type: org-generator
+#
+# NOTE: This is a slim orchestration file.
+# Dimension catalog data lives in _partials/*.yaml and is merged at load time.
+# Do NOT add dimension values here — edit the corresponding partial file instead.
+
+meta:
+  version: "1.0.0"
+  project_type: "org-generator"
+  description: "Datadog onboarding board for corporate clients"
+  default_project_key: "DD"
+  default_board_type: "kanban"
+
+# Dimension keys used by this template.
+# Actual values are loaded from _partials/*.yaml during LoadTemplate().
+# This section declares the expected dimension names for schema validation.
+dimensions:
+  cloud_provider: []   # Populated from integrations-cloud.yaml
+  os: []               # Populated from integrations-infra.yaml
+  database: []         # Populated from integrations-db.yaml
+  app_architecture: [] # Populated from integrations-apm.yaml
+  storage: []          # Populated from integrations-cloud.yaml
+
+# Work tracks — epics that organize the board
+tracks:
+  - id: "agent-deploy"
+    name: "Agent Deployment"
+    description: "Install and configure the Datadog Agent across all target hosts"
+    phase: "foundation"
+    depends_on: []
+    applies_when:
+      any: true
+
+  - id: "infra-monitoring"
+    name: "Infrastructure Monitoring"
+    description: "Configure system-level checks: CPU, memory, disk, network, process"
+    phase: "foundation"
+    depends_on: ["agent-deploy"]
+    applies_when:
+      any: true
+
+  - id: "db-monitoring"
+    name: "Database Monitoring"
+    description: "Configure database integrations with DBM where supported"
+    phase: "integrations"
+    depends_on: ["agent-deploy"]
+    applies_when:
+      dimension: "database"
+      has_any: true
+
+  - id: "apm-instrumentation"
+    name: "APM Instrumentation"
+    description: "Instrument application code with Datadog tracing libraries"
+    phase: "integrations"
+    depends_on: ["agent-deploy"]
+    applies_when:
+      dimension: "app_architecture"
+      not_value: "serverless"
+
+  - id: "log-management"
+    name: "Log Management"
+    description: "Configure log collection, parsing pipelines, and log-to-metric rules"
+    phase: "integrations"
+    depends_on: ["agent-deploy"]
+    applies_when:
+      any: true
+
+  - id: "cloud-integrations"
+    name: "Cloud Provider Integrations"
+    description: "Configure cloud provider API integrations (AWS/Azure/GCP)"
+    phase: "integrations"
+    depends_on: []
+    applies_when:
+      dimension: "cloud_provider"
+      not_value: "on-prem"
+
+  - id: "monitors-dashboards"
+    name: "Monitors & Dashboards"
+    description: "Create monitors, dashboards, and SLOs for all configured integrations"
+    phase: "observability"
+    depends_on: ["infra-monitoring", "db-monitoring", "apm-instrumentation", "log-management"]
+    applies_when:
+      any: true
+
+  - id: "validation"
+    name: "Validation & Handoff"
+    description: "Validate all integrations report data, run smoke tests, handoff to client"
+    phase: "finalization"
+    depends_on: ["monitors-dashboards", "cloud-integrations"]
+    applies_when:
+      any: true
+
+# Story templates within each track
+stories:
+  - track: "agent-deploy"
+    id: "agent-install-{os}-{cloud_provider}"
+    name: "Install Datadog Agent on {os.label} ({cloud_provider.label})"
+    expand_dimensions: ["os", "cloud_provider"]
+    exclude_when:
+      - os: "macos"
+        cloud_provider: "on-prem"
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "agent-install-{os}-{cloud_provider}-{environment}"
+        name: "Agent install: {os.label} / {cloud_provider.label} / {environment}"
+        expand_dimensions: ["environment"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["agent-deploy", "{os.id}", "{cloud_provider.id}"]
+        priority: "High"
+
+  - track: "db-monitoring"
+    id: "db-{database}-setup"
+    name: "Configure {database.label} Monitoring"
+    expand_dimensions: ["database"]
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "db-{database}-conf-{environment}"
+        name: "{database.label} conf.yaml for {environment}"
+        expand_dimensions: ["environment"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["database", "{database.id}", "conf-yaml"]
+        priority: "High"
+      - id: "db-{database}-dbm-{environment}"
+        name: "{database.label} DBM setup for {environment}"
+        expand_dimensions: ["environment"]
+        applies_when:
+          database: ["postgres", "mysql", "sqlserver"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["database", "{database.id}", "dbm"]
+        priority: "Medium"
+
+  - track: "infra-monitoring"
+    id: "infra-system-checks"
+    name: "System-Level Checks (CPU, Memory, Disk, Network)"
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "infra-process-check-{os}"
+        name: "Process check conf.yaml for {os.label}"
+        expand_dimensions: ["os"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["infrastructure", "process-check", "{os.id}"]
+        priority: "Medium"
+      - id: "infra-network-check-{os}"
+        name: "Network check conf.yaml for {os.label}"
+        expand_dimensions: ["os"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["infrastructure", "network-check", "{os.id}"]
+        priority: "Medium"
+
+  - track: "apm-instrumentation"
+    id: "apm-{app_architecture}-setup"
+    name: "APM for {app_architecture.label} Applications"
+    expand_dimensions: ["app_architecture"]
+    exclude_when:
+      - app_architecture: "serverless"
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "apm-{app_architecture}-tracing-{environment}"
+        name: "Tracing library setup: {app_architecture.label} / {environment}"
+        expand_dimensions: ["environment"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["apm", "{app_architecture.id}"]
+        priority: "High"
+
+  - track: "log-management"
+    id: "log-collection-{os}"
+    name: "Log Collection for {os.label}"
+    expand_dimensions: ["os"]
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "log-agent-config-{os}-{environment}"
+        name: "Log agent config: {os.label} / {environment}"
+        expand_dimensions: ["environment"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["logs", "{os.id}"]
+        priority: "Medium"
+
+  - track: "cloud-integrations"
+    id: "cloud-{cloud_provider}-api"
+    name: "{cloud_provider.label} API Integration"
+    expand_dimensions: ["cloud_provider"]
+    exclude_when:
+      - cloud_provider: "on-prem"
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "cloud-{cloud_provider}-iam"
+        name: "{cloud_provider.label} IAM/Service Account Setup"
+        description_template: "integration-task.md.tmpl"
+        labels: ["cloud", "{cloud_provider.id}", "iam"]
+        priority: "High"
+      - id: "cloud-{cloud_provider}-metrics"
+        name: "{cloud_provider.label} Metrics Collection"
+        description_template: "integration-task.md.tmpl"
+        labels: ["cloud", "{cloud_provider.id}", "metrics"]
+        priority: "High"
+
+  - track: "monitors-dashboards"
+    id: "monitors-{track_ref}"
+    name: "Monitors for {track_ref.name}"
+    expand_dimensions: ["track_ref"]
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "monitor-create-{track_ref}"
+        name: "Create monitors for {track_ref.name}"
+        description_template: "integration-task.md.tmpl"
+        labels: ["monitors", "{track_ref.id}"]
+        priority: "Medium"
+      - id: "dashboard-create-{track_ref}"
+        name: "Create dashboard for {track_ref.name}"
+        description_template: "integration-task.md.tmpl"
+        labels: ["dashboards", "{track_ref.id}"]
+        priority: "Low"
+
+  - track: "validation"
+    id: "validation-smoke-tests"
+    name: "Smoke Tests & Data Validation"
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "validation-data-flowing"
+        name: "Verify all integrations report data to Datadog"
+        description_template: "integration-task.md.tmpl"
+        labels: ["validation", "smoke-test"]
+        priority: "Highest"
+      - id: "validation-handoff"
+        name: "Client handoff: documentation and access review"
+        description_template: "integration-task.md.tmpl"
+        labels: ["validation", "handoff"]
+        priority: "Highest"
+
+# Workflow columns (Jira board columns)
+columns:
+  - name: "Backlog"
+    status_category: "To Do"
+    wip_limit: null
+  - name: "Spec Ready"
+    status_category: "To Do"
+    wip_limit: null
+  - name: "In Progress"
+    status_category: "In Progress"
+    wip_limit: 8
+  - name: "Review"
+    status_category: "In Progress"
+    wip_limit: 5
+  - name: "Validation"
+    status_category: "In Progress"
+    wip_limit: 3
+  - name: "Done"
+    status_category: "Done"
+    wip_limit: null
+
+# Phases map to board swimlanes
+phases:
+  - id: "foundation"
+    label: "Foundation"
+    order: 1
+  - id: "integrations"
+    label: "Integrations"
+    order: 2
+  - id: "observability"
+    label: "Observability"
+    order: 3
+  - id: "finalization"
+    label: "Finalization"
+    order: 4
 ```
 
-## JSON Output Format
+### _partials/integrations-db.yaml
 
-Success (jira):
+Partial file containing the database dimension catalog. Merged into the main template's `dimensions.database` during `LoadTemplate()`.
 
-```json
-{ "success": true, "command": "jira", "tasks": [{"id": "tg-a1b2c3d4", "name": "Implement auth middleware", "status": "active", "memberCount": 3, "activeMembers": 2, "createdAt": "2026-03-11T14:30:00Z"}], "count": 1 }
+```yaml
+# Database Integration Dimension Catalog
+# Merged into org-generator.yaml dimensions.database during LoadTemplate()
+
+dimensions:
+  database:
+    - id: "postgres"
+      label: "PostgreSQL"
+      integration_path: "integrations-core/postgres"
+      conf_spec: "assets/configuration/spec.yaml"
+      required_params: ["host", "port", "username", "password", "dbname"]
+      optional_params: ["ssl", "reported_hostname", "dbm", "collect_activity_metrics"]
+    - id: "mysql"
+      label: "MySQL"
+      integration_path: "integrations-core/mysql"
+      conf_spec: "assets/configuration/spec.yaml"
+      required_params: ["host", "port", "username", "password"]
+      optional_params: ["ssl", "dbm", "reported_hostname"]
+    - id: "sqlserver"
+      label: "SQL Server"
+      integration_path: "integrations-core/sqlserver"
+      conf_spec: "assets/configuration/spec.yaml"
+      required_params: ["host", "username", "password"]
+      optional_params: ["database", "adoprovider"]
+    - id: "mongodb"
+      label: "MongoDB"
+      integration_path: "integrations-core/mongo"
+      conf_spec: "assets/configuration/spec.yaml"
+      required_params: ["hosts", "username", "password"]
+      optional_params: ["database", "replica_check", "ssl"]
+    - id: "redis"
+      label: "Redis"
+      integration_path: "integrations-core/redisdb"
+      conf_spec: "assets/configuration/spec.yaml"
+      required_params: ["host", "port"]
+      optional_params: ["password", "slowlog-max-len"]
+    - id: "elasticsearch"
+      label: "Elasticsearch"
+      integration_path: "integrations-core/elastic"
+      conf_spec: "assets/configuration/spec.yaml"
+      required_params: ["url"]
+      optional_params: ["username", "password", "ssl_verify", "cluster_stats"]
 ```
 
-Success (openbrain):
+### _partials/integrations-cloud.yaml
+
+Partial file containing cloud provider and storage dimension catalogs.
+
+```yaml
+# Cloud Provider + Storage Dimension Catalog
+# Merged into org-generator.yaml dimensions.cloud_provider and dimensions.storage
+
+dimensions:
+  cloud_provider:
+    - id: "aws"
+      label: "AWS"
+      services: ["ec2", "rds", "ecs", "eks", "lambda", "s3", "cloudwatch"]
+    - id: "azure"
+      label: "Azure"
+      services: ["vm", "sql-db", "aks", "functions", "blob", "monitor"]
+    - id: "gcp"
+      label: "GCP"
+      services: ["gce", "cloud-sql", "gke", "cloud-functions", "gcs", "stackdriver"]
+    - id: "on-prem"
+      label: "On-Premises"
+      services: []
+
+  storage:
+    - id: "s3"
+      label: "AWS S3"
+      integration_path: "integrations-core/amazon_s3"
+    - id: "blob"
+      label: "Azure Blob"
+      integration_path: "integrations-extras/azure_blob_storage"
+    - id: "gcs"
+      label: "Google Cloud Storage"
+      integration_path: "integrations-core/google_cloud_platform"
+    - id: "nfs"
+      label: "NFS/Local"
+      integration_path: null
+```
+
+### _partials/integrations-infra.yaml
+
+Partial file containing OS dimension catalog and infrastructure check references.
+
+```yaml
+# OS + Infrastructure Dimension Catalog
+# Merged into org-generator.yaml dimensions.os
+
+dimensions:
+  os:
+    - id: "linux"
+      label: "Linux"
+      variants: ["ubuntu-22.04", "rhel-9", "amazon-linux-2023"]
+      agent_install: "DD_API_KEY=<key> DD_SITE=<site> bash -c \"$(curl -L https://install.datadoghq.com/scripts/install_script_agent7.sh)\""
+    - id: "windows"
+      label: "Windows"
+      variants: ["server-2022", "server-2019"]
+      agent_install: "Start-Process -Wait msiexec -ArgumentList '/qn /i datadog-agent-7-latest.amd64.msi APIKEY=<key> SITE=<site>'"
+    - id: "macos"
+      label: "macOS"
+      variants: ["14-sonoma"]
+      agent_install: "DD_API_KEY=<key> DD_SITE=<site> bash -c \"$(curl -L https://install.datadoghq.com/scripts/install_script_agent7.sh)\""
+```
+
+### _partials/integrations-apm.yaml
+
+Partial file containing app architecture dimension catalog.
+
+```yaml
+# App Architecture Dimension Catalog
+# Merged into org-generator.yaml dimensions.app_architecture
+
+dimensions:
+  app_architecture:
+    - id: "containerized"
+      label: "Containerized (Docker/K8s)"
+      agent_type: "datadog-agent (DaemonSet)"
+      autodiscovery: true
+    - id: "vm-based"
+      label: "VM-Based"
+      agent_type: "datadog-agent (host)"
+      autodiscovery: false
+    - id: "serverless"
+      label: "Serverless"
+      agent_type: "datadog-lambda-extension"
+      autodiscovery: false
+    - id: "hybrid"
+      label: "Hybrid"
+      agent_type: "mixed"
+      autodiscovery: true
+```
+
+### _partials/integrations-log.yaml
+
+Partial file containing log management integration references. This partial does not define a new dimension — it provides supplementary metadata used by log management story/task templates.
+
+```yaml
+# Log Management Integration Catalog
+# Supplementary metadata for log-management track templates
+
+log_integrations:
+  - id: "journald"
+    label: "systemd Journal"
+    config_path: "/etc/datadog-agent/conf.d/journald.d/conf.yaml"
+    os_constraint: ["linux"]
+  - id: "windows-event-log"
+    label: "Windows Event Log"
+    config_path: "C:\\ProgramData\\Datadog\\conf.d\\win32_event_log.d\\conf.yaml"
+    os_constraint: ["windows"]
+  - id: "file-tailing"
+    label: "File Tailing"
+    config_path: "/etc/datadog-agent/conf.d/<integration>.d/conf.yaml"
+    os_constraint: ["linux", "macos"]
+```
+
+### integration-task.md.tmpl
+
+Go `text/template` file that renders agent-ready task descriptions. Uses the expanded dimension context to produce rich, actionable descriptions.
+
+```
+## Context
+
+{{ .Context }}
+
+## Integration Reference
+
+- **Integration**: {{ .Integration.Label }}
+- **Repository**: `~/Programs/{{ .Integration.Path }}`
+- **Conf Spec**: `{{ .Integration.Path }}/{{ .Integration.ConfSpec }}`
+- **Environment**: {{ .Environment }}
+- **Cloud Provider**: {{ .CloudProvider.Label }}
+- **OS**: {{ .OS.Label }}
+- **Architecture**: {{ .AppArchitecture.Label }}
+
+## Required Parameters
+
+{{ range .Integration.RequiredParams -}}
+- `{{ . }}`: {{ index $.ParamDescriptions . }}
+{{ end }}
+
+## Optional Parameters
+
+{{ range .Integration.OptionalParams -}}
+- `{{ . }}`: {{ index $.ParamDescriptions . }}
+{{ end }}
+
+## Acceptance Criteria
+
+- [ ] conf.yaml written to `/etc/datadog-agent/conf.d/{{ .Integration.ID }}.d/conf.yaml`
+- [ ] `datadog-agent check {{ .Integration.ID }}` exits 0
+- [ ] Metrics visible in Datadog UI within 5 minutes
+- [ ] No errors in `/var/log/datadog/agent.log` related to {{ .Integration.Label }}
+{{ if .Integration.DBM -}}
+- [ ] DBM query samples visible in Datadog UI
+{{ end }}
+
+## Spec Hints
+
+Use these references when generating a spec via `/spec`:
+
+- **conf.yaml spec**: Read `~/Programs/{{ .Integration.Path }}/{{ .Integration.ConfSpec }}` for all parameter definitions
+- **Check source**: `~/Programs/{{ .Integration.Path }}/datadog_checks/{{ .Integration.CheckDir }}/`
+- **Example conf**: `~/Programs/{{ .Integration.Path }}/datadog_checks/{{ .Integration.CheckDir }}/data/conf.yaml.example`
+- **Agent install command**: `{{ .OS.AgentInstall }}`
+
+## Labels
+
+{{ range .Labels -}}
+`{{ . }}` {{ end }}
+```
+
+### schema.yaml
+
+JSON Schema (in YAML syntax) for validating template files before expansion.
+
+```yaml
+type: object
+required: [meta, dimensions, tracks, stories, columns, phases]
+properties:
+  meta:
+    type: object
+    required: [version, project_type, description]
+    properties:
+      version: { type: string, pattern: "^\\d+\\.\\d+\\.\\d+$" }
+      project_type: { type: string }
+      description: { type: string }
+      default_project_key: { type: string, pattern: "^[A-Z]{2,10}$" }
+      default_board_type: { type: string, enum: ["kanban", "scrum"] }
+  dimensions:
+    type: object
+    additionalProperties:
+      type: array
+      items:
+        type: object
+        required: [id, label]
+  tracks:
+    type: array
+    items:
+      type: object
+      required: [id, name, description, phase]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        description: { type: string }
+        phase: { type: string }
+        depends_on: { type: array, items: { type: string } }
+        applies_when: { type: object }
+  stories:
+    type: array
+    items:
+      type: object
+      required: [track, id, name]
+  columns:
+    type: array
+    items:
+      type: object
+      required: [name, status_category]
+  phases:
+    type: array
+    items:
+      type: object
+      required: [id, label, order]
+```
+
+## 4. Data Model
+
+### BoardTemplate
+
+```typescript
+interface BoardTemplate {
+  // Metadata
+  meta: TemplateMeta;
+
+  // Permutation matrix — populated by merging partials into declared keys
+  dimensions: Record<string, DimensionValue[]>;
+
+  // Work track definitions (become epics)
+  tracks: Track[];
+
+  // Story templates within tracks
+  stories: StoryTemplate[];
+
+  // Board column configuration
+  columns: Column[];
+
+  // Phase/swimlane definitions
+  phases: Phase[];
+}
+
+interface TemplateMeta {
+  version: string;           // "1.0.0"
+  project_type: string;      // "org-generator"
+  description: string;       // Human-readable
+  default_project_key: string; // "DD"
+  default_board_type: string;  // "kanban" | "scrum"
+}
+
+interface DimensionValue {
+  id: string;                // "postgres", "aws", "linux"
+  label: string;             // "PostgreSQL", "AWS", "Linux"
+  [key: string]: any;        // Dimension-specific fields (integration_path, required_params, etc.)
+}
+```
+
+### Track (becomes Jira Epic)
+
+```typescript
+interface Track {
+  id: string;                // "db-monitoring"
+  name: string;              // "Database Monitoring"
+  description: string;       // Rich description for the epic
+  phase: string;             // "integrations" — maps to swimlane
+  depends_on: string[];      // ["agent-deploy"] — track-level dependencies
+  applies_when: AppliesWhen; // Conditional inclusion based on intake
+}
+
+interface AppliesWhen {
+  any?: boolean;             // Always applies
+  dimension?: string;        // Dimension name to check
+  has_any?: boolean;         // True if dimension has any selected values
+  not_value?: string;        // Exclude specific dimension value
+}
+```
+
+### StoryTemplate (becomes Jira Story)
+
+```typescript
+interface StoryTemplate {
+  track: string;             // Parent track ID
+  id: string;                // Template ID with {dimension} placeholders
+  name: string;              // Template name with {dimension.label} placeholders
+  expand_dimensions: string[]; // Dimensions to expand over
+  exclude_when?: ExcludeRule[]; // Combinations to skip
+  description_template: string; // Path to .md.tmpl file
+  tasks: TaskTemplate[];     // Child task templates
+}
+
+interface TaskTemplate {
+  id: string;                // Template ID with {dimension} placeholders
+  name: string;              // Template name with {dimension.label} placeholders
+  expand_dimensions?: string[]; // Additional dimensions to expand
+  applies_when?: Record<string, string[]>; // Conditional inclusion
+  description_template: string; // Path to .md.tmpl file
+  labels: string[];          // Labels with {dimension.id} placeholders
+  priority: string;          // "Highest" | "High" | "Medium" | "Low" | "Lowest"
+}
+
+interface ExcludeRule {
+  [dimension: string]: string; // e.g., { os: "macos", cloud_provider: "on-prem" }
+}
+```
+
+### ExpandedTicket (ready for Jira API)
+
+```typescript
+interface ExpandedTicket {
+  // Identity
+  deterministic_key: string; // "{project}-{track}-{integration}-{environment}"
+  issue_type: "Epic" | "Story" | "Task";
+
+  // Content
+  summary: string;           // Expanded from template (no placeholders)
+  description: string;       // Rendered from .md.tmpl with full context
+  labels: string[];          // Expanded labels
+  priority: string;          // Jira priority name
+
+  // Hierarchy
+  parent_key?: string;       // Parent ticket deterministic key
+  track_id: string;          // Source track ID
+  phase: string;             // "foundation" | "integrations" | "observability" | "finalization"
+
+  // Dimensions used
+  dimensions: Record<string, DimensionValue>; // The specific dimension values for this ticket
+
+  // Dependencies
+  depends_on: string[];      // Deterministic keys of dependency tickets
+  blocks: string[];          // Deterministic keys of tickets this blocks
+}
+```
+
+### IntakeFile
+
+```typescript
+interface IntakeFile {
+  intake: {
+    project_name: string;          // "Acme Corp Datadog Onboarding"
+    project_key?: string;          // "ACME" — override default_project_key
+    environments: string[];        // ["prod-us-east-1", "staging-us-east-1", "dev"]
+
+    // Dimension selections (prune the matrix)
+    cloud_providers: string[];     // ["aws"] — subset of dimensions.cloud_provider
+    operating_systems: string[];   // ["linux"] — subset of dimensions.os
+    databases: string[];           // ["postgres", "redis"] — subset of dimensions.database
+    app_architectures: string[];   // ["containerized"] — subset of dimensions.app_architecture
+    storage_systems: string[];     // ["s3"] — subset of dimensions.storage
+
+    // Phase/track pruning
+    include_phases?: string[];     // ["foundation", "integrations"] — skip observability/finalization
+    exclude_tracks?: string[];     // ["apm-instrumentation"] — skip specific tracks
+    exclude_labels?: string[];     // ["optional"] — prune tasks with these labels
+
+    // Custom fields for template interpolation
+    custom_fields?: Record<string, string>;
+  };
+}
+```
+
+### The `environment` Pseudo-Dimension
+
+The `environments` list from the `IntakeFile` is treated as an implicit dimension during expansion. It is NOT defined in the template's `dimensions:` map or in any partial file. The expander injects intake environments as the `environment` dimension when resolving task templates that include `"environment"` in their `expand_dimensions` list.
+
+This means: when a task template declares `expand_dimensions: ["environment"]`, the expander iterates over the intake's `environments` array and produces one ticket per environment. The `{environment}` placeholder in task IDs and names is resolved to the raw environment string (e.g., `"prod-us-east-1"`), not to a `DimensionValue` with `id`/`label` structure.
+
+Implementation: during `Expand()`, if `expand_dimensions` contains `"environment"` and no matching key exists in `template.dimensions`, the expander falls back to `intake.environments` as the value source. Each environment string is used directly — no `.id`/`.label` access is available for environment (use `{environment}` not `{environment.label}`).
+
+### ID Generation
+
+- **Deterministic keys**: `{project_key}-{track_id}-{story_id_expanded}-{task_id_expanded}` (e.g., `DD-db-monitoring-db-postgres-setup-db-postgres-conf-prod-us-east-1`)
+- **Collision handling**: Keys are deterministic by construction — same input always produces the same key. If a Jira issue with the matching key exists (stored in a custom field or label), update rather than create.
+- **Rationale**: Deterministic keys enable idempotent board generation. Running `/jira-board` twice with the same intake must not create duplicate tickets.
+
+### Ticket Lifecycle
+
+```
+Backlog ──> Spec Ready ──> In Progress ──> Review ──> Validation ──> Done
+   ^                           |               |
+   +---------------------------+               |
+   (blocked/rework)            +---------------+
+                               (review failed)
+```
+
+### Priority Scale
+
+| Value | Label | Use |
+|-------|-------|-----|
+| Highest | Highest | Validation smoke tests, client handoff |
+| High | High | Agent deployment, conf.yaml creation, IAM setup |
+| Medium | Medium | DBM setup, process/network checks, monitors |
+| Low | Low | Dashboard creation, optional integrations |
+| Lowest | Lowest | Stretch goals, nice-to-have enhancements |
+
+## 5. CLI
+
+Binary name: `cmdr` (existing ComputeCommander binary).
+
+### jira-board
+
+```
+cmdr jira-board generate                   Generate board from template
+  --project-type <type>   (required)       Template to use (default: org-generator)
+  --intake <file>         (required)       YAML intake file for dimension pruning
+  --project-key <KEY>                      Override Jira project key from template
+  --dry-run                                Preview tickets as YAML without Jira API calls
+  --output <file>                          Write expanded tickets to file (implies --dry-run)
+  --instance <name>                        Jira instance name from cmdr config
+
+cmdr jira-board validate <template>        Validate a template file against schema
+  --strict                                 Treat warnings as errors
+
+cmdr jira-board list                       List available project types
+
+cmdr jira-board preview                    Preview ticket count and structure
+  --project-type <type>   (required)
+  --intake <file>         (required)
+
+cmdr jira-board delete <project-key>       Delete all board tickets (destructive)
+  --confirm                                Skip confirmation prompt
+```
+
+## 6. JSON Output Format
+
+Success (generate):
 
 ```json
-{ "success": true, "command": "openbrain", "entries": [{"file": "/home/n0ko/.claude/MEMORY.md", "section": "## Architecture Decisions", "operation": "modified", "timestamp": "2026-03-11T14:30:00Z", "preview": "Added PTY embedding decision note for zellij approach"}], "count": 1 }
+{
+  "success": true,
+  "command": "jira-board generate",
+  "project_key": "ACME",
+  "board_name": "Acme Corp Datadog Onboarding",
+  "tickets_created": 47,
+  "tickets_updated": 3,
+  "tickets_skipped": 0,
+  "epics": 8,
+  "stories": 15,
+  "tasks": 27,
+  "tracks": [
+    {
+      "id": "agent-deploy",
+      "name": "Agent Deployment",
+      "phase": "foundation",
+      "ticket_count": 4
+    }
+  ]
+}
 ```
 
 Error:
 
 ```json
-{ "success": false, "command": "jira", "error": "database connection failed: no such table: task_groups" }
+{
+  "success": false,
+  "command": "jira-board generate",
+  "error": "intake file missing required field: intake.project_name",
+  "intake_path": "./intake.yaml"
+}
 ```
 
-## Concurrency Model
+Preview:
 
-Not applicable. Each pane runs as an independent OS process within zellij. No shared mutable state between panes beyond the per-tab CWD file, which uses the existing atomic write pattern (write content, no rename needed since single-writer). The DB is accessed read-only by pane commands; the existing SQLite WAL mode handles concurrent readers.
-
-## Migration
-
-Not applicable. No predecessor system; these are additive features on top of the existing cmdr dashboard. No data migration required.
-
-## Integration
-
-### KDL Layout Integration
-
-The `GenerateLayout()` function in `internal/zellij/layout.go` is the integration point for all pane layout changes. The updated layout structure:
-
-```
-+----------+------------------------------------------+-----------+
-| prompt   |                                          |           |
-| (1 row)  |                                          |  Agents   |
-+----------+     Agent Session (borderless)           |  (15%)    |
-|          |          67% width                        |           |
-|  fp      |          (focused)                        +-----------+
-|  (10%)   |                                          |  Jira     |
-|          |                                          |  (8%)     |
-+----------+------------------------------------------+-----------+
-| Event Log (17%) | Mail (17%) | Evals (17%) | Merge Q (17%) |OB(15%)|LG(17%)|
-+----------+------+------------+--------------+-------+-----------+------+
+```json
+{
+  "success": true,
+  "command": "jira-board preview",
+  "total_tickets": 47,
+  "by_type": { "Epic": 8, "Story": 15, "Task": 24 },
+  "by_phase": { "foundation": 12, "integrations": 25, "observability": 6, "finalization": 4 },
+  "dimensions_selected": {
+    "cloud_provider": ["aws"],
+    "os": ["linux"],
+    "database": ["postgres", "redis"],
+    "app_architecture": ["containerized"],
+    "storage": ["s3"]
+  }
+}
 ```
 
-Top row: 67% height. Right column splits: Agents (upper, ~15%) | Jira (lower, ~8%).
-Bottom row: 33% height. Six panes: Event Log, Mail, Evals, Merge Queue, OpenBrain, LazyGit.
-Prompt line: 1-row borderless pane above fp in the left column.
+## 7. Concurrency Model
 
-### Updated Pane Map
+Rate-Limited Sequential Publishing
 
-| Pane | Position | Size | Command | Change |
-|------|----------|------|---------|--------|
-| Prompt | top-left row 1 | 1 row, borderless | `cmdr prompt --pane` | NEW |
-| fp | top-left below prompt | 10% of top row width | `fp-wrapper.sh` | Unchanged |
-| Agent Session | top-center | 67% width | `cmdr-agent-wrapper.sh` | Unchanged |
-| Agents | top-right upper | 15% of right column | `cmdr status --pane` | Shrunk from 23% |
-| Jira | top-right lower | 8% of right column | `cmdr jira --pane` | NEW |
-| Event Log | bottom | 17% | `cmdr feed --pane` | Adjusted |
-| Mail | bottom | 17% | `cmdr mail list --pane` | Unchanged |
-| Evals | bottom | 17% | `cmdr evals --pane` | Unchanged |
-| Merge Queue | bottom | 17% | `cmdr merge list --pane` | Unchanged |
-| OpenBrain | bottom | 15% | `cmdr openbrain --pane` | NEW |
-| LazyGit | bottom | 17% | `lazygit-wrapper.sh` | Adjusted |
-
-### claude-sessions Integration
-
-```bash
-# Existing behavior (unchanged)
-python3 ~/programming/python_projects/claude_sessions.py
-# -> picks session via gum filter, execs into `claude --resume <id>`
-
-# Existing --sidecar flag (unchanged)
-python3 ~/programming/python_projects/claude_sessions.py --sidecar
-# -> picks session, execs into sidecar in project dir
-
-# New --cmdr flag
-python3 ~/programming/python_projects/claude_sessions.py --cmdr
-# -> picks session via gum filter, then:
-#    1. os.chdir(project_path)
-#    2. os.execvp("cmdr", ["cmdr", "dashboard"])
-#    (spawns full cmdr dashboard in the selected project directory)
+```
+Rate limit:   10 requests/second (Jira Cloud default)
+Retry:        Exponential backoff on 429 (uses existing RateLimiter)
+Timeout:      30 seconds per API call
 ```
 
-Implementation in `claude_sessions.py`:
+Implementation:
 
-```python
-parser.add_argument(
-    "--cmdr",
-    action="store_true",
-    help="Launch cmdr dashboard in the selected session's project directory",
-)
+1. Template loading and expansion happen in-memory (no concurrency concerns)
+2. Jira API publishing uses the existing `jira.Client` with its built-in `RateLimiter`
+3. Tickets are published in dependency order: epics first, then stories, then tasks
+4. Each publish call returns the Jira issue key, which is used as the parent for child issues
+5. If a publish fails mid-stream, already-created tickets remain in Jira (idempotent re-run will update them)
 
-# In main(), after session selection:
-if args.cmdr:
-    launch_cmdr(project_path)
-elif args.sidecar:
-    launch_sidecar(project_path)
-else:
-    resume_session(project_path, session_id)
+### Atomic Writes
 
-def launch_cmdr(cwd: str) -> None:
-    """Change to project directory and exec into cmdr dashboard."""
-    os.chdir(cwd)
-    os.execvp("cmdr", ["cmdr", "dashboard"])
-```
+Not applicable at the Jira API level. Board generation is not transactional — partial boards are acceptable because re-running is idempotent. Local file writes (expanded ticket YAML for `--output`) use temp file + rename.
+
+### Conflict Resolution
+
+Deterministic key matching. Before creating a ticket, search for existing issues with a matching label `cmdr-key:{deterministic_key}`. If found, update the existing issue instead of creating a new one.
+
+## 8. Migration
+
+Not applicable — this is a new feature with no predecessor system to migrate from. The existing `/jira-board` skill definition (`~/.claude/commands/jira-board.md`) will be updated to reference the new template system, but it defines the Claude Code skill interface, not a data migration.
+
+## 9. Integration
+
+### /org-generator Pipeline
+
+`/org-generator` invokes `/jira-board` as a hook after Terraform infrastructure is generated. The org-generator writes an intake YAML file and sets `$INTAKE_FILE` env var.
+
+| org-generator Step | jira-board Action |
+|--------------------|-------------------|
+| Generate Terraform | -- |
+| Write intake YAML | -- |
+| Invoke `/jira-board` | Load intake, expand template, publish to Jira |
+| -- | Return board URL + ticket summary |
+
+### /sr Pipeline (Spec-Review-Execute)
+
+Each generated ticket is designed for consumption by `/sr` (`/spec --review --loop`). The ticket description's `## Spec Hints` section provides:
+
+| Spec Hint | Purpose |
+|-----------|---------|
+| `conf.yaml spec` path | Grounds the spec in actual parameter definitions |
+| `Check source` path | Points to the integration's Python check code |
+| `Example conf` path | Provides a working conf.yaml example |
+| `Agent install command` | OS-specific install command for the task |
 
 ### Agent-Facing Commands
 
 ```bash
-# Dashboard pane commands (run by zellij, not by users)
-cmdr jira --pane                    # task list in Jira pane
-cmdr openbrain --pane               # memory watcher in OpenBrain pane
-cmdr prompt --pane                  # session info bar in prompt pane
+# Generate board from intake
+cmdr jira-board generate --project-type org-generator --intake ./intake.yaml --json
 
-# Existing pane commands (unchanged)
-cmdr status --pane                  # agent table in Agents pane
-cmdr feed --pane                    # event log in Event Log pane
-cmdr mail list --pane               # mail list in Mail pane
-cmdr evals --pane                   # evals in Evals pane
-cmdr merge list --pane              # merge queue in Merge Queue pane
+# Preview before generating
+cmdr jira-board preview --project-type org-generator --intake ./intake.yaml --json
+
+# Validate template
+cmdr jira-board validate templates/jira-board/org-generator.yaml --json
 ```
 
 ### Hooks Integration
 
-No new hooks required. The pane healer runs as part of the dashboard process lifecycle (inside the focus-watcher-wrapper restart loop or as a dedicated borderless pane).
+```json
+{
+  "hooks": {
+    "PostOrgGenerate": [
+      {
+        "command": "cmdr jira-board generate --project-type org-generator --intake $INTAKE_FILE --json",
+        "description": "Generate Jira board after org-generator completes"
+      }
+    ]
+  }
+}
+```
 
-## What It Does NOT Do
+## 10. What It Does NOT Do
 
 Explicitly out of scope:
 
-- **External Jira/Linear API integration.** The Jira pane reads from the local `task_groups` DB table only, not from external issue trackers. External integrations are handled by `pkg/integrations/` stubs.
-- **Memory write interception.** The OpenBrain pane watches files for changes after the fact. It does not intercept, filter, or modify Claude's memory-writing behavior.
-- **Cross-tab pane healing.** Self-healing only operates on panes within the current dashboard tab instance (identified by TAB_HASH). Other tabs manage their own health.
-- **Interactive prompt REPL.** The prompt-line pane displays information and key hints. All interactive actions (session switch, help) use existing floating pane mechanisms (Ctrl+Space keybind).
-- **claude-sessions Python rewrite.** Only a `--cmdr` flag is added. The script is not migrated to Go or restructured.
+- **Board administration.** Does not manage Jira board settings (column order, swimlane config, board filters) beyond initial creation. Board layout customization is done in the Jira UI.
+- **Sprint management.** Does not create or manage sprints. The template produces a kanban board by default; scrum sprint planning is a human activity.
+- **Ticket state transitions.** Does not move tickets through workflow states. Agents transition tickets via the existing `cmdr jira` command after completing work.
+- **User assignment.** Does not assign tickets to specific Jira users. Assignment happens during sprint planning or agent dispatch.
+- **Integration code generation.** Does not generate conf.yaml files or Python check code. It generates tickets that describe the work; the `/sr` pipeline generates the specs and code.
+- **Datadog API calls.** Does not interact with the Datadog API. It creates Jira tickets that describe Datadog configuration work.
 
-## Tech Stack
+## 11. Tech Stack
 
 | Concern | Choice | Rationale |
 |---------|--------|-----------|
-| Runtime | Go 1.25 | Existing project runtime |
-| Language | Go (T1-T6, T8), Python 3 (T7) | Match existing codebases |
-| CLI Framework | Cobra | Existing CLI framework, all commands follow `XxxCmd(app *App) *cobra.Command` pattern |
-| Terminal Output | lipgloss + raw ANSI | Pane-mode rendering uses direct ANSI output, same as `status.go:printAgentsPane` |
-| File Watching | fsnotify | Already a project dependency via `internal/config/watcher.go` |
-| DB Access | modernc.org/sqlite | Existing SQLite driver for `task_groups` queries |
-| Testing | `go test` | Existing test infrastructure |
-| Pane Management | zellij CLI (`zellij action`) | All pane operations go through zellij's CLI |
+| Runtime | Go 1.25 | Existing cmdr runtime (confirmed in `go.mod`: `go 1.25.0`) |
+| Language | Go | Matches existing codebase |
+| Template Engine | Go `text/template` | Already used in `templates/agent-overlay.tmpl`; handles `{{template}}` actions for description rendering |
+| Template Format | YAML | Human-readable, supports complex nested structures |
+| Schema Validation | `gopkg.in/yaml.v3` + custom validation | No external schema library needed for YAML validation |
+| Jira API | `pkg/integrations/jira` | Existing client with rate limiting |
+| Testing | Go `testing` | Standard library |
+| CLI Framework | Cobra | Existing CLI framework |
 
-## Project Infrastructure
+## 12. Project Infrastructure
 
 ### Directory Structure
 
 ```
 computeCommander/
-  cmd/cc/
-    main.go                           # Cobra command tree (MODIFIED: register new commands)
+  templates/
+    jira-board/
+      schema.yaml                            # Template schema definition
+      org-generator.yaml                     # Slim orchestration template
+      _partials/
+        integrations-db.yaml                 # Database dimension catalog
+        integrations-apm.yaml                # APM dimension catalog
+        integrations-infra.yaml              # Infrastructure/OS dimension catalog
+        integrations-log.yaml                # Log management catalog
+        integrations-cloud.yaml              # Cloud provider + storage dimension catalog
+        description-templates/
+          integration-task.md.tmpl           # Task description template
+          integration-story.md.tmpl          # Story description template
+          epic-summary.md.tmpl               # Epic description template
   internal/
+    jiraboard/
+      engine.go                              # Template engine core (load + merge partials)
+      expander.go                            # Dimension matrix expansion
+      renderer.go                            # Description rendering
+      publisher.go                           # Jira API publishing
+      types.go                               # All data types
+      engine_test.go                         # Engine tests
+      expander_test.go                       # Expander tests
     commands/
-      jira.go                         # Jira task pane command
-      jira_test.go                    # Tests for Jira pane
-      openbrain.go                    # OpenBrain memory pane command
-      openbrain_test.go               # Tests for OpenBrain pane
-      prompt_line.go                  # Prompt-line tool suite
-      prompt_line_test.go             # Tests for prompt-line
-      dashboard.go                    # Dashboard command (MODIFIED)
-      session_picker.go               # Session picker (existing, read-only reference)
-    watchdog/
-      pane_healer.go                  # Pane self-healing logic
-      pane_healer_test.go             # Tests for pane healer
-      watchdog.go                     # Watchdog (MODIFIED)
-      health.go                       # Health checks (MODIFIED)
-    zellij/
-      layout.go                       # KDL layout generation (MODIFIED)
-  ~/programming/python_projects/
-    claude_sessions.py                # Python session picker (MODIFIED)
+      jira_board.go                          # Cobra command handler
 ```
 
 ### Version Management
 
-Existing: version embedded at build time via `go build -ldflags`. No version bump required for these features.
+Template version is tracked in `meta.version` within each template YAML file. The engine validates that the template version is compatible with the current engine version.
 
 ### CHANGELOG.md
 
-Not applicable. The project does not currently maintain a CHANGELOG.md. Changes are tracked via git commits.
+Follows Keep a Changelog format. Template changes and engine changes are logged separately under `### Jira Board` sub-heading.
 
 ### CI Workflow
 
-Existing CI runs `go test ./...` and `go vet ./...`. New test files are automatically discovered.
+```yaml
+name: CI
+on: [push, pull_request]
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - run: go test ./internal/jiraboard/...
+      - run: go vet ./internal/jiraboard/...
+```
 
 ### Scripts
 
 ```json
 {
   "scripts": {
-    "build": "make build",
-    "test": "go test ./...",
-    "vet": "go vet ./..."
+    "test-jiraboard": "go test ./internal/jiraboard/...",
+    "validate-templates": "go run ./cmd/cc jira-board validate templates/jira-board/*.yaml"
   }
 }
 ```
 
-## Estimated Size
+## 13. Estimated Size
 
 | Area | Files | LOC |
 |------|-------|-----|
-| Jira pane (command + tests) | 2 | ~250 |
-| OpenBrain pane (command + tests) | 2 | ~300 |
-| Self-healing (pane_healer + tests) | 2 | ~350 |
-| Prompt-line (command + tests) | 2 | ~200 |
-| KDL layout update (layout.go delta) | 1 | ~80 |
-| Command registration (main.go delta) | 1 | ~15 |
-| Dashboard integration (dashboard.go delta) | 1 | ~20 |
-| Watchdog integration (watchdog.go + health.go delta) | 2 | ~50 |
-| claude-sessions Python update | 1 | ~30 |
-| **Total** | **14** | **~1295** |
+| Template engine (`internal/jiraboard/`) | 5 | ~920 |
+| CLI command (`internal/commands/jira_board.go`) | 1 | ~200 |
+| YAML templates (`templates/jira-board/org-generator.yaml`) | 1 | ~250 |
+| Partial templates (`templates/jira-board/_partials/`) | 5 | ~400 |
+| Description templates (`.md.tmpl`) | 3 | ~150 |
+| Schema (`schema.yaml`) | 1 | ~80 |
+| Tests | 2 | ~400 |
+| Skill update (`jira-board.md`) | 1 | ~50 |
+| **Total** | **19** | **~2,450** |
 
-## 15. Task Manifest
+## 14. Task Manifest
 
 | ID | Agent | Description | File Scope (read) | File Scope (write) | Depends On | Verify Command |
 |----|-------|-------------|--------------------|--------------------|------------|----------------|
-| T1 | unix-coder | Implement Jira task pane (`cmdr jira --pane`) | internal/commands/status.go, internal/commands/app.go, internal/commands/observability.go | internal/commands/jira.go, internal/commands/jira_test.go | -- | `cd /home/n0ko/Programs/ai/computeCommander && go build ./... && go test ./internal/commands/ -run TestJira -count=1 -v` |
-| T2 | unix-coder | Implement OpenBrain memory pane (`cmdr openbrain --pane`) | internal/commands/status.go, internal/commands/app.go, internal/config/watcher.go | internal/commands/openbrain.go, internal/commands/openbrain_test.go | -- | `cd /home/n0ko/Programs/ai/computeCommander && go build ./... && go test ./internal/commands/ -run TestOpenBrain -count=1 -v` |
-| T3 | unix-coder | Implement pane self-healing daemon | internal/watchdog/watchdog.go, internal/watchdog/health.go, internal/zellij/pane.go | internal/watchdog/pane_healer.go, internal/watchdog/pane_healer_test.go | -- | `cd /home/n0ko/Programs/ai/computeCommander && go build ./... && go test ./internal/watchdog/ -run TestPaneHeal -count=1 -v` |
-| T4 | unix-coder | Implement prompt-line tool suite (`cmdr prompt --pane`) | internal/commands/session_picker.go, internal/commands/status.go | internal/commands/prompt_line.go, internal/commands/prompt_line_test.go | -- | `cd /home/n0ko/Programs/ai/computeCommander && go build ./... && go test ./internal/commands/ -run TestPromptLine -count=1 -v` |
-| T5 | unix-coder | Update KDL layout: add Jira, OpenBrain, prompt-line panes to GenerateLayout() | internal/zellij/layout.go | internal/zellij/layout.go | T1, T2, T3, T4 | `cd /home/n0ko/Programs/ai/computeCommander && go build ./... && go test ./internal/zellij/ -count=1 -v` |
-| T6 | unix-coder | Register jira, openbrain, prompt commands in Cobra command tree | cmd/cc/main.go, internal/commands/app.go | cmd/cc/main.go | T1, T2, T4 | `cd /home/n0ko/Programs/ai/computeCommander && go build -o cmdr ./cmd/cc/ && ./cmdr jira --help && ./cmdr openbrain --help && ./cmdr prompt --help` |
-| T7 | unix-coder | Add `--cmdr` flag to claude_sessions.py | /home/n0ko/programming/python_projects/claude_sessions.py | /home/n0ko/programming/python_projects/claude_sessions.py | -- | `python3 /home/n0ko/programming/python_projects/claude_sessions.py --help 2>&1 \| grep -q cmdr` |
-| T8 | unix-coder | Integrate pane healer into watchdog Run loop and dashboard lifecycle | internal/watchdog/watchdog.go, internal/watchdog/health.go, internal/commands/dashboard.go | internal/watchdog/watchdog.go, internal/watchdog/health.go, internal/commands/dashboard.go | T3, T5 | `cd /home/n0ko/Programs/ai/computeCommander && go build ./... && go test ./internal/watchdog/ -count=1 -v && go test ./internal/commands/ -count=1 -v` |
-| T9 | code-review | Review all changes for consistency, DRY, Go style, test coverage | All written files from T1-T8 | -- | T5, T6, T7, T8 | `cd /home/n0ko/Programs/ai/computeCommander && go build ./... && go vet ./... && go test ./...` |
+| T1 | unix-coder | Create jiraboard types and data model | pkg/integrations/jira/types.go | internal/jiraboard/types.go | -- | `go build ./internal/jiraboard/...` |
+| T2 | unix-coder | Implement template engine (load YAML, auto-discover and merge `_partials/*.yaml`, validate against schema) | templates/jira-board/schema.yaml, internal/jiraboard/types.go | internal/jiraboard/engine.go | T1, T9 | `go build ./internal/jiraboard/...` |
+| T3 | unix-coder | Implement dimension matrix expander (with `environment` pseudo-dimension fallback to intake) | internal/jiraboard/types.go | internal/jiraboard/expander.go | T1 | `go build ./internal/jiraboard/...` |
+| T4 | unix-coder | Implement description renderer using Go `text/template` | templates/jira-board/_partials/description-templates/, internal/jiraboard/types.go | internal/jiraboard/renderer.go | T1, T8 | `go build ./internal/jiraboard/...` |
+| T5 | unix-coder | Implement Jira API publisher (create/update with idempotent deterministic keys) | pkg/integrations/jira/client.go, internal/jiraboard/types.go | internal/jiraboard/publisher.go | T1 | `go build ./internal/jiraboard/...` |
+| T6 | unix-coder | Create slim org-generator.yaml template (tracks, stories, phases, columns — NO inline dimension data) | -- | templates/jira-board/org-generator.yaml | -- | `test -f templates/jira-board/org-generator.yaml && grep -q 'dimensions:' templates/jira-board/org-generator.yaml && ! grep -q 'integration_path' templates/jira-board/org-generator.yaml` |
+| T7 | unix-coder | Create partial templates (integrations-db, apm, infra, log, cloud) with full dimension catalogs. **Prerequisite**: `~/Programs/integrations-core/` and `~/Programs/integrations-extras/` must be locally available for reference. If unavailable, use the dimension data from this spec's On-Disk Format section as the source of truth. | ~/Programs/integrations-core/, ~/Programs/integrations-extras/ | templates/jira-board/_partials/integrations-db.yaml, templates/jira-board/_partials/integrations-apm.yaml, templates/jira-board/_partials/integrations-infra.yaml, templates/jira-board/_partials/integrations-log.yaml, templates/jira-board/_partials/integrations-cloud.yaml | T6 | `ls templates/jira-board/_partials/*.yaml | wc -l | grep -q 5` |
+| T8 | unix-coder | Create description .md.tmpl files (task, story, epic) | -- | templates/jira-board/_partials/description-templates/integration-task.md.tmpl, templates/jira-board/_partials/description-templates/integration-story.md.tmpl, templates/jira-board/_partials/description-templates/epic-summary.md.tmpl | -- | `ls templates/jira-board/_partials/description-templates/*.tmpl | wc -l | grep -q 3` |
+| T9 | unix-coder | Create schema.yaml for template validation | -- | templates/jira-board/schema.yaml | -- | `test -f templates/jira-board/schema.yaml` |
+| T10 | unix-coder | Implement CLI command handler (cmdr jira-board subcommands) | internal/jiraboard/engine.go, internal/jiraboard/expander.go, internal/jiraboard/renderer.go, internal/jiraboard/publisher.go, internal/commands/agentic_instructions.md | internal/commands/jira_board.go | T2, T3, T4, T5 | `go build ./cmd/cc/...` |
+| T11 | unix-coder | Write engine and expander tests (including partial merge and environment pseudo-dimension tests) | internal/jiraboard/engine.go, internal/jiraboard/expander.go, internal/jiraboard/types.go | internal/jiraboard/engine_test.go, internal/jiraboard/expander_test.go | T2, T3 | `go test ./internal/jiraboard/... -v` |
+| T12 | unix-coder | Update /jira-board skill definition to reference new template system | ~/.claude/commands/jira-board.md | ~/.claude/commands/jira-board.md | T10 | `grep -q 'cmdr jira-board' ~/.claude/commands/jira-board.md` |
+| T13 | code-review | Review engine, expander, publisher, and CLI for correctness | internal/jiraboard/*.go, internal/commands/jira_board.go, templates/jira-board/ | -- | T10, T11 | `go vet ./internal/jiraboard/... && go vet ./internal/commands/...` |
 
-> **WORKTREE DIRECTIVE:** Each of T1-T4 and T7 MUST execute in an independent git worktree branched from `agent-color-events`. Before beginning work, each worker runs:
-> ```bash
-> git worktree add .claude/worktrees/<feature-name> -b feat/<feature-name> agent-color-events
-> ```
-> T5, T6, T8 execute on the main worktree after merging T1-T4 branches. T9 reviews the merged result.
-
-## 16. Dependency Graph
+## 15. Dependency Graph
 
 ```
-Phase 1 (parallel): [T1, T2, T3, T4, T7]
-  T1: Jira pane command (worktree: wt-jira)
-  T2: OpenBrain memory pane command (worktree: wt-openbrain)
-  T3: Pane self-healing daemon (worktree: wt-healer)
-  T4: Prompt-line tool suite (worktree: wt-prompt)
-  T7: claude-sessions --cmdr flag (worktree: wt-sessions)
+Phase 1 (parallel): [T1, T6, T8, T9]
+  T1: Create jiraboard types and data model
+  T6: Create slim org-generator.yaml template
+  T8: Create description .md.tmpl files
+  T9: Create schema.yaml
 
-Phase 2 (after Phase 1): [T5, T6]
-  T5: Update KDL layout with all new panes
-  T6: Register new commands in Cobra tree
+Phase 2 (parallel, after T1): [T2, T3, T4, T5]
+  T2: Implement template engine (also needs T9)
+  T3: Implement dimension matrix expander
+  T4: Implement description renderer (also needs T8)
+  T5: Implement Jira API publisher
 
-Phase 3 (after Phase 2): [T8]
-  T8: Integrate pane healer into watchdog + dashboard
+Phase 2b (after T6): [T7]
+  T7: Create partial templates
 
-Final: [T9] -- code review
+Phase 3 (parallel, after Phase 2): [T10, T11]
+  T10: Implement CLI command handler (needs T2, T3, T4, T5)
+  T11: Write engine and expander tests (needs T2, T3)
+
+Phase 4 (after T10): [T12]
+  T12: Update /jira-board skill definition
+
+Final: [T13] -- code review (after T10, T11)
 ```
 
-## 17. Target State
+## 16. Target State
 
 Files created:
 
 | File Path | Lines | Executable |
 |-----------|-------|------------|
-| `internal/commands/jira.go` | ~150 | No |
-| `internal/commands/jira_test.go` | ~100 | No |
-| `internal/commands/openbrain.go` | ~180 | No |
-| `internal/commands/openbrain_test.go` | ~120 | No |
-| `internal/watchdog/pane_healer.go` | ~250 | No |
-| `internal/watchdog/pane_healer_test.go` | ~100 | No |
-| `internal/commands/prompt_line.go` | ~130 | No |
-| `internal/commands/prompt_line_test.go` | ~70 | No |
+| `internal/jiraboard/types.go` | ~120 | No |
+| `internal/jiraboard/engine.go` | ~250 | No |
+| `internal/jiraboard/expander.go` | ~250 | No |
+| `internal/jiraboard/renderer.go` | ~150 | No |
+| `internal/jiraboard/publisher.go` | ~200 | No |
+| `internal/jiraboard/engine_test.go` | ~200 | No |
+| `internal/jiraboard/expander_test.go` | ~200 | No |
+| `templates/jira-board/org-generator.yaml` | ~250 | No |
+| `templates/jira-board/schema.yaml` | ~80 | No |
+| `templates/jira-board/_partials/integrations-db.yaml` | ~80 | No |
+| `templates/jira-board/_partials/integrations-apm.yaml` | ~60 | No |
+| `templates/jira-board/_partials/integrations-infra.yaml` | ~80 | No |
+| `templates/jira-board/_partials/integrations-log.yaml` | ~40 | No |
+| `templates/jira-board/_partials/integrations-cloud.yaml` | ~80 | No |
+| `templates/jira-board/_partials/description-templates/integration-task.md.tmpl` | ~50 | No |
+| `templates/jira-board/_partials/description-templates/integration-story.md.tmpl` | ~30 | No |
+| `templates/jira-board/_partials/description-templates/epic-summary.md.tmpl` | ~20 | No |
+| `internal/commands/jira_board.go` | ~200 | No |
 
 Files modified:
 
-- `internal/zellij/layout.go` -- add Jira, OpenBrain, prompt-line panes to `GenerateLayout()` template
-- `cmd/cc/main.go` -- register `jira`, `openbrain`, `prompt` Cobra commands
-- `internal/watchdog/watchdog.go` -- add PaneHealer to WatchdogOpts, integrate into Run loop
-- `internal/watchdog/health.go` -- add `pane_frozen` and `pane_stale` issue types
-- `internal/commands/dashboard.go` -- wire pane healer config into layout opts
-- `/home/n0ko/programming/python_projects/claude_sessions.py` -- add `--cmdr` argument and `launch_cmdr()` function
+| File Path | Change |
+|-----------|--------|
+| `~/.claude/commands/jira-board.md` | Updated to reference `cmdr jira-board` CLI and new template paths |
 
 Files deleted: None
 
-## 18. Verification Plan
+## 17. Verification Plan
 
-**Per-task checks:** (derived from Task Manifest Verify Command column)
-- T1: `go build ./... && go test ./internal/commands/ -run TestJira -count=1 -v`
-- T2: `go build ./... && go test ./internal/commands/ -run TestOpenBrain -count=1 -v`
-- T3: `go build ./... && go test ./internal/watchdog/ -run TestPaneHeal -count=1 -v`
-- T4: `go build ./... && go test ./internal/commands/ -run TestPromptLine -count=1 -v`
-- T5: `go build ./... && go test ./internal/zellij/ -count=1 -v`
-- T6: `go build -o cmdr ./cmd/cc/ && ./cmdr jira --help && ./cmdr openbrain --help && ./cmdr prompt --help`
-- T7: `python3 /home/n0ko/programming/python_projects/claude_sessions.py --help 2>&1 | grep -q cmdr`
-- T8: `go build ./... && go test ./internal/watchdog/ -count=1 -v && go test ./internal/commands/ -count=1 -v`
+**Per-task checks:**
+- T1: `go build ./internal/jiraboard/...`
+- T2: `go build ./internal/jiraboard/...`
+- T3: `go build ./internal/jiraboard/...`
+- T4: `go build ./internal/jiraboard/...`
+- T5: `go build ./internal/jiraboard/...`
+- T6: `test -f templates/jira-board/org-generator.yaml && grep -q 'dimensions:' templates/jira-board/org-generator.yaml && ! grep -q 'integration_path' templates/jira-board/org-generator.yaml`
+- T7: `ls templates/jira-board/_partials/*.yaml | wc -l | grep -q 5`
+- T8: `ls templates/jira-board/_partials/description-templates/*.tmpl | wc -l | grep -q 3`
+- T9: `test -f templates/jira-board/schema.yaml`
+- T10: `go build ./cmd/cc/...`
+- T11: `go test ./internal/jiraboard/... -v`
+- T12: `grep -q 'cmdr jira-board' ~/.claude/commands/jira-board.md`
+- T13: `go vet ./internal/jiraboard/... && go vet ./internal/commands/...`
 
-**Integration check:** `cd /home/n0ko/Programs/ai/computeCommander && go build ./... && go test ./... && go vet ./...`
+**Integration check:** `go build ./cmd/cc/... && go test ./internal/jiraboard/... && go vet ./...`
 
-**Rollback:** Each Phase 1 task runs in an independent git worktree. On task failure: `git worktree remove .claude/worktrees/<name>` discards the work. On integration failure (Phase 2+): `git reset --hard agent-color-events` reverts all merged changes.
+**Rollback:** `git stash` or create a backup branch before execution: `git checkout -b jira-board-backup`
 
-## 19. Success Criteria (Machine-Verifiable)
+#### Binary Install Verification
 
-- [ ] `cd /home/n0ko/Programs/ai/computeCommander && go build ./...` exits 0
-- [ ] `cd /home/n0ko/Programs/ai/computeCommander && go test ./...` exits 0
-- [ ] `cd /home/n0ko/Programs/ai/computeCommander && go vet ./...` exits 0
-- [ ] `test -f /home/n0ko/Programs/ai/computeCommander/internal/commands/jira.go` exits 0
-- [ ] `test -f /home/n0ko/Programs/ai/computeCommander/internal/commands/jira_test.go` exits 0
-- [ ] `test -f /home/n0ko/Programs/ai/computeCommander/internal/commands/openbrain.go` exits 0
-- [ ] `test -f /home/n0ko/Programs/ai/computeCommander/internal/commands/openbrain_test.go` exits 0
-- [ ] `test -f /home/n0ko/Programs/ai/computeCommander/internal/watchdog/pane_healer.go` exits 0
-- [ ] `test -f /home/n0ko/Programs/ai/computeCommander/internal/watchdog/pane_healer_test.go` exits 0
-- [ ] `test -f /home/n0ko/Programs/ai/computeCommander/internal/commands/prompt_line.go` exits 0
-- [ ] `test -f /home/n0ko/Programs/ai/computeCommander/internal/commands/prompt_line_test.go` exits 0
-- [ ] `cd /home/n0ko/Programs/ai/computeCommander && go build -o cmdr ./cmd/cc/ && ./cmdr jira --help` exits 0
-- [ ] `cd /home/n0ko/Programs/ai/computeCommander && ./cmdr openbrain --help` exits 0
-- [ ] `cd /home/n0ko/Programs/ai/computeCommander && ./cmdr prompt --help` exits 0
-- [ ] `python3 /home/n0ko/programming/python_projects/claude_sessions.py --help 2>&1 | grep -q cmdr` exits 0
-- [ ] `grep -q 'jira\|Jira' /home/n0ko/Programs/ai/computeCommander/internal/zellij/layout.go` exits 0
-- [ ] `grep -q 'openbrain\|OpenBrain' /home/n0ko/Programs/ai/computeCommander/internal/zellij/layout.go` exits 0
-- [ ] `grep -q 'prompt' /home/n0ko/Programs/ai/computeCommander/internal/zellij/layout.go` exits 0
+```bash
+go build -o cmdr ./cmd/cc
+./cmdr jira-board --help | grep -q "generate"
+./cmdr jira-board list --json 2>&1 | grep -q "org-generator"
+```
+
+## 18. Success Criteria (Machine-Verifiable)
+
+- [ ] `go build ./cmd/cc/...` exits 0
+- [ ] `go test ./internal/jiraboard/...` exits 0
+- [ ] `go vet ./internal/jiraboard/...` exits 0
+- [ ] `go vet ./internal/commands/...` exits 0
+- [ ] `test -f templates/jira-board/org-generator.yaml` exits 0
+- [ ] `test -f templates/jira-board/schema.yaml` exits 0
+- [ ] `ls templates/jira-board/_partials/*.yaml | wc -l | grep -q 5` exits 0
+- [ ] `ls templates/jira-board/_partials/description-templates/*.tmpl | wc -l | grep -q 3` exits 0
+- [ ] `test -f internal/jiraboard/types.go` exits 0
+- [ ] `test -f internal/jiraboard/engine.go` exits 0
+- [ ] `test -f internal/jiraboard/expander.go` exits 0
+- [ ] `test -f internal/jiraboard/renderer.go` exits 0
+- [ ] `test -f internal/jiraboard/publisher.go` exits 0
+- [ ] `test -f internal/commands/jira_board.go` exits 0
+- [ ] `grep -q 'org-generator' templates/jira-board/org-generator.yaml` exits 0 -- template contains project type
+- [ ] `! grep -q 'integration_path' templates/jira-board/org-generator.yaml` exits 0 -- orchestration file does not inline dimension catalog data
+- [ ] `grep -q 'integration_path' templates/jira-board/_partials/integrations-db.yaml` exits 0 -- dimension data lives in partials
+- [ ] `grep -q 'Spec Hints' templates/jira-board/_partials/description-templates/integration-task.md.tmpl` exits 0 -- task descriptions include spec hints for /sr pipeline
+
+### Functional Smoke Criteria
+
+- [ ] `go build -o cmdr ./cmd/cc && ./cmdr jira-board --help | grep -q "generate"` -- jira-board subcommand registered
+- [ ] `go build -o cmdr ./cmd/cc && ./cmdr jira-board list 2>&1 | grep -q "org-generator"` -- template listing works
+- [ ] `go build -o cmdr ./cmd/cc && ./cmdr jira-board validate templates/jira-board/org-generator.yaml 2>&1; test $? -eq 0` -- template validation passes
+
+### Negation Checks
+
+- [ ] `! grep -rn '{[a-z_]*}' templates/jira-board/org-generator.yaml | grep -v 'expand_dimensions' | grep -v 'description_template' | grep -v '#'` -- no unresolved `{placeholder}` strings in orchestration file outside of template fields
+- [ ] `go test ./internal/jiraboard/... -run TestNoUnresolvedPlaceholders` exits 0 -- rendered descriptions contain no `{placeholder}` artifacts
 
 ## Agent Assignments
 
 | Task | Agent | Rationale |
 |------|-------|-----------|
-| Pane commands (T1, T2, T4) | `unix-coder` | Standard Go CLI implementation following existing `XxxCmd(app *App) *cobra.Command` pattern |
-| Self-healing daemon (T3) | `unix-coder` | Extends existing watchdog package with new health check type using established patterns |
-| KDL layout integration (T5) | `unix-coder` | Modifies `GenerateLayout()` Sprintf template -- requires understanding of KDL split_direction semantics |
-| Command registration (T6) | `unix-coder` | Single-file edit to wire commands into Cobra tree |
-| Python script update (T7) | `unix-coder` | Small Python change, independent of Go codebase |
-| Watchdog integration (T8) | `unix-coder` | Requires understanding of the watchdog Run loop and health check architecture |
-| Final review (T9) | `code-review` | Cross-feature consistency check, DRY analysis, Go style compliance |
+| Data model and types (T1) | `unix-coder` | Pure Go struct definitions |
+| Template engine core (T2, T3, T4, T5) | `unix-coder` | Implementation work -- YAML parsing, partial merging, expansion logic, rendering, publishing |
+| YAML templates (T6, T7, T8, T9) | `unix-coder` | File creation -- slim orchestration YAML + partial catalogs from integrations-core/extras |
+| CLI command (T10) | `unix-coder` | Cobra command wiring -- follows existing patterns in `internal/commands/` |
+| Tests (T11) | `unix-coder` | Unit test creation for engine (including partial merge) and expander (including environment pseudo-dimension) |
+| Skill update (T12) | `unix-coder` | Markdown file update |
+| Code review (T13) | `code-review` | Architecture, correctness, and DRY review |
 
 ## Execution Order
 
 ```
-Phase 1: Feature Implementation (parallel, each in own git worktree)
-  +-- T1: Jira pane command (agent: unix-coder)           [worktree: wt-jira]
-  +-- T2: OpenBrain pane command (agent: unix-coder)       [worktree: wt-openbrain]
-  +-- T3: Pane self-healing daemon (agent: unix-coder)     [worktree: wt-healer]
-  +-- T4: Prompt-line tool suite (agent: unix-coder)       [worktree: wt-prompt]
-  +-- T7: claude-sessions --cmdr flag (agent: unix-coder)  [worktree: wt-sessions]
+Phase 1: Foundation
+  +-- T1: types.go (agent: unix-coder)
+  +-- T6: org-generator.yaml (agent: unix-coder)     [parallel]
+  +-- T8: description templates (agent: unix-coder)   [parallel]
+  +-- T9: schema.yaml (agent: unix-coder)             [parallel]
 
-Phase 2: Integration [blocked by Phase 1]
-  +-- T5: Update KDL layout (agent: unix-coder)
-  +-- T6: Register commands in Cobra tree (agent: unix-coder)  [parallel with T5]
+Phase 2: Engine Implementation [blocked by T1]
+  +-- T2: engine.go (agent: unix-coder)
+  +-- T3: expander.go (agent: unix-coder)              [parallel]
+  +-- T4: renderer.go (agent: unix-coder)              [parallel]
+  +-- T5: publisher.go (agent: unix-coder)             [parallel]
 
-Phase 3: Wiring [blocked by Phase 2]
-  +-- T8: Integrate healer into watchdog + dashboard (agent: unix-coder)
+Phase 2b: Template Partials [blocked by T6]
+  +-- T7: partial templates (agent: unix-coder)
 
-Phase 4: Review [blocked by Phase 3]
-  +-- T9: Code review across all features (agent: code-review)
+Phase 3: CLI + Testing [blocked by Phase 2]
+  +-- T10: jira_board.go (agent: unix-coder)
+  +-- T11: tests (agent: unix-coder)                   [parallel, needs T2+T3 only]
+
+Phase 4: Finalization [blocked by T10]
+  +-- T12: skill update (agent: unix-coder)
+
+Phase 5: Review [blocked by T10, T11]
+  +-- T13: code review (agent: code-review)
 ```
 
-Recommended directive: `/loop` for Phase 1 (5 independent tasks fan out in parallel worktrees), then `/multi` for Phases 2-4 (sequential pipeline with merge between phases).
+Recommended directive: `/loop` -- Phase 1 and Phase 2 tasks are independent and benefit from parallel fan-out.
 
 ## Failure Modes
 
 | Failure | Detection | Recovery |
 |---------|-----------|----------|
-| Jira pane crashes on empty DB (no `task_groups` table) | `go test -run TestJiraEmptyDB` | Handle zero-row and missing-table cases gracefully; render "No tasks" |
-| OpenBrain fsnotify exhausts inotify watches | `sysctl fs.inotify.max_user_watches` < watched file count | Fall back to polling (2s interval) when `fsnotify.Add()` returns error |
-| Pane healer enters restart loop | `restartCount > maxRestarts` within session | Exponential backoff: 3s, 6s, 12s... up to 60s; after maxRestarts, mark pane as "abandoned" and stop trying |
-| KDL layout size percentages exceed 100% | `go test ./internal/zellij/` with layout validation test | Sum-check in test: sibling pane sizes must not exceed 100% |
-| claude-sessions --cmdr fails when cmdr not installed | `which cmdr` exits non-zero | Print error: "cmdr not found in PATH. Install with: cd ~/Programs/ai/computeCommander && make install" |
-| Worktree merge conflicts between features | `git merge` exits non-zero | Features are designed to touch different files; T1-T4 create new files only. Conflicts in layout.go and main.go resolved in T5/T6 |
-| Prompt-line pane steals keyboard focus from agent pane | Manual testing: focus stays in agent pane after tab load | Prompt pane uses `borderless=true` without `focus=true`; only agent pane gets `focus=true` |
-| OpenBrain shows stale data after session switch | CWD file changes but fsnotify watches old paths | Re-read CWD file on each poll cycle; restart fsnotify watches when project directory changes |
+| YAML template parse error | `yaml.Unmarshal` returns error | Validate template before expansion; report line number in error message |
+| Invalid dimension reference in story template | Expander encounters unknown dimension ID not in merged dimensions and not `environment` | Pre-validate all dimension references during template load; halt with error listing unknown refs |
+| Partial file not found | `os.ReadFile` error during `_partials/` auto-discovery | Engine logs warning per missing partial; continues with remaining partials. Validate that all declared dimension keys have non-empty values after merge. |
+| Partial defines dimension key not declared in main template | Partial contains `dimensions.foo` but `foo` not in org-generator.yaml `dimensions:` | Engine adds the key (lenient merge). Log info-level message about undeclared dimension. |
+| Jira API auth failure | HTTP 401/403 from `jira.Client.do()` | Existing `decodeResponse` handles auth errors; bubble up to CLI with "check JIRA_EMAIL and JIRA_API_TOKEN" |
+| Jira rate limit exceeded | HTTP 429 | Existing `RateLimiter.AdaptFromHeaders()` handles backoff automatically |
+| Circular track dependencies | Dependency graph cycle detection | Validate dependency graph at template load time; reject templates with cycles |
+| Template variable in description not resolved | Rendered description contains `{placeholder}` | Post-render check for unresolved `{...}` patterns; halt with error listing unresolved vars |
+| Intake file references dimension value not in template | e.g., intake says `databases: ["oracle"]` but no partial defines `oracle` | Validate intake dimension values against merged dimensions during load; warn on unknown values |
+| `environment` dimension used without intake environments | Task template has `expand_dimensions: ["environment"]` but intake `environments` is empty | Expander returns error: "task template requires environment expansion but intake.environments is empty" |
+| External repo unavailable during T7 | `~/Programs/integrations-core/` not cloned locally | Fall back to dimension data in this spec's On-Disk Format section as source of truth |
 
 ## Open Questions
 
 | # | Question | Impact | Suggested Default |
 |---|----------|--------|-------------------|
-| 1 | Should the Jira pane show tasks from external Jira/Linear APIs or only from the local `task_groups` DB table? | Determines whether HTTP client and API credentials are needed | Local DB only -- external integrations are a separate feature |
-| 2 | Should the OpenBrain pane watch all MEMORY.md files across all projects, or only current project + global? | Affects fsnotify watch count and UI noise | Current project (from CWD file) + global `~/.claude/MEMORY.md` only |
-| 3 | What exact KDL percentage split for the right column with Agents + Jira? | Visual balance of the dashboard | Agents 65% of right column, Jira 35% of right column (right column itself is 23% of top row) |
-| 4 | Should pane self-healing be a separate borderless pane or integrated into focus-watcher-wrapper? | Resource usage and failure isolation | Dedicated borderless pane running `cmdr heal --pane` for isolation -- if the healer crashes, it does not take down the focus-watcher |
-| 5 | For the prompt-line, should it show interactive key hints or just session info? | UX complexity | Info-only display: project name, session name, agent count. Key hints for Ctrl+Space shortcuts. No interactive input. |
+| 2 | Should the engine support custom Jira fields (e.g., Story Points, Sprint) beyond the standard fields? | Affects publisher complexity | No custom fields in v1 -- use labels for all metadata. Custom fields can be added in v2. |
+| 3 | Where should the `environments` list come from -- intake file only, or also from template defaults? | Affects intake schema design | Intake file only -- environments are always client-specific. Template has no default environments. |
+| 4 | Should the description template have access to the full `integrations-core` conf.yaml spec, or just the parameter list from the template? | Affects renderer complexity and description quality | Parameter list from template only. The description includes a file path reference; the agent reads the full spec at execution time. |
+
+## Datadog Integration Reference
+
+### integrations-core Repository Structure
+
+Each integration in `~/Programs/integrations-core/` follows this structure:
+
+```
+<integration>/
+  assets/
+    configuration/
+      spec.yaml              # Authoritative parameter definitions
+    dashboards/               # JSON dashboard definitions
+    logs/                     # Log pipeline definitions
+    monitors/                 # Monitor definitions
+    service_checks.json       # Service check definitions
+  datadog_checks/
+    <integration>/
+      __init__.py
+      <integration>.py        # Check implementation
+      data/
+        conf.yaml.example     # Example configuration
+  CHANGELOG.md
+  README.md
+```
+
+### conf.yaml spec.yaml Format
+
+The `spec.yaml` file in each integration defines all configurable parameters:
+
+```yaml
+name: <IntegrationName>
+files:
+- name: <integration>.yaml
+  options:
+  - template: init_config
+    options:
+    - name: <param_name>
+      description: |
+        <Multi-line description>
+      value:
+        type: <string|integer|boolean|array|object>
+        example: <default_value>
+  - template: instances
+    options:
+    - name: <param_name>
+      required: true|false
+      description: |
+        <Multi-line description>
+      value:
+        type: <string|integer|boolean>
+        display_default: <value>
+```
+
+### Key Integrations for Onboarding
+
+| Integration | Repo | Typical Use |
+|------------|------|-------------|
+| postgres | integrations-core | Database monitoring + DBM |
+| mysql | integrations-core | Database monitoring + DBM |
+| sqlserver | integrations-core | Database monitoring + DBM |
+| mongo | integrations-core | Database monitoring |
+| redisdb | integrations-core | Cache monitoring |
+| elastic | integrations-core | Search monitoring |
+| nginx | integrations-core | Web server monitoring |
+| apache | integrations-core | Web server monitoring |
+| docker | integrations-core | Container monitoring |
+| kubernetes | integrations-core | Orchestration monitoring |
+| amazon_eks | integrations-core | AWS EKS monitoring |
+| process | integrations-core | Process monitoring |
+| network | integrations-core | Network monitoring |
+| disk | integrations-core | Disk monitoring |
+
+### integrations-extras Repository
+
+Contains community and partner integrations at `~/Programs/integrations-extras/`. Same directory structure as `integrations-core` but for non-core integrations. Used for specialized monitoring needs (e.g., `aerospike_enterprise`, `auth0`, `backstage`).

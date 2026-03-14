@@ -28,11 +28,11 @@ layout {
                     args "/home/n0ko/.computecommander/scripts/cmdr-agent-wrapper.sh" "e33fa584"
                 }
                 pane split_direction="horizontal" size="23%" {
-                    pane name="Agents" size="65%" {
+                    pane name="Agents" size="50%" {
                         command "cmdr"
                         args "status" "--pane"
                     }
-                    pane name="Jira" size="35%" {
+                    pane name="Jira" size="50%" {
                         command "cmdr"
                         args "jira" "--pane"
                     }

@@ -162,12 +162,12 @@ func GenerateLayout(opts LayoutOpts) string {
                     }
                 }
 %s
-                pane split_direction="horizontal" size="23%%" {
-                    pane name="Agents" size="65%%" {
+                pane split_direction="horizontal" size="18%%" {
+                    pane name="Agents" size="40%%" {
                         command "%s"
                         args "status" "--pane"%s
                     }
-                    pane name="Jira" size="35%%" {
+                    pane name="Jira" size="60%%" {
                         command "%s"
                         args "jira" "--pane"%s
                     }

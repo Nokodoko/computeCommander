@@ -1,0 +1,26 @@
+## Overview
+
+{{ .Context }}
+
+## Track
+
+- **Track**: {{ .TrackName }}
+- **Phase**: {{ .Phase }}
+{{ if .Integration.Label -}}
+- **Integration**: {{ .Integration.Label }}
+- **Repository**: `~/Programs/{{ .Integration.Path }}`
+{{ end }}
+
+## Scope
+
+This story covers configuration and validation of {{ .Integration.Label }} across all target environments. Each child task represents an environment-specific deployment.
+
+## Dependencies
+
+Ensure the parent epic's prerequisites are met before starting child tasks.
+
+## Acceptance Criteria
+
+- [ ] All child tasks completed and validated
+- [ ] Integration reporting data in Datadog UI
+- [ ] No configuration drift between environments

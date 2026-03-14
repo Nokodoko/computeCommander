@@ -72,7 +72,7 @@ func TestBasicAuth(t *testing.T) {
 
 func TestSearchIssues(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/rest/api/3/search" {
+		if r.URL.Path != "/rest/api/3/search/jql" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		json.NewEncoder(w).Encode(SearchResult{
@@ -98,7 +98,7 @@ func TestSearchIssues(t *testing.T) {
 		HTTPClient: srv.Client(),
 	})
 
-	result, err := c.SearchIssues(context.Background(), "project=ENG", 50)
+	result, err := c.SearchIssues(context.Background(), "project=ENG", 50, 0)
 	if err != nil {
 		t.Fatalf("SearchIssues: %v", err)
 	}

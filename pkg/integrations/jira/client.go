@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -172,30 +173,22 @@ func (c *Client) ListProjects(ctx context.Context) ([]APIProject, error) {
 
 // SearchIssues performs a JQL search using the /rest/api/3/search/jql endpoint (POST).
 // The legacy GET /rest/api/3/search endpoint was removed by Atlassian (HTTP 410).
-func (c *Client) SearchIssues(ctx context.Context, jql string, maxResults int) (*SearchResult, error) {
+func (c *Client) SearchIssues(ctx context.Context, jql string, maxResults int, startAt int) (*SearchResult, error) {
 	if maxResults <= 0 {
 		maxResults = 50
 	}
-
-	reqBody := struct {
-		JQL        string   `json:"jql"`
-		MaxResults int      `json:"maxResults"`
-		Fields     []string `json:"fields"`
-	}{
-		JQL:        jql,
-		MaxResults: maxResults,
-		Fields: []string{
-			"summary", "description", "status", "issuetype",
-			"priority", "assignee", "labels", "project",
-			"epic", "parent",
-		},
-	}
-	bodyBytes, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, fmt.Errorf("jira: marshal search request: %w", err)
+	if startAt < 0 {
+		startAt = 0
 	}
 
-	resp, err := c.do(ctx, http.MethodPost, "/rest/api/3/search/jql", strings.NewReader(string(bodyBytes)))
+	fields := "summary,description,status,issuetype,priority,assignee,labels,project,epic,parent"
+
+	params := "?jql=" + url.QueryEscape(jql) +
+		"&maxResults=" + strconv.Itoa(maxResults) +
+		"&startAt=" + strconv.Itoa(startAt) +
+		"&fields=" + fields
+
+	resp, err := c.do(ctx, http.MethodGet, "/rest/api/3/search/jql"+params, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -245,16 +238,164 @@ func (c *Client) GetTransitions(ctx context.Context, issueKey string) ([]APITran
 	return result.Transitions, nil
 }
 
-// AddComment adds a comment to an issue.
+// AddComment adds a comment to an issue using Atlassian Document Format (ADF).
 func (c *Client) AddComment(ctx context.Context, issueKey, commentText string) error {
-	body := fmt.Sprintf(`{"body":"%s"}`, strings.ReplaceAll(commentText, `"`, `\"`))
+	// Jira Cloud API v3 requires ADF for comment bodies.
+	// Wrap the plain text in a code block to preserve formatting.
+	payload := map[string]any{
+		"body": map[string]any{
+			"version": 1,
+			"type":    "doc",
+			"content": []map[string]any{
+				{
+					"type": "codeBlock",
+					"attrs": map[string]string{
+						"language": "markdown",
+					},
+					"content": []map[string]any{
+						{
+							"type": "text",
+							"text": commentText,
+						},
+					},
+				},
+			},
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal comment: %w", err)
+	}
 	resp, err := c.do(ctx, http.MethodPost,
 		"/rest/api/3/issue/"+issueKey+"/comment",
-		strings.NewReader(body))
+		strings.NewReader(string(data)))
 	if err != nil {
 		return err
 	}
 	return decodeResponse(resp, nil)
+}
+
+// AddCommentWithID adds a comment and returns the comment ID from the response.
+func (c *Client) AddCommentWithID(ctx context.Context, issueKey, commentText string) (string, error) {
+	// Jira Cloud API v3 requires ADF for comment bodies.
+	payload := map[string]any{
+		"body": map[string]any{
+			"version": 1,
+			"type":    "doc",
+			"content": []map[string]any{
+				{
+					"type": "codeBlock",
+					"attrs": map[string]string{
+						"language": "markdown",
+					},
+					"content": []map[string]any{
+						{
+							"type": "text",
+							"text": commentText,
+						},
+					},
+				},
+			},
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal comment: %w", err)
+	}
+	resp, err := c.do(ctx, http.MethodPost,
+		"/rest/api/3/issue/"+issueKey+"/comment",
+		strings.NewReader(string(data)))
+	if err != nil {
+		return "", err
+	}
+	var result struct {
+		ID string `json:"id"`
+	}
+	if err := decodeResponse(resp, &result); err != nil {
+		return "", err
+	}
+	return result.ID, nil
+}
+
+// DeleteComment removes a comment from an issue.
+func (c *Client) DeleteComment(ctx context.Context, issueKey, commentID string) error {
+	resp, err := c.do(ctx, http.MethodDelete,
+		"/rest/api/3/issue/"+issueKey+"/comment/"+commentID, nil)
+	if err != nil {
+		return err
+	}
+	// DELETE returns 204 No Content on success; decodeResponse handles non-2xx.
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return decodeResponse(resp, nil)
+	}
+	return nil
+}
+
+// GetComments lists comments on an issue.
+func (c *Client) GetComments(ctx context.Context, issueKey string) ([]APIComment, error) {
+	resp, err := c.do(ctx, http.MethodGet,
+		"/rest/api/3/issue/"+issueKey+"/comment", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result CommentsResponse
+	if err := decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	return result.Comments, nil
+}
+
+// SearchIssuesExcludeSubTasks performs a JQL search that excludes sub-task issue types.
+func (c *Client) SearchIssuesExcludeSubTasks(ctx context.Context, jql string, maxResults int, startAt int) (*SearchResult, error) {
+	subTaskFilter := "issuetype NOT IN subTaskIssueTypes()"
+	var finalJQL string
+	if jql == "" {
+		finalJQL = subTaskFilter + " ORDER BY Rank ASC"
+	} else {
+		// Extract ORDER BY clause if present so filter is injected before it.
+		upper := strings.ToUpper(jql)
+		if idx := strings.LastIndex(upper, "ORDER BY"); idx >= 0 {
+			base := strings.TrimSpace(jql[:idx])
+			orderBy := strings.TrimSpace(jql[idx:])
+			finalJQL = base + " AND " + subTaskFilter + " " + orderBy
+		} else {
+			finalJQL = jql + " AND " + subTaskFilter
+		}
+	}
+	return c.SearchIssues(ctx, finalJQL, maxResults, startAt)
+}
+
+// SearchIssuesPaginated fetches all issues matching a JQL query using pagination.
+// If excludeSubTasks is true, sub-task issue types are filtered out.
+// Returns partial results and error on mid-stream failure.
+func (c *Client) SearchIssuesPaginated(ctx context.Context, jql string, excludeSubTasks bool) (*SearchResult, error) {
+	const pageSize = 50
+	combined := &SearchResult{}
+
+	for startAt := 0; ; startAt += pageSize {
+		var page *SearchResult
+		var err error
+		if excludeSubTasks {
+			page, err = c.SearchIssuesExcludeSubTasks(ctx, jql, pageSize, startAt)
+		} else {
+			page, err = c.SearchIssues(ctx, jql, pageSize, startAt)
+		}
+		if err != nil {
+			// Return partial results collected so far along with the error.
+			return combined, fmt.Errorf("paginated search at offset %d: %w", startAt, err)
+		}
+
+		combined.Issues = append(combined.Issues, page.Issues...)
+		combined.Total = page.Total
+		combined.MaxResults = page.MaxResults
+
+		if len(page.Issues) == 0 || startAt+len(page.Issues) >= page.Total {
+			break
+		}
+	}
+
+	return combined, nil
 }
 
 // BaseURL returns the configured base URL.

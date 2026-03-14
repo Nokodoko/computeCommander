@@ -35,7 +35,7 @@ func TestSyncProject(t *testing.T) {
 				Name: "Engineering",
 				Lead: &APIUser{DisplayName: "Alice"},
 			})
-		case r.URL.Path == "/rest/api/3/search":
+		case r.URL.Path == "/rest/api/3/search/jql":
 			json.NewEncoder(w).Encode(SearchResult{
 				Total: 2,
 				Issues: []APIIssue{
@@ -100,7 +100,7 @@ func TestSyncGetCachedIssues(t *testing.T) {
 		switch {
 		case r.URL.Path == "/rest/api/3/project/ENG":
 			json.NewEncoder(w).Encode(APIProject{ID: "10001", Key: "ENG", Name: "Engineering"})
-		case r.URL.Path == "/rest/api/3/search":
+		case r.URL.Path == "/rest/api/3/search/jql":
 			json.NewEncoder(w).Encode(SearchResult{
 				Total: 1,
 				Issues: []APIIssue{
@@ -151,7 +151,7 @@ func TestSyncEmptyProject(t *testing.T) {
 		switch {
 		case r.URL.Path == "/rest/api/3/project/EMPTY":
 			json.NewEncoder(w).Encode(APIProject{ID: "10002", Key: "EMPTY", Name: "Empty"})
-		case r.URL.Path == "/rest/api/3/search":
+		case r.URL.Path == "/rest/api/3/search/jql":
 			json.NewEncoder(w).Encode(SearchResult{Total: 0, Issues: []APIIssue{}})
 		}
 	}))
@@ -178,7 +178,7 @@ func TestSyncIncrementalUpdate(t *testing.T) {
 		switch {
 		case r.URL.Path == "/rest/api/3/project/ENG":
 			json.NewEncoder(w).Encode(APIProject{ID: "10001", Key: "ENG", Name: "Engineering"})
-		case r.URL.Path == "/rest/api/3/search":
+		case r.URL.Path == "/rest/api/3/search/jql":
 			callCount++
 			summary := "Original"
 			if callCount > 1 {
@@ -234,7 +234,7 @@ func TestSyncStateTracking(t *testing.T) {
 		switch {
 		case r.URL.Path == "/rest/api/3/project/ENG":
 			json.NewEncoder(w).Encode(APIProject{ID: "10001", Key: "ENG", Name: "Engineering"})
-		case r.URL.Path == "/rest/api/3/search":
+		case r.URL.Path == "/rest/api/3/search/jql":
 			json.NewEncoder(w).Encode(SearchResult{Total: 0, Issues: []APIIssue{}})
 		}
 	}))

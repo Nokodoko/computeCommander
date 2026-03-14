@@ -51,7 +51,8 @@ func JiraCmd(app *App) *cobra.Command {
 				return runJiraFallback(cmd.Context(), app, false, jsonOut)
 			}
 
-			return listJiraIssues(cmd.Context(), app, instance, project, status, jsonOut)
+			noSubTasks, _ := cmd.Flags().GetBool("no-subtasks")
+			return listJiraIssues(cmd.Context(), app, instance, project, status, noSubTasks, jsonOut)
 		},
 	}
 
@@ -60,6 +61,7 @@ func JiraCmd(app *App) *cobra.Command {
 	cmd.Flags().String("project", "", "Filter by project key")
 	cmd.Flags().String("epic", "", "Filter by epic key")
 	cmd.Flags().String("status", "", "Filter by Jira status")
+	cmd.Flags().Bool("no-subtasks", true, "Exclude sub-tasks from results (default: true)")
 
 	cmd.AddCommand(jiraShowCmd(app))
 	cmd.AddCommand(jiraSyncCmd(app))
@@ -68,6 +70,8 @@ func JiraCmd(app *App) *cobra.Command {
 	cmd.AddCommand(jiraTransitionCmd(app))
 	cmd.AddCommand(jiraInstancesCmd(app))
 	cmd.AddCommand(jiraFactoryCmd(app))
+	cmd.AddCommand(jiraLogCmd(app))
+	cmd.AddCommand(jiraUndoCmd(app))
 
 	return cmd
 }
@@ -244,16 +248,135 @@ func jiraFactoryCmd(app *App) *cobra.Command {
 	return cmd
 }
 
+func jiraLogCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "log",
+		Short: "List recent prompt executions",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			jsonOut, _ := cmd.Root().Flags().GetBool("json")
+			issueKey, _ := cmd.Flags().GetString("issue")
+			batchID, _ := cmd.Flags().GetString("batch")
+			limit, _ := cmd.Flags().GetInt("limit")
+
+			var entries []PromptExecLog
+			var err error
+			if batchID != "" {
+				entries, err = queryPromptLogByBatch(cmd.Context(), app.DB, batchID, limit)
+			} else {
+				entries, err = queryPromptLog(cmd.Context(), app.DB, issueKey, limit)
+			}
+			if err != nil {
+				return jiraError(jsonOut, "jira log", err)
+			}
+
+			if jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(map[string]any{
+					"success": true,
+					"command": "jira log",
+					"entries": entries,
+					"count":   len(entries),
+				})
+			}
+
+			if len(entries) == 0 {
+				fmt.Println("No prompt executions found.")
+				return nil
+			}
+
+			fmt.Printf("%-6s %-12s %-14s %-8s %-10s %-20s\n", "ID", "ISSUE", "HASH", "STATUS", "COMMENT", "CREATED")
+			for _, e := range entries {
+				commentID := e.JiraCommentID
+				if commentID == "" {
+					commentID = "-"
+				}
+				fmt.Printf("%-6d %-12s %-14s %-8s %-10s %-20s\n",
+					e.ID,
+					truncate(e.IssueKey, 12),
+					truncate(e.PromptHash, 14),
+					truncate(e.Status, 8),
+					truncate(commentID, 10),
+					truncate(e.CreatedAt, 20),
+				)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().String("issue", "", "Filter by issue key")
+	cmd.Flags().String("batch", "", "Filter by batch ID")
+	cmd.Flags().Int("limit", 50, "Max entries")
+	cmd.Flags().Bool("json", false, "JSON output")
+	return cmd
+}
+
+func jiraUndoCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "undo <log-id>",
+		Short: "Undo a prompt execution (delete Jira comment)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			jsonOut, _ := cmd.Root().Flags().GetBool("json")
+			instance, _ := cmd.Flags().GetString("instance")
+
+			var logID int64
+			if _, err := fmt.Sscanf(args[0], "%d", &logID); err != nil {
+				return jiraError(jsonOut, "jira undo", fmt.Errorf("invalid log ID: %s", args[0]))
+			}
+
+			entry, err := getPromptLogByID(cmd.Context(), app.DB, logID)
+			if err != nil {
+				return jiraError(jsonOut, "jira undo", err)
+			}
+			if entry.Status == "undone" {
+				return jiraError(jsonOut, "jira undo", fmt.Errorf("log entry %d already undone", logID))
+			}
+			if entry.JiraCommentID == "" {
+				return jiraError(jsonOut, "jira undo", fmt.Errorf("no comment ID for log entry %d", logID))
+			}
+
+			instName := instance
+			if instName == "" {
+				instName = entry.InstanceName
+			}
+			inst, err := resolveInstance(app.Config, instName)
+			if err != nil {
+				return jiraError(jsonOut, "jira undo", err)
+			}
+
+			client := newJiraClient(inst, app.Config)
+			if err := client.DeleteComment(cmd.Context(), entry.IssueKey, entry.JiraCommentID); err != nil {
+				return jiraError(jsonOut, "jira undo", fmt.Errorf("delete comment failed: %w", err))
+			}
+
+			markExecUndone(cmd.Context(), app.DB, logID)
+
+			if jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(map[string]any{
+					"success":        true,
+					"command":        "jira undo",
+					"logId":          logID,
+					"issueKey":       entry.IssueKey,
+					"commentDeleted": true,
+				})
+			}
+
+			fmt.Printf("Undone: deleted comment %s from %s (log #%d)\n", entry.JiraCommentID, entry.IssueKey, logID)
+			return nil
+		},
+	}
+	cmd.Flags().String("instance", "", "Override Jira instance")
+	return cmd
+}
+
 // --- Command implementations ---
 
-func listJiraIssues(ctx context.Context, app *App, instanceName, projectKey, status string, jsonOut bool) error {
+func listJiraIssues(ctx context.Context, app *App, instanceName, projectKey, status string, excludeSubTasks bool, jsonOut bool) error {
 	inst, err := resolveInstance(app.Config, instanceName)
 	if err != nil {
 		return err
 	}
 
 	engine := newSyncEngine(app, inst)
-	issues, err := engine.GetCachedIssues(ctx, projectKey, status)
+	issues, err := engine.GetCachedIssuesFiltered(ctx, projectKey, status, excludeSubTasks)
 	if err != nil {
 		return jiraError(jsonOut, "jira", err)
 	}
@@ -373,7 +496,7 @@ func syncJira(ctx context.Context, app *App, instanceName string, jsonOut bool) 
 		return fmt.Errorf("no default_project configured for instance %q", inst.Name)
 	}
 
-	result, err := engine.SyncProject(ctx, project)
+	result, err := engine.SyncProjectWithOpts(ctx, jira.SyncOpts{ProjectKey: project})
 	if jsonOut {
 		status := "success"
 		errMsg := ""
@@ -412,27 +535,43 @@ func generateJiraPrompt(ctx context.Context, app *App, issueKey, instanceName st
 	}
 
 	pg := jira.NewPromptGenerator(app.Config.Jira.PromptTemplate)
-	result, err := pg.Generate(issue, "", "", inst.DefaultProject)
+
+	// For parent-type issues, fetch sub-tasks and use recursive generation.
+	var result *jira.PromptResult
+	if !isSubTaskType(issue.IssueType) {
+		subTasks, _ := engine.GetSubTasks(ctx, issueKey)
+		if len(subTasks) > 0 {
+			result, err = pg.GenerateRecursive(issue, subTasks, "", "", inst.DefaultProject)
+		} else {
+			result, err = pg.Generate(issue, "", "", inst.DefaultProject)
+		}
+	} else {
+		result, err = pg.Generate(issue, "", "", inst.DefaultProject)
+	}
 	if err != nil {
 		return jiraError(jsonOut, "jira prompt", err)
 	}
 
+	// Post the generated prompt to the Jira ticket as a comment.
+	commentBody := fmt.Sprintf("*Generated Prompt (cmdr)*\n\nHash: %s\n\n---\n\n%s",
+		result.PromptHash[:12], result.Prompt)
+	client := newJiraClient(inst, app.Config)
+	if err := client.AddComment(ctx, issueKey, commentBody); err != nil {
+		return jiraError(jsonOut, "jira prompt", fmt.Errorf("prompt generated but Jira comment failed: %w", err))
+	}
+
 	if jsonOut {
 		return json.NewEncoder(os.Stdout).Encode(map[string]any{
-			"success":       true,
-			"command":       "jira prompt",
-			"issueKey":      issueKey,
-			"prompt":        result.Prompt,
-			"promptHash":    result.PromptHash,
-			"outcomesValid": len(result.Outcomes) > 0,
-			"outcomes":      result.Outcomes,
+			"success":    true,
+			"command":    "jira prompt",
+			"issueKey":   issueKey,
+			"promptHash": result.PromptHash,
+			"outcomes":   len(result.Outcomes),
+			"commented":  true,
 		})
 	}
 
-	fmt.Print(result.Prompt)
-	if dryRun {
-		fmt.Printf("\n---\nHash: %s\nOutcomes: %d\n", result.PromptHash, len(result.Outcomes))
-	}
+	fmt.Printf("Prompt posted to %s (hash: %s, outcomes: %d)\n", issueKey, result.PromptHash[:12], len(result.Outcomes))
 	return nil
 }
 
@@ -449,7 +588,19 @@ func executeJiraIssue(ctx context.Context, app *App, issueKey, instanceName, mod
 	}
 
 	pg := jira.NewPromptGenerator(app.Config.Jira.PromptTemplate)
-	result, err := pg.Generate(issue, "", "", inst.DefaultProject)
+
+	// For parent-type issues, fetch sub-tasks and use recursive generation.
+	var result *jira.PromptResult
+	if !isSubTaskType(issue.IssueType) {
+		subTasks, _ := engine.GetSubTasks(ctx, issueKey)
+		if len(subTasks) > 0 {
+			result, err = pg.GenerateRecursive(issue, subTasks, "", "", inst.DefaultProject)
+		} else {
+			result, err = pg.Generate(issue, "", "", inst.DefaultProject)
+		}
+	} else {
+		result, err = pg.Generate(issue, "", "", inst.DefaultProject)
+	}
 	if err != nil {
 		return jiraError(jsonOut, "jira execute", err)
 	}
@@ -706,6 +857,8 @@ func runJiraPaneLoop(ctx context.Context, app *App, instanceName, projectKey str
 
 	theme := tui.DefaultTheme()
 	pane := tui.NewJiraPane(engine, theme)
+	pane.SetInstance(inst.Name)
+	pane.SetExcludeSubTasks(true)
 	if projectKey != "" {
 		pane.SetProject(projectKey)
 	}
@@ -717,6 +870,7 @@ func runJiraPaneLoop(ctx context.Context, app *App, instanceName, projectKey str
 
 	m := &jiraPaneModel{
 		ctx:        ctx,
+		app:        app,
 		pane:       pane,
 		syncEngine: engine,
 		inst:       inst,
@@ -740,15 +894,60 @@ type jiraPaneTickMsg time.Time
 // jiraPaneStatusClearMsg signals that the ephemeral status line should be cleared.
 type jiraPaneStatusClearMsg struct{}
 
+type jiraProjectListMsg struct {
+	projects []jira.APIProject
+	err      error
+}
+
+type jiraIssueDetailMsg struct {
+	issue *jira.JiraIssue
+	err   error
+}
+
+// jiraPromptResultMsg carries the outcome of an async prompt generation + comment post.
+type jiraPromptResultMsg struct {
+	issueKey   string
+	promptHash string
+	outcomes   int
+	err        error
+}
+
 // jiraPaneModel is a bubbletea.Model wrapping JiraPane with full keybind support.
 type jiraPaneModel struct {
 	ctx          context.Context
+	app          *App
 	pane         *tui.JiraPane
 	syncEngine   *jira.SyncEngine
 	inst         *config.JiraInstance
 	projectKey   string
 	statusMsg    string
 	statusExpiry time.Time
+	lastKey      string
+	// Instance picker state.
+	showInstancePicker bool
+	instanceNames      []string
+	instanceCursor     int
+	// Project picker state.
+	showProjectPicker bool
+	projectList       []jira.APIProject
+	projectCursor     int
+	projectLoading    bool
+	// Issue detail overlay state.
+	showIssueDetail bool
+	detailIssue     *jira.JiraIssue
+	// Preview overlay state.
+	showPreview bool
+	previewKeys []string
+	// Execution log overlay state.
+	showLogOverlay bool
+	logEntries     []PromptExecLog
+	logCursor      int
+	// Last comment ID for quick undo.
+	lastCommentID  string
+	lastCommentKey string
+	// Preserved dimensions for hot-swap resize.
+	lastWidth  int
+	lastHeight int
 }
 
 func (m *jiraPaneModel) Init() tea.Cmd {
@@ -763,10 +962,75 @@ func (m *jiraPaneModel) setStatus(msg string) tea.Cmd {
 	return tea.Tick(5*time.Second, func(t time.Time) tea.Msg { return jiraPaneStatusClearMsg{} })
 }
 
+// execPromptCmd generates a prompt for an issue and posts it as a Jira comment.
+// For parent tasks, it recursively includes sub-task material with orchestrator instructions.
+func (m *jiraPaneModel) execPromptCmd(issueKey string) tea.Cmd {
+	return func() tea.Msg {
+		if m.syncEngine == nil {
+			return jiraPromptResultMsg{issueKey: issueKey, err: fmt.Errorf("no sync engine")}
+		}
+		issue, err := m.syncEngine.GetCachedIssue(m.ctx, issueKey)
+		if err != nil {
+			return jiraPromptResultMsg{issueKey: issueKey, err: err}
+		}
+		pg := jira.NewPromptGenerator(m.app.Config.Jira.PromptTemplate)
+
+		// For parent-type issues, fetch sub-tasks and use recursive generation.
+		var result *jira.PromptResult
+		if !isSubTaskType(issue.IssueType) {
+			subTasks, _ := m.syncEngine.GetSubTasks(m.ctx, issueKey)
+			if len(subTasks) > 0 {
+				result, err = pg.GenerateRecursive(issue, subTasks, "", "", m.projectKey)
+			} else {
+				result, err = pg.Generate(issue, "", "", m.projectKey)
+			}
+		} else {
+			result, err = pg.Generate(issue, "", "", m.projectKey)
+		}
+		if err != nil {
+			return jiraPromptResultMsg{issueKey: issueKey, err: err}
+		}
+		commentBody := fmt.Sprintf("*Generated Prompt (cmdr)*\n\nHash: %s\n\n---\n\n%s",
+			result.PromptHash[:12], result.Prompt)
+		client := newJiraClient(m.inst, m.app.Config)
+		if err := client.AddComment(m.ctx, issueKey, commentBody); err != nil {
+			return jiraPromptResultMsg{issueKey: issueKey, err: fmt.Errorf("comment failed: %w", err)}
+		}
+		return jiraPromptResultMsg{
+			issueKey:   issueKey,
+			promptHash: result.PromptHash[:12],
+			outcomes:   len(result.Outcomes),
+		}
+	}
+}
+
+// fetchIssueDetailCmd fetches a single issue from the cache and returns it as jiraIssueDetailMsg.
+func (m *jiraPaneModel) fetchIssueDetailCmd(issueKey string) tea.Cmd {
+	return func() tea.Msg {
+		if m.syncEngine == nil {
+			return jiraIssueDetailMsg{err: fmt.Errorf("no sync engine")}
+		}
+		issue, err := m.syncEngine.GetCachedIssue(m.ctx, issueKey)
+		if err != nil {
+			return jiraIssueDetailMsg{err: err}
+		}
+		return jiraIssueDetailMsg{issue: issue}
+	}
+}
+
+// fetchProjectsCmd fetches the project list from the active Jira instance.
+func (m *jiraPaneModel) fetchProjectsCmd() tea.Cmd {
+	return func() tea.Msg {
+		client := newJiraClient(m.inst, m.app.Config)
+		projects, err := client.ListProjects(m.ctx)
+		return jiraProjectListMsg{projects: projects, err: err}
+	}
+}
+
 // syncCmd spawns an async SyncProject and returns the result as jiraSyncResultMsg.
 func (m *jiraPaneModel) syncCmd() tea.Cmd {
 	return func() tea.Msg {
-		result, err := m.syncEngine.SyncProject(m.ctx, m.projectKey)
+		result, err := m.syncEngine.SyncProjectWithOpts(m.ctx, jira.SyncOpts{ProjectKey: m.projectKey})
 		if err != nil {
 			return jiraSyncResultMsg{err: err}
 		}
@@ -777,6 +1041,8 @@ func (m *jiraPaneModel) syncCmd() tea.Cmd {
 func (m *jiraPaneModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.lastWidth = msg.Width
+		m.lastHeight = msg.Height
 		// Reserve 1 line for status bar at bottom.
 		m.pane.SetSize(msg.Width-2, msg.Height-4)
 
@@ -797,8 +1063,188 @@ func (m *jiraPaneModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case jiraPromptResultMsg:
+		if msg.err != nil {
+			return m, m.setStatus(fmt.Sprintf("Prompt error (%s): %v", msg.issueKey, msg.err))
+		}
+		return m, m.setStatus(fmt.Sprintf("Prompt posted to %s (hash: %s, outcomes: %d)", msg.issueKey, msg.promptHash, msg.outcomes))
+
+	case jiraPromptExecResultMsg:
+		if msg.err != nil {
+			return m, m.setStatus(fmt.Sprintf("Prompt error (%s): %v", msg.issueKey, msg.err))
+		}
+		m.lastCommentID = msg.commentID
+		m.lastCommentKey = msg.issueKey
+		return m, m.setStatus(fmt.Sprintf("Prompt posted to %s (hash: %s, log: #%d)", msg.issueKey, msg.promptHash, msg.logID))
+
+	case jiraBatchExecResultMsg:
+		return m, m.setStatus(fmt.Sprintf("Batch %s: %d/%d succeeded, %d failed",
+			msg.batchID[:8], msg.succeeded, msg.total, msg.failed))
+
+	case jiraUndoResultMsg:
+		if msg.err != nil {
+			return m, m.setStatus(fmt.Sprintf("Undo error (%s): %v", msg.issueKey, msg.err))
+		}
+		return m, m.setStatus(fmt.Sprintf("Undone: deleted comment from %s (log #%d)", msg.issueKey, msg.logID))
+
+	case jiraLogEntriesMsg:
+		if msg.err != nil {
+			m.showLogOverlay = false
+			return m, m.setStatus(fmt.Sprintf("Log error: %v", msg.err))
+		}
+		m.logEntries = msg.entries
+		m.logCursor = 0
+		m.showLogOverlay = true
+		return m, nil
+
+	case jiraIssueDetailMsg:
+		if msg.err != nil {
+			return m, m.setStatus(fmt.Sprintf("Detail error: %v", msg.err))
+		}
+		m.detailIssue = msg.issue
+		m.showIssueDetail = true
+		return m, nil
+
+	case jiraProjectListMsg:
+		m.projectLoading = false
+		if msg.err != nil {
+			m.showProjectPicker = false
+			return m, m.setStatus(fmt.Sprintf("Project fetch error: %v", msg.err))
+		}
+		m.projectList = msg.projects
+		if len(msg.projects) == 0 {
+			m.showProjectPicker = false
+			return m, m.setStatus("No projects found — check API token and permissions")
+		}
+		m.projectCursor = 0
+		m.showProjectPicker = true
+		for i, p := range msg.projects {
+			if p.Key == m.projectKey {
+				m.projectCursor = i
+				break
+			}
+		}
+		return m, nil
+
 	case tea.KeyMsg:
-		switch msg.String() {
+		key := msg.String()
+
+		// Preview overlay intercepts all keys when visible.
+		if m.showPreview {
+			switch key {
+			case "enter", "y":
+				keys := m.previewKeys
+				m.showPreview = false
+				m.previewKeys = nil
+				return m, tea.Batch(m.setStatus(fmt.Sprintf("Executing batch for %d tickets...", len(keys))), m.execBatchPromptCmd(keys))
+			case "esc", "q", "n":
+				m.showPreview = false
+				m.previewKeys = nil
+			}
+			return m, nil
+		}
+
+		// Log overlay intercepts all keys when visible.
+		if m.showLogOverlay {
+			switch key {
+			case "j", "down":
+				if m.logCursor < len(m.logEntries)-1 {
+					m.logCursor++
+				}
+			case "k", "up":
+				if m.logCursor > 0 {
+					m.logCursor--
+				}
+			case "esc", "q":
+				m.showLogOverlay = false
+				m.logEntries = nil
+			}
+			return m, nil
+		}
+
+		// Issue detail overlay intercepts all keys when visible.
+		if m.showIssueDetail {
+			switch key {
+			case "esc", "q", "h":
+				m.showIssueDetail = false
+				m.detailIssue = nil
+			}
+			return m, nil
+		}
+
+		// Project picker intercepts all keys when visible.
+		if m.showProjectPicker {
+			switch key {
+			case "j", "down":
+				if m.projectCursor < len(m.projectList)-1 {
+					m.projectCursor++
+				}
+			case "k", "up":
+				if m.projectCursor > 0 {
+					m.projectCursor--
+				}
+			case "enter", "l":
+				if len(m.projectList) > 0 {
+					selected := m.projectList[m.projectCursor]
+					m.projectKey = selected.Key
+					m.pane.SetProject(selected.Key)
+					m.showProjectPicker = false
+					_ = m.pane.Refresh(m.ctx)
+					return m, m.setStatus(fmt.Sprintf("Project: %s", selected.Key))
+				}
+			case "esc", "q", "h":
+				m.showProjectPicker = false
+				// Reset to instance default when cancelling to avoid stale project key.
+				if m.inst != nil {
+					m.projectKey = m.inst.DefaultProject
+					m.pane.SetProject(m.inst.DefaultProject)
+					_ = m.pane.Refresh(m.ctx)
+				}
+			}
+			return m, nil
+		}
+
+		// Instance picker intercepts all keys when visible.
+		if m.showInstancePicker {
+			switch key {
+			case "j", "down":
+				if m.instanceCursor < len(m.instanceNames)-1 {
+					m.instanceCursor++
+				}
+			case "k", "up":
+				if m.instanceCursor > 0 {
+					m.instanceCursor--
+				}
+			case "enter", "l":
+				if len(m.instanceNames) > 0 {
+					selectedName := m.instanceNames[m.instanceCursor]
+					inst, err := resolveInstance(m.app.Config, selectedName)
+					if err != nil {
+						m.showInstancePicker = false
+						return m, m.setStatus(fmt.Sprintf("Error: %v", err))
+					}
+					engine := newSyncEngine(m.app, inst)
+					m.inst = inst
+					m.syncEngine = engine
+					m.projectKey = inst.DefaultProject
+					newPane := tui.NewJiraPane(engine, tui.DefaultTheme())
+					newPane.SetInstance(inst.Name)
+					newPane.SetProject(inst.DefaultProject)
+					newPane.SetSize(m.lastWidth-2, m.lastHeight-4)
+					_ = newPane.Refresh(m.ctx)
+					m.pane = newPane
+					m.showInstancePicker = false
+					m.projectLoading = true
+					m.showProjectPicker = true
+					return m, tea.Batch(m.setStatus(fmt.Sprintf("Switched to %s", inst.Name)), m.fetchProjectsCmd())
+				}
+			case "esc", "q", "h":
+				m.showInstancePicker = false
+			}
+			return m, nil
+		}
+
+		switch key {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "j", "down":
@@ -809,6 +1255,14 @@ func (m *jiraPaneModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pane.PageDown()
 		case "N", "pgup", "ctrl+u":
 			m.pane.PageUp()
+		case "G":
+			m.pane.GoBottom()
+		case "g":
+			if m.lastKey == "g" {
+				m.pane.GoTop()
+				m.lastKey = ""
+				return m, nil
+			}
 		case "l", "enter", "right":
 			m.pane.Expand()
 		case "h", "left":
@@ -820,13 +1274,62 @@ func (m *jiraPaneModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.setStatus("No Jira instance configured")
 			}
 			return m, tea.Batch(m.setStatus("Syncing..."), m.syncCmd())
-		case "e":
+		case "o":
 			selected := m.pane.SelectedKey()
 			if selected == "" {
-				return m, m.setStatus("Prompt: use 'cmdr jira prompt <key>'")
+				return m, m.setStatus("No issue selected")
 			}
-			return m, m.setStatus(fmt.Sprintf("Prompt: use 'cmdr jira prompt %s'", selected))
+			return m, m.fetchIssueDetailCmd(selected)
+		case "e":
+			if m.inst == nil || m.syncEngine == nil {
+				return m, m.setStatus("No Jira instance configured")
+			}
+			selected := m.pane.SelectedKey()
+			if selected == "" {
+				return m, m.setStatus("No issue selected")
+			}
+			return m, tea.Batch(m.setStatus(fmt.Sprintf("Generating prompt for %s...", selected)), m.execPromptCmdWithLog(selected, ""))
+		case "E":
+			if m.inst == nil || m.syncEngine == nil {
+				return m, m.setStatus("No Jira instance configured")
+			}
+			keys := m.selectedOrAllKeys()
+			if len(keys) == 0 {
+				return m, m.setStatus("No issues to execute")
+			}
+			// Show preview overlay before batch execution.
+			m.previewKeys = keys
+			m.showPreview = true
+			return m, nil
+		case " ":
+			selected := m.pane.SelectedKey()
+			if selected == "" {
+				return m, nil
+			}
+			m.pane.ToggleSelect(selected)
+			return m, nil
+		case "u":
+			if m.inst == nil || m.syncEngine == nil {
+				return m, m.setStatus("No Jira instance configured")
+			}
+			selected := m.pane.SelectedKey()
+			if selected == "" {
+				return m, m.setStatus("No issue selected")
+			}
+			return m, tea.Batch(m.setStatus(fmt.Sprintf("Undoing last prompt for %s...", selected)), m.undoPromptCmd(selected))
+		case "L":
+			if m.app == nil || m.app.DB == nil {
+				return m, m.setStatus("No database configured")
+			}
+			return m, m.fetchLogEntriesCmd()
 		case "p":
+			if m.app == nil || m.inst == nil {
+				return m, m.setStatus("No Jira instance configured")
+			}
+			m.projectLoading = true
+			m.showProjectPicker = true
+			return m, m.fetchProjectsCmd()
+		case "P":
 			selected := m.pane.SelectedKey()
 			if selected == "" {
 				return m, m.setStatus("Preview: use 'cmdr jira prompt --dry-run <key>'")
@@ -839,10 +1342,34 @@ func (m *jiraPaneModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.setStatus(fmt.Sprintf("Execute: use 'cmdr jira execute %s'", selected))
 		case "i":
-			if m.inst == nil {
-				return m, m.setStatus("No Jira instance configured")
+			if m.app == nil || len(m.app.Config.Jira.Instances) == 0 {
+				return m, m.setStatus("No Jira instances configured")
 			}
-			return m, m.setStatus(fmt.Sprintf("Instance: %s (switching requires restart)", m.inst.Name))
+			names := make([]string, len(m.app.Config.Jira.Instances))
+			for idx, inst := range m.app.Config.Jira.Instances {
+				names[idx] = inst.Name
+			}
+			m.instanceNames = names
+			// Set cursor to current instance.
+			m.instanceCursor = 0
+			if m.inst != nil {
+				for idx, n := range names {
+					if n == m.inst.Name {
+						m.instanceCursor = idx
+						break
+					}
+				}
+			}
+			m.showInstancePicker = true
+			return m, nil
+		case "t":
+			m.pane.ToggleSubTasks()
+			_ = m.pane.Refresh(m.ctx)
+			label := "hidden"
+			if !m.pane.ExcludeSubTasks() {
+				label = "visible"
+			}
+			return m, m.setStatus(fmt.Sprintf("Sub-tasks: %s", label))
 		case "f":
 			return m, m.setStatus("Factory: use 'cmdr jira factory --project <key>'")
 		case "v":
@@ -852,16 +1379,198 @@ func (m *jiraPaneModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.setStatus(fmt.Sprintf("Verify: use 'cmdr jira execute %s --verify'", selected))
 		}
+		// Track last key for multi-key sequences (e.g. gg).
+		// Reset to empty for any key other than "g" so partial sequences don't linger.
+		if key == "g" {
+			m.lastKey = key
+		} else {
+			m.lastKey = ""
+		}
 	}
 	return m, nil
 }
 
 func (m *jiraPaneModel) View() string {
+	if m.showPreview {
+		return m.viewPreviewOverlay()
+	}
+	if m.showLogOverlay {
+		return m.viewLogOverlay()
+	}
+	if m.showIssueDetail && m.detailIssue != nil {
+		return m.viewIssueDetail()
+	}
+	if m.showProjectPicker {
+		return m.viewProjectPicker()
+	}
+	if m.showInstancePicker {
+		return m.viewInstancePicker()
+	}
 	paneView := m.pane.View()
 	if m.statusMsg == "" {
 		return paneView
 	}
 	return paneView + "\n" + m.statusMsg
+}
+
+func (m *jiraPaneModel) viewInstancePicker() string {
+	theme := tui.DefaultTheme()
+	sep := strings.Repeat("\u2500", 20)
+	var lines []string
+	lines = append(lines, theme.Title.Render("Switch Jira Instance"))
+	lines = append(lines, sep)
+	for i, name := range m.instanceNames {
+		cursor := "  "
+		if i == m.instanceCursor {
+			cursor = "> "
+		}
+		lines = append(lines, cursor+name)
+	}
+	lines = append(lines, sep)
+	lines = append(lines, theme.HelpBar.Render("  j/k:nav  enter:select  esc:cancel"))
+	return strings.Join(lines, "\n")
+}
+
+func (m *jiraPaneModel) viewProjectPicker() string {
+	theme := tui.DefaultTheme()
+	var lines []string
+	lines = append(lines, theme.Title.Render("Select Project"))
+	lines = append(lines, strings.Repeat("\u2500", 60))
+
+	if m.projectLoading {
+		lines = append(lines, "  Loading projects...")
+	} else if len(m.projectList) == 0 {
+		lines = append(lines, "  No projects found")
+	} else {
+		lines = append(lines, fmt.Sprintf("  %-8s %-28s %-12s %s", "KEY", "NAME", "TYPE", "LEAD"))
+		for i, proj := range m.projectList {
+			cursor := "  "
+			if i == m.projectCursor {
+				cursor = "> "
+			}
+			lead := "-"
+			if proj.Lead != nil {
+				lead = truncate(proj.Lead.DisplayName, 16)
+			}
+			ptype := proj.ProjectTypeKey
+			if ptype == "" {
+				ptype = "-"
+			}
+			lines = append(lines, fmt.Sprintf("%s%-8s %-28s %-12s %s",
+				cursor,
+				truncate(proj.Key, 8),
+				truncate(proj.Name, 28),
+				truncate(ptype, 12),
+				lead,
+			))
+		}
+	}
+
+	lines = append(lines, strings.Repeat("\u2500", 60))
+	lines = append(lines, theme.HelpBar.Render("  j/k:nav  enter:select  esc:cancel"))
+	return strings.Join(lines, "\n")
+}
+
+func (m *jiraPaneModel) viewPreviewOverlay() string {
+	theme := tui.DefaultTheme()
+	var lines []string
+	lines = append(lines, theme.Title.Render("Batch Prompt Execution Preview"))
+	lines = append(lines, strings.Repeat("─", 60))
+	lines = append(lines, "")
+	lines = append(lines, fmt.Sprintf("  %d ticket(s) will be prompted:", len(m.previewKeys)))
+	lines = append(lines, "")
+	for i, key := range m.previewKeys {
+		if i >= 20 {
+			lines = append(lines, fmt.Sprintf("    ... and %d more", len(m.previewKeys)-20))
+			break
+		}
+		lines = append(lines, fmt.Sprintf("    • %s", key))
+	}
+	lines = append(lines, "")
+	lines = append(lines, strings.Repeat("─", 60))
+	lines = append(lines, theme.HelpBar.Render("  enter/y:confirm  esc/n:cancel"))
+	return strings.Join(lines, "\n")
+}
+
+func (m *jiraPaneModel) viewLogOverlay() string {
+	theme := tui.DefaultTheme()
+	var lines []string
+	lines = append(lines, theme.Title.Render("Prompt Execution Log"))
+	lines = append(lines, strings.Repeat("─", 70))
+
+	if len(m.logEntries) == 0 {
+		lines = append(lines, "  No log entries found.")
+	} else {
+		lines = append(lines, fmt.Sprintf("  %-5s %-12s %-14s %-8s %-20s", "ID", "ISSUE", "HASH", "STATUS", "CREATED"))
+		for i, e := range m.logEntries {
+			cursor := "  "
+			if i == m.logCursor {
+				cursor = "> "
+			}
+			lines = append(lines, fmt.Sprintf("%s%-5d %-12s %-14s %-8s %-20s",
+				cursor,
+				e.ID,
+				truncate(e.IssueKey, 12),
+				truncate(e.PromptHash, 14),
+				truncate(e.Status, 8),
+				truncate(e.CreatedAt, 20),
+			))
+		}
+	}
+
+	lines = append(lines, strings.Repeat("─", 70))
+	lines = append(lines, theme.HelpBar.Render("  j/k:nav  esc/q:close"))
+	return strings.Join(lines, "\n")
+}
+
+func (m *jiraPaneModel) viewIssueDetail() string {
+	theme := tui.DefaultTheme()
+	issue := m.detailIssue
+	var lines []string
+
+	lines = append(lines, theme.Title.Render(fmt.Sprintf("  %s", issue.Key)))
+	lines = append(lines, strings.Repeat("─", 60))
+	lines = append(lines, "")
+	lines = append(lines, fmt.Sprintf("  Summary:    %s", issue.Summary))
+	lines = append(lines, fmt.Sprintf("  Status:     %s", issue.Status))
+	lines = append(lines, fmt.Sprintf("  Type:       %s", issue.IssueType))
+	lines = append(lines, fmt.Sprintf("  Priority:   %s", issue.Priority))
+	assignee := issue.Assignee
+	if assignee == "" {
+		assignee = "Unassigned"
+	}
+	lines = append(lines, fmt.Sprintf("  Assignee:   %s", assignee))
+	if len(issue.Labels) > 0 {
+		lines = append(lines, fmt.Sprintf("  Labels:     %s", strings.Join(issue.Labels, ", ")))
+	}
+	if issue.AgentState != "" {
+		lines = append(lines, fmt.Sprintf("  Agent:      %s (%s)", issue.AgentType, issue.AgentState))
+	}
+
+	if issue.Description != "" {
+		lines = append(lines, "")
+		lines = append(lines, strings.Repeat("─", 60))
+		lines = append(lines, "")
+		// Word-wrap description to ~56 chars with 2-char indent.
+		for _, descLine := range strings.Split(issue.Description, "\n") {
+			if len(descLine) > 56 {
+				for len(descLine) > 56 {
+					lines = append(lines, "  "+descLine[:56])
+					descLine = descLine[56:]
+				}
+				if descLine != "" {
+					lines = append(lines, "  "+descLine)
+				}
+			} else {
+				lines = append(lines, "  "+descLine)
+			}
+		}
+	}
+
+	lines = append(lines, "")
+	lines = append(lines, strings.Repeat("─", 60))
+	lines = append(lines, theme.HelpBar.Render("  esc/q:close"))
+	return strings.Join(lines, "\n")
 }
 
 // renderJiraPane is kept for the legacy ANSI loop path (runJiraLegacyPane).

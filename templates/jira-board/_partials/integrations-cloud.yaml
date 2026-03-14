@@ -1,0 +1,31 @@
+# Cloud Provider + Storage Dimension Catalog
+# Merged into org-generator.yaml dimensions.cloud_provider and dimensions.storage
+
+dimensions:
+  cloud_provider:
+    - id: "aws"
+      label: "AWS"
+      services: ["ec2", "rds", "ecs", "eks", "lambda", "s3", "cloudwatch"]
+    - id: "azure"
+      label: "Azure"
+      services: ["vm", "sql-db", "aks", "functions", "blob", "monitor"]
+    - id: "gcp"
+      label: "GCP"
+      services: ["gce", "cloud-sql", "gke", "cloud-functions", "gcs", "stackdriver"]
+    - id: "on-prem"
+      label: "On-Premises"
+      services: []
+
+  storage:
+    - id: "s3"
+      label: "AWS S3"
+      integration_path: "integrations-core/amazon_s3"
+    - id: "blob"
+      label: "Azure Blob"
+      integration_path: "integrations-extras/azure_blob_storage"
+    - id: "gcs"
+      label: "Google Cloud Storage"
+      integration_path: "integrations-core/google_cloud_platform"
+    - id: "nfs"
+      label: "NFS/Local"
+      integration_path: null

@@ -1,0 +1,266 @@
+# Datadog Client Onboarding — Jira Board Template
+# Version: 1.0.0
+# Project Type: org-generator
+#
+# NOTE: This is a slim orchestration file.
+# Dimension catalog data lives in _partials/*.yaml and is merged at load time.
+# Do NOT add dimension values here — edit the corresponding partial file instead.
+
+meta:
+  version: "1.0.0"
+  project_type: "org-generator"
+  description: "Datadog onboarding board for corporate clients"
+  default_project_key: "DD"
+  default_board_type: "kanban"
+
+# Dimension keys used by this template.
+# Actual values are loaded from _partials/*.yaml during LoadTemplate().
+# This section declares the expected dimension names for schema validation.
+dimensions:
+  cloud_provider: []   # Populated from integrations-cloud.yaml
+  os: []               # Populated from integrations-infra.yaml
+  database: []         # Populated from integrations-db.yaml
+  app_architecture: [] # Populated from integrations-apm.yaml
+  storage: []          # Populated from integrations-cloud.yaml
+
+# Work tracks — epics that organize the board
+tracks:
+  - id: "agent-deploy"
+    name: "Agent Deployment"
+    description: "Install and configure the Datadog Agent across all target hosts"
+    phase: "foundation"
+    depends_on: []
+    applies_when:
+      any: true
+
+  - id: "infra-monitoring"
+    name: "Infrastructure Monitoring"
+    description: "Configure system-level checks: CPU, memory, disk, network, process"
+    phase: "foundation"
+    depends_on: ["agent-deploy"]
+    applies_when:
+      any: true
+
+  - id: "db-monitoring"
+    name: "Database Monitoring"
+    description: "Configure database integrations with DBM where supported"
+    phase: "integrations"
+    depends_on: ["agent-deploy"]
+    applies_when:
+      dimension: "database"
+      has_any: true
+
+  - id: "apm-instrumentation"
+    name: "APM Instrumentation"
+    description: "Instrument application code with Datadog tracing libraries"
+    phase: "integrations"
+    depends_on: ["agent-deploy"]
+    applies_when:
+      dimension: "app_architecture"
+      not_value: "serverless"
+
+  - id: "log-management"
+    name: "Log Management"
+    description: "Configure log collection, parsing pipelines, and log-to-metric rules"
+    phase: "integrations"
+    depends_on: ["agent-deploy"]
+    applies_when:
+      any: true
+
+  - id: "cloud-integrations"
+    name: "Cloud Provider Integrations"
+    description: "Configure cloud provider API integrations (AWS/Azure/GCP)"
+    phase: "integrations"
+    depends_on: []
+    applies_when:
+      dimension: "cloud_provider"
+      not_value: "on-prem"
+
+  - id: "monitors-dashboards"
+    name: "Monitors & Dashboards"
+    description: "Create monitors, dashboards, and SLOs for all configured integrations"
+    phase: "observability"
+    depends_on: ["infra-monitoring", "db-monitoring", "apm-instrumentation", "log-management"]
+    applies_when:
+      any: true
+
+  - id: "validation"
+    name: "Validation & Handoff"
+    description: "Validate all integrations report data, run smoke tests, handoff to client"
+    phase: "finalization"
+    depends_on: ["monitors-dashboards", "cloud-integrations"]
+    applies_when:
+      any: true
+
+# Story templates within each track
+stories:
+  - track: "agent-deploy"
+    id: "agent-install-{os}-{cloud_provider}"
+    name: "Install Datadog Agent on {os.label} ({cloud_provider.label})"
+    expand_dimensions: ["os", "cloud_provider"]
+    exclude_when:
+      - os: "macos"
+        cloud_provider: "on-prem"
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "agent-install-{os}-{cloud_provider}-{environment}"
+        name: "Agent install: {os.label} / {cloud_provider.label} / {environment}"
+        expand_dimensions: ["environment"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["agent-deploy", "{os.id}", "{cloud_provider.id}"]
+        priority: "High"
+
+  - track: "db-monitoring"
+    id: "db-{database}-setup"
+    name: "Configure {database.label} Monitoring"
+    expand_dimensions: ["database"]
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "db-{database}-conf-{environment}"
+        name: "{database.label} conf.yaml for {environment}"
+        expand_dimensions: ["environment"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["database", "{database.id}", "conf-yaml"]
+        priority: "High"
+      - id: "db-{database}-dbm-{environment}"
+        name: "{database.label} DBM setup for {environment}"
+        expand_dimensions: ["environment"]
+        applies_when:
+          database: ["postgres", "mysql", "sqlserver"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["database", "{database.id}", "dbm"]
+        priority: "Medium"
+
+  - track: "infra-monitoring"
+    id: "infra-system-checks"
+    name: "System-Level Checks (CPU, Memory, Disk, Network)"
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "infra-process-check-{os}"
+        name: "Process check conf.yaml for {os.label}"
+        expand_dimensions: ["os"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["infrastructure", "process-check", "{os.id}"]
+        priority: "Medium"
+      - id: "infra-network-check-{os}"
+        name: "Network check conf.yaml for {os.label}"
+        expand_dimensions: ["os"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["infrastructure", "network-check", "{os.id}"]
+        priority: "Medium"
+
+  - track: "apm-instrumentation"
+    id: "apm-{app_architecture}-setup"
+    name: "APM for {app_architecture.label} Applications"
+    expand_dimensions: ["app_architecture"]
+    exclude_when:
+      - app_architecture: "serverless"
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "apm-{app_architecture}-tracing-{environment}"
+        name: "Tracing library setup: {app_architecture.label} / {environment}"
+        expand_dimensions: ["environment"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["apm", "{app_architecture.id}"]
+        priority: "High"
+
+  - track: "log-management"
+    id: "log-collection-{os}"
+    name: "Log Collection for {os.label}"
+    expand_dimensions: ["os"]
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "log-agent-config-{os}-{environment}"
+        name: "Log agent config: {os.label} / {environment}"
+        expand_dimensions: ["environment"]
+        description_template: "integration-task.md.tmpl"
+        labels: ["logs", "{os.id}"]
+        priority: "Medium"
+
+  - track: "cloud-integrations"
+    id: "cloud-{cloud_provider}-api"
+    name: "{cloud_provider.label} API Integration"
+    expand_dimensions: ["cloud_provider"]
+    exclude_when:
+      - cloud_provider: "on-prem"
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "cloud-{cloud_provider}-iam"
+        name: "{cloud_provider.label} IAM/Service Account Setup"
+        description_template: "integration-task.md.tmpl"
+        labels: ["cloud", "{cloud_provider.id}", "iam"]
+        priority: "High"
+      - id: "cloud-{cloud_provider}-metrics"
+        name: "{cloud_provider.label} Metrics Collection"
+        description_template: "integration-task.md.tmpl"
+        labels: ["cloud", "{cloud_provider.id}", "metrics"]
+        priority: "High"
+
+  - track: "monitors-dashboards"
+    id: "monitors-{track_ref}"
+    name: "Monitors for {track_ref.name}"
+    expand_dimensions: ["track_ref"]
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "monitor-create-{track_ref}"
+        name: "Create monitors for {track_ref.name}"
+        description_template: "integration-task.md.tmpl"
+        labels: ["monitors", "{track_ref.id}"]
+        priority: "Medium"
+      - id: "dashboard-create-{track_ref}"
+        name: "Create dashboard for {track_ref.name}"
+        description_template: "integration-task.md.tmpl"
+        labels: ["dashboards", "{track_ref.id}"]
+        priority: "Low"
+
+  - track: "validation"
+    id: "validation-smoke-tests"
+    name: "Smoke Tests & Data Validation"
+    description_template: "integration-story.md.tmpl"
+    tasks:
+      - id: "validation-data-flowing"
+        name: "Verify all integrations report data to Datadog"
+        description_template: "integration-task.md.tmpl"
+        labels: ["validation", "smoke-test"]
+        priority: "Highest"
+      - id: "validation-handoff"
+        name: "Client handoff: documentation and access review"
+        description_template: "integration-task.md.tmpl"
+        labels: ["validation", "handoff"]
+        priority: "Highest"
+
+# Workflow columns (Jira board columns)
+columns:
+  - name: "Backlog"
+    status_category: "To Do"
+    wip_limit: null
+  - name: "Spec Ready"
+    status_category: "To Do"
+    wip_limit: null
+  - name: "In Progress"
+    status_category: "In Progress"
+    wip_limit: 8
+  - name: "Review"
+    status_category: "In Progress"
+    wip_limit: 5
+  - name: "Validation"
+    status_category: "In Progress"
+    wip_limit: 3
+  - name: "Done"
+    status_category: "Done"
+    wip_limit: null
+
+# Phases map to board swimlanes
+phases:
+  - id: "foundation"
+    label: "Foundation"
+    order: 1
+  - id: "integrations"
+    label: "Integrations"
+    order: 2
+  - id: "observability"
+    label: "Observability"
+    order: 3
+  - id: "finalization"
+    label: "Finalization"
+    order: 4
