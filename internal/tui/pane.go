@@ -11,15 +11,15 @@ import (
 type PaneID int
 
 const (
-	PaneFilePicker PaneID = iota
-	PaneAgentSession
-	PaneAgents
-	PaneEvents
-	PaneMail
-	PaneMergeQueue
-	PaneGitStatus
-	PaneEvals
-	PaneJira
+	PaneFilePicker   PaneID = iota // 0 - PTY: fp process
+	PaneAgentSession               // 1 - PTY: claude agent
+	PaneAgents                     // 2 - Data: agent table from DB
+	PaneEvents                     // 3 - Data: event feed from DB
+	PaneEvals                      // 4 - Data: evals from DB
+	PaneMergeQueue                 // 5 - Data: merge queue from DB
+	PaneJira                       // 6 - Data: Jira API cache
+	PaneOpenBrain                  // 7 - Data: OpenBrain status (placeholder)
+	PaneLazyGit                    // 8 - PTY: lazygit process
 )
 
 // PaneMeta holds display metadata for a pane.
@@ -31,30 +31,33 @@ type PaneMeta struct {
 }
 
 // AllPanes returns metadata for every dashboard pane in display order.
+// Keys 1-7 map to grid panes in order, 9=Jira (full-screen overlay), 0=LazyGit.
+// Key 8 is intentionally unassigned (PaneMail and PaneGitStatus removed from grid).
 func AllPanes() []PaneMeta {
 	return []PaneMeta{
 		{ID: PaneFilePicker, Title: "File Picker", FocusKey: "1"},
 		{ID: PaneAgentSession, Title: "Agent Session", FocusKey: "2"},
 		{ID: PaneAgents, Title: "Agents", FocusKey: "3"},
 		{ID: PaneEvents, Title: "Events", FocusKey: "4"},
-		{ID: PaneMail, Title: "Mail", FocusKey: "5"},
-		{ID: PaneEvals, Title: "Evals", FocusKey: "6"},
-		{ID: PaneMergeQueue, Title: "Merge Queue", FocusKey: "7"},
-		{ID: PaneGitStatus, Title: "Git Status", FocusKey: "8"},
+		{ID: PaneEvals, Title: "Evals", FocusKey: "5"},
+		{ID: PaneMergeQueue, Title: "Merge Queue", FocusKey: "6"},
+		{ID: PaneOpenBrain, Title: "OpenBrain", FocusKey: "7"},
 		{ID: PaneJira, Title: "Jira", FocusKey: "9"},
+		{ID: PaneLazyGit, Title: "LazyGit", FocusKey: "0"},
 	}
 }
 
 // paneOrder defines the tab-cycling order for pane navigation.
+// Follows the grid layout: top row L-R, then bottom row L-R, then overlays.
 var paneOrder = []PaneID{
 	PaneFilePicker,
 	PaneAgentSession,
 	PaneAgents,
 	PaneEvents,
-	PaneMail,
 	PaneEvals,
 	PaneMergeQueue,
-	PaneGitStatus,
+	PaneOpenBrain,
+	PaneLazyGit,
 	PaneJira,
 }
 
