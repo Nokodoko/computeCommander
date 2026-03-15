@@ -68,6 +68,8 @@ type Dashboard struct {
 	jira         *JiraPane
 	costs        *CostTracker
 	palette      *CommandPalette
+	lazygit      *LazyGitPane   // PTY: lazygit process
+	openbrain    *OpenBrainPane // Data: OpenBrain placeholder
 
 	// State.
 	focusedPane    PaneID
@@ -143,6 +145,8 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		jira:           NewJiraPane(opts.JiraLister, theme),
 		costs:          NewCostTracker(theme),
 		palette:        NewCommandPalette(theme),
+		lazygit:        NewLazyGitPane(root, theme),
+		openbrain:      NewOpenBrainPane(theme),
 		focusedPane:    PaneAgentSession,
 		interval:       interval,
 		theme:          theme,
@@ -197,11 +201,13 @@ func (d *Dashboard) Run(ctx context.Context) error {
 	case err := <-done:
 		_ = d.agentSession.Stop()
 		_ = d.filePicker.Stop()
+		_ = d.lazygit.Stop()
 		return err
 	case <-ctx.Done():
 		p.Quit()
 		_ = d.agentSession.Stop()
 		_ = d.filePicker.Stop()
+		_ = d.lazygit.Stop()
 		return ctx.Err()
 	}
 }
@@ -362,6 +368,7 @@ func (d *Dashboard) waitForPTYOutput() tea.Cmd {
 		select {
 		case <-d.agentSession.Notify():
 		case <-d.filePicker.Notify():
+		case <-d.lazygit.Notify():
 		}
 		return ptyOutputMsg{}
 	}
@@ -409,6 +416,9 @@ func (d *Dashboard) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if d.focusedPane == PaneFilePicker && d.filePicker.Running() {
 		return d.forwardToPTY(msg, func(data []byte) { _ = d.filePicker.WriteInput(data) })
 	}
+	if d.focusedPane == PaneLazyGit && d.lazygit.Running() {
+		return d.forwardToPTY(msg, func(data []byte) { _ = d.lazygit.WriteInput(data) })
+	}
 
 	switch key {
 	case "q", "ctrl+c":
@@ -430,15 +440,15 @@ func (d *Dashboard) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "4":
 		d.focusedPane = PaneEvents
 	case "5":
-		d.focusedPane = PaneMail
-	case "6":
 		d.focusedPane = PaneEvals
-	case "7":
+	case "6":
 		d.focusedPane = PaneMergeQueue
-	case "8":
-		d.focusedPane = PaneGitStatus
+	case "7":
+		d.focusedPane = PaneOpenBrain
 	case "9":
 		d.focusedPane = PaneJira
+	case "0":
+		d.focusedPane = PaneLazyGit
 	default:
 		d.handleFocusedPaneKey(msg)
 	}
@@ -552,6 +562,13 @@ func (d *Dashboard) handleFocusedPaneKey(msg tea.KeyMsg) {
 		case "?":
 			d.jira.ToggleHelp()
 		}
+	case PaneLazyGit:
+		if key == "enter" && !d.lazygit.Running() {
+			w, h := d.lazyGitDimensions()
+			if err := d.lazygit.Start(w, h); err != nil {
+				d.err = fmt.Errorf("lazygit start: %w", err)
+			}
+		}
 	}
 }
 
@@ -561,14 +578,21 @@ func (d *Dashboard) handleFocusedPaneKey(msg tea.KeyMsg) {
 func (d *Dashboard) updatePaneSizes() {
 	topH, bottomH, fpW, asW, agW, bottomPaneW := d.calculateLayout()
 
+	// Top row.
 	d.filePicker.SetSize(fpW-2, topH-3)
 	d.agentSession.SetSize(asW-2, topH-3)
-	d.eventsPane.SetSize(bottomPaneW-2, bottomH-3)
-	d.gitStatus.SetSize(bottomPaneW-2, bottomH-3)
-	d.evals.SetSize(bottomPaneW-2, bottomH-3)
-	d.palette.SetSize(d.width, d.height)
+	// agents pane uses CompactView which gets width/height at render time.
+	_ = agW
 
-	_ = agW // agents pane uses CompactView which gets width/height at render time
+	// Bottom row -- ALL panes must receive SetSize.
+	d.eventsPane.SetSize(bottomPaneW-2, bottomH-3)
+	d.evals.SetSize(bottomPaneW-2, bottomH-3)
+	d.queue.SetSize(bottomPaneW-2, bottomH-3)
+	d.openbrain.SetSize(bottomPaneW-2, bottomH-3)
+	d.lazygit.SetSize(bottomPaneW-2, bottomH-3)
+
+	// Overlays.
+	d.palette.SetSize(d.width, d.height)
 }
 
 // calculateLayout returns the dimensions for each section of the grid.
@@ -631,6 +655,12 @@ func (d *Dashboard) filePickerDimensions() (int, int) {
 	return fpW - 2, topH - 3
 }
 
+// lazyGitDimensions returns the inner dimensions of the lazygit pane.
+func (d *Dashboard) lazyGitDimensions() (int, int) {
+	_, bottomH, _, _, _, bottomPaneW := d.calculateLayout()
+	return bottomPaneW - 2, bottomH - 3
+}
+
 // forwardToPTY handles keyboard input for a focused PTY pane. Only a small
 // set of control-key chords are intercepted for dashboard navigation;
 // everything else — including digits, printable characters, and arrow keys
@@ -675,13 +705,10 @@ func (d *Dashboard) View() string {
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, filePicker, agentSession, agentsPane)
 
 	// --- Bottom Row ---
+	// Events | Evals | MergeQueue | OpenBrain | LazyGit
 	evContent := d.eventsPane.View()
 	evMeta := paneMetaByID(PaneEvents)
 	eventsPane := RenderPane(evContent, evMeta, d.focusedPane == PaneEvents, bottomPaneW, bottomH, d.theme)
-
-	mlContent := d.mail.View()
-	mlMeta := paneMetaByID(PaneMail)
-	mailPane := RenderPane(mlContent, mlMeta, d.focusedPane == PaneMail, bottomPaneW, bottomH, d.theme)
 
 	evalsContent := d.evals.View()
 	evalsMeta := paneMetaByID(PaneEvals)
@@ -691,16 +718,20 @@ func (d *Dashboard) View() string {
 	mqMeta := paneMetaByID(PaneMergeQueue)
 	mergePane := RenderPane(mqContent, mqMeta, d.focusedPane == PaneMergeQueue, bottomPaneW, bottomH, d.theme)
 
-	// Git Status pane gets remaining width (last pane in row).
+	obContent := d.openbrain.View()
+	obMeta := paneMetaByID(PaneOpenBrain)
+	openbrainPane := RenderPane(obContent, obMeta, d.focusedPane == PaneOpenBrain, bottomPaneW, bottomH, d.theme)
+
+	// LazyGit pane gets remaining width (last pane in row).
 	lastPaneW := d.width - (bottomPaneW * 4)
 	if lastPaneW < 10 {
 		lastPaneW = bottomPaneW
 	}
-	gsContent := d.gitStatus.View()
-	gsMeta := paneMetaByID(PaneGitStatus)
-	gitPane := RenderPane(gsContent, gsMeta, d.focusedPane == PaneGitStatus, lastPaneW, bottomH, d.theme)
+	lgContent := d.lazygit.View()
+	lgMeta := paneMetaByID(PaneLazyGit)
+	lazygitPane := RenderPane(lgContent, lgMeta, d.focusedPane == PaneLazyGit, lastPaneW, bottomH, d.theme)
 
-	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, eventsPane, mailPane, evalsPane, mergePane, gitPane)
+	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, eventsPane, evalsPane, mergePane, openbrainPane, lazygitPane)
 
 	// --- Status and help bars ---
 	statusBar := renderStatusBarWithProject(
