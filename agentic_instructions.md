@@ -41,6 +41,7 @@ computeCommander/
   agents/              YAML agent role definitions
   templates/           Go text/template overlays
   migrations/          Root-level SQL migration mirrors
+  specs/               Specification documents (see specs/index.md)
   scripts/             Shell scripts (agent wrapper for session-switch support)
   k8s-cluster/         Kubernetes infrastructure (API, WS, HAProxy, K8s manifests)
 ```
@@ -119,6 +120,14 @@ make build          # Produces ./cmdr binary
 ./cmdr status       # Fleet overview
 ./cmdr dashboard    # Launch TUI
 ```
+
+## Specs
+
+All specification files live in `specs/`. Never create spec files in the repo root.
+
+- Name specs with a descriptive identifier: `<topic>.md` (e.g., `session-naming.md`, `dashboard-v2.md`)
+- Reviews, feedback, and validation artifacts go in `specs/reviews/`, prefixed with the spec they reviewed: `reviews/<topic>-review.md`, `reviews/<topic>-validation-errors.md`
+- Update `specs/index.md` when adding or removing specs
 
 ## Style Guide
 - **Go**: PascalCase exports, camelCase internals, `fmt.Errorf("context: %w", err)` error wrapping
