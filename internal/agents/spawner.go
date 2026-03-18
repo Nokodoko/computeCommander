@@ -257,17 +257,17 @@ func (s *Spawner) ListSessions(ctx context.Context, opts ListOpts) ([]*AgentSess
 
 	var selectCols string
 	if hasV2 {
-		selectCols = `s.id, s.agent_name, s.capability, s.worktree_path, s.branch_name,
-		s.task_id, s.zellij_pane, s.state, s.pid, s.parent_agent, s.depth, s.run_id,
-		s.started_at, s.last_activity, s.escalation_level, s.stalled_since,
-		s.transcript_path, s.runtime,
+		selectCols = `s.id, s.agent_name, s.capability, COALESCE(s.worktree_path, ''), COALESCE(s.branch_name, ''),
+		s.task_id, COALESCE(s.zellij_pane, ''), s.state, s.pid, COALESCE(s.parent_agent, ''), s.depth, COALESCE(s.run_id, ''),
+		s.started_at, s.last_activity, s.escalation_level, COALESCE(s.stalled_since, ''),
+		COALESCE(s.transcript_path, ''), COALESCE(s.runtime, 'claude'),
 		COALESCE(m.total_in, 0), COALESCE(m.total_out, 0),
 		COALESCE(s.color_index, 0), COALESCE(s.color_hex, ''), COALESCE(s.project_id, '')`
 	} else {
-		selectCols = `s.id, s.agent_name, s.capability, s.worktree_path, s.branch_name,
-		s.task_id, s.zellij_pane, s.state, s.pid, s.parent_agent, s.depth, s.run_id,
-		s.started_at, s.last_activity, s.escalation_level, s.stalled_since,
-		s.transcript_path, s.runtime,
+		selectCols = `s.id, s.agent_name, s.capability, COALESCE(s.worktree_path, ''), COALESCE(s.branch_name, ''),
+		s.task_id, COALESCE(s.zellij_pane, ''), s.state, s.pid, COALESCE(s.parent_agent, ''), s.depth, COALESCE(s.run_id, ''),
+		s.started_at, s.last_activity, s.escalation_level, COALESCE(s.stalled_since, ''),
+		COALESCE(s.transcript_path, ''), COALESCE(s.runtime, 'claude'),
 		COALESCE(m.total_in, 0), COALESCE(m.total_out, 0)`
 	}
 
@@ -461,10 +461,10 @@ func (s *Spawner) countSessionsInRun(ctx context.Context, _ string) (int, error)
 // findSessionByName locates a session by agent name.
 func (s *Spawner) findSessionByName(ctx context.Context, name string) (*AgentSession, error) {
 	row := s.db.QueryRow(ctx,
-		`SELECT id, agent_name, capability, worktree_path, branch_name, task_id,
-			zellij_pane, state, pid, parent_agent, depth, run_id,
-			started_at, last_activity, escalation_level, stalled_since,
-			transcript_path, runtime
+		`SELECT id, agent_name, capability, COALESCE(worktree_path, ''), COALESCE(branch_name, ''), task_id,
+			COALESCE(zellij_pane, ''), state, pid, COALESCE(parent_agent, ''), depth, COALESCE(run_id, ''),
+			started_at, last_activity, escalation_level, COALESCE(stalled_since, ''),
+			COALESCE(transcript_path, ''), COALESCE(runtime, 'claude')
 		FROM sessions WHERE agent_name = $1 AND state NOT IN ('completed', 'zombie')
 		ORDER BY started_at DESC LIMIT 1`, name)
 
