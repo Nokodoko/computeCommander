@@ -25,9 +25,20 @@ func OpenBrainCmd(app *App) *cobra.Command {
 			pane, _ := cmd.Flags().GetBool("pane")
 			projectDir, _ := cmd.Flags().GetString("project")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
+			showAgents, _ := cmd.Flags().GetBool("agents")
+			noAgents, _ := cmd.Flags().GetBool("no-agents")
+			agentLimit, _ := cmd.Flags().GetInt("agent-limit")
+
+			// In pane mode, agents are shown by default unless --no-agents is set.
+			if pane && !noAgents {
+				showAgents = true
+			}
+			if noAgents {
+				showAgents = false
+			}
 
 			if pane {
-				return runOpenBrainPane(cmd.Context(), projectDir)
+				return runOpenBrainPane(cmd.Context(), app, projectDir, showAgents, agentLimit)
 			}
 
 			return printOpenBrainSummary(projectDir, jsonOut)
@@ -36,6 +47,9 @@ func OpenBrainCmd(app *App) *cobra.Command {
 
 	cmd.Flags().Bool("pane", false, "Dashboard pane mode (watch + stream ANSI)")
 	cmd.Flags().String("project", "", "Override project directory for memory watch")
+	cmd.Flags().Bool("agents", false, "Include agent lifecycle events (default: true in --pane)")
+	cmd.Flags().Bool("no-agents", false, "Suppress agent lifecycle events")
+	cmd.Flags().Int("agent-limit", 5, "Max recent agent events to display")
 
 	return cmd
 }
@@ -255,8 +269,108 @@ func printOpenBrainSummary(projectDir string, jsonOut bool) error {
 	return nil
 }
 
+// agentActivityEntry represents an agent lifecycle event for the Activity section.
+type agentActivityEntry struct {
+	EventType string
+	AgentName string
+	Runtime   string
+	Capability string
+	Timestamp string
+}
+
+// queryAgentActivity queries recent agent lifecycle events from the events table.
+func queryAgentActivity(ctx context.Context, app *App, limit int) []agentActivityEntry {
+	if app == nil || app.DB == nil {
+		return nil
+	}
+
+	query := `SELECT event_type, agent_name, COALESCE(data, ''), created_at
+		FROM events
+		WHERE event_type LIKE 'agent.%'
+		ORDER BY created_at DESC
+		LIMIT ?`
+
+	rows, err := app.DB.Query(ctx, query, limit)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var entries []agentActivityEntry
+	for rows.Next() {
+		var e agentActivityEntry
+		var data string
+		if err := rows.Scan(&e.EventType, &e.AgentName, &data, &e.Timestamp); err != nil {
+			continue
+		}
+		// Parse runtime and capability from data field (format: "runtime=X capability=Y").
+		for _, part := range strings.Split(data, " ") {
+			kv := strings.SplitN(part, "=", 2)
+			if len(kv) != 2 {
+				continue
+			}
+			switch kv[0] {
+			case "runtime":
+				e.Runtime = kv[1]
+			case "capability":
+				e.Capability = kv[1]
+			}
+		}
+		entries = append(entries, e)
+	}
+	return entries
+}
+
+// renderAgentActivity renders the Activity section of the OpenBrain pane.
+func renderAgentActivity(entries []agentActivityEntry) {
+	if len(entries) == 0 {
+		return
+	}
+
+	fmt.Printf("\n\033[2m─────────────────────────────────────────────\033[0m\n")
+	fmt.Printf("\033[1;35m Activity \033[0m")
+	fmt.Printf(" \033[2m(%d/%d)\033[0m\n", len(entries), len(entries))
+
+	for _, e := range entries {
+		// Extract short event type (e.g., "agent.registered" -> "registered").
+		shortType := e.EventType
+		if idx := strings.LastIndex(shortType, "."); idx >= 0 {
+			shortType = shortType[idx+1:]
+		}
+
+		// Extract short time (HH:MM).
+		shortTime := ""
+		if len(e.Timestamp) >= 16 {
+			shortTime = e.Timestamp[11:16]
+		}
+
+		// Color the event type.
+		var typeColor string
+		switch shortType {
+		case "registered":
+			typeColor = "\033[32m" // green
+		case "working":
+			typeColor = "\033[36m" // cyan
+		case "completed", "deregistered":
+			typeColor = "\033[33m" // yellow
+		case "stalled":
+			typeColor = "\033[31m" // red
+		default:
+			typeColor = "\033[2m"
+		}
+
+		fmt.Printf("  %s%-12s\033[0m %-14s %-8s %-10s %s\n",
+			typeColor, shortType,
+			truncate(e.AgentName, 14),
+			truncate(e.Runtime, 8),
+			truncate(e.Capability, 10),
+			shortTime,
+		)
+	}
+}
+
 // runOpenBrainPane runs the OpenBrain pane in watch mode with ANSI output.
-func runOpenBrainPane(ctx context.Context, projectDir string) error {
+func runOpenBrainPane(ctx context.Context, app *App, projectDir string, showAgents bool, agentLimit int) error {
 	if projectDir == "" {
 		projectDir, _ = os.Getwd()
 	}
@@ -291,7 +405,7 @@ func runOpenBrainPane(ctx context.Context, projectDir string) error {
 	// Try fsnotify, fall back to polling.
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return runOpenBrainPoll(ctx, paths, hashes, sections, &recentEntries, maxRecent)
+		return runOpenBrainPoll(ctx, app, paths, hashes, sections, &recentEntries, maxRecent, showAgents, agentLimit)
 	}
 	defer watcher.Close()
 
@@ -305,8 +419,17 @@ func runOpenBrainPane(ctx context.Context, projectDir string) error {
 		_ = watcher.Add(dir)
 	}
 
+	// Render helper that includes agent activity when enabled.
+	renderWithActivity := func() {
+		renderOpenBrainPane(recentEntries, paths)
+		if showAgents {
+			agentEvents := queryAgentActivity(ctx, app, agentLimit)
+			renderAgentActivity(agentEvents)
+		}
+	}
+
 	// Initial render.
-	renderOpenBrainPane(recentEntries, paths)
+	renderWithActivity()
 
 	// Polling fallback ticker for CWD changes.
 	pollTicker := time.NewTicker(5 * time.Second)
@@ -326,7 +449,7 @@ func runOpenBrainPane(ctx context.Context, projectDir string) error {
 					paths = openBrainMemoryPaths("")
 				}
 				processOpenBrainChange(event.Name, paths, hashes, sections, &recentEntries, maxRecent)
-				renderOpenBrainPane(recentEntries, paths)
+				renderWithActivity()
 			}
 		case <-watcher.Errors:
 			// Ignore watcher errors — continue polling.
@@ -334,19 +457,24 @@ func runOpenBrainPane(ctx context.Context, projectDir string) error {
 			for _, p := range paths {
 				processOpenBrainChange(p, paths, hashes, sections, &recentEntries, maxRecent)
 			}
-			renderOpenBrainPane(recentEntries, paths)
+			renderWithActivity()
 		}
 	}
 }
 
 // runOpenBrainPoll is the polling fallback when fsnotify is unavailable.
-func runOpenBrainPoll(ctx context.Context, paths []string, hashes map[string]string,
-	sections map[string]map[string]string, recentEntries *[]memoryEntry, maxRecent int) error {
+func runOpenBrainPoll(ctx context.Context, app *App, paths []string, hashes map[string]string,
+	sections map[string]map[string]string, recentEntries *[]memoryEntry, maxRecent int,
+	showAgents bool, agentLimit int) error {
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
 	renderOpenBrainPane(*recentEntries, paths)
+	if showAgents {
+		agentEvents := queryAgentActivity(ctx, app, agentLimit)
+		renderAgentActivity(agentEvents)
+	}
 
 	for {
 		select {
@@ -357,6 +485,10 @@ func runOpenBrainPoll(ctx context.Context, paths []string, hashes map[string]str
 				processOpenBrainChange(p, paths, hashes, sections, recentEntries, maxRecent)
 			}
 			renderOpenBrainPane(*recentEntries, paths)
+			if showAgents {
+				agentEvents := queryAgentActivity(ctx, app, agentLimit)
+				renderAgentActivity(agentEvents)
+			}
 		}
 	}
 }
