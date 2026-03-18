@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,19 @@ import (
 	"github.com/noko/computecommander/internal/agents"
 	"github.com/noko/computecommander/pkg/runtimes"
 )
+
+// emitAgentEvent inserts an agent lifecycle event into the events table.
+func emitAgentEvent(app *App, agentName, sessionID, eventType, data string) {
+	if app == nil || app.DB == nil {
+		return
+	}
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+	_ = app.DB.Exec(context.Background(),
+		`INSERT INTO events (agent_name, event_type, level, data, session_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6)`,
+		agentName, eventType, "info", data, sessionID, now,
+	)
+}
 
 // generateSessionID creates a unique session ID in the format "{runtime}-{8 hex chars}".
 func generateSessionID(runtime string) string {
@@ -78,6 +92,10 @@ func RegisterCmd(app *App) *cobra.Command {
 				}
 				return fmt.Errorf("register session: %w", err)
 			}
+
+			// Emit agent.registered event.
+			emitAgentEvent(app, name, sessionID, "agent.registered",
+				fmt.Sprintf("runtime=%s capability=%s task=%s", runtime, capability, taskID))
 
 			result := map[string]any{
 				"success":    true,
@@ -146,6 +164,10 @@ func DeregisterCmd(app *App) *cobra.Command {
 				}
 				return fmt.Errorf("deregister session: %w", err)
 			}
+
+			// Emit agent.deregistered event.
+			emitAgentEvent(app, "", sessionID, "agent.deregistered",
+				fmt.Sprintf("final_state=%s", finalState))
 
 			result := map[string]any{
 				"success":     true,
@@ -219,6 +241,13 @@ func HeartbeatCmd(app *App) *cobra.Command {
 					return fmt.Errorf("heartbeat: %w", err)
 				}
 			}
+
+			// Emit agent.heartbeat event.
+			heartbeatData := "heartbeat"
+			if state != "" {
+				heartbeatData = fmt.Sprintf("state=%s", state)
+			}
+			emitAgentEvent(app, "", sessionID, "agent.heartbeat", heartbeatData)
 
 			result := map[string]any{
 				"success":      true,
