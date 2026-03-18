@@ -244,6 +244,11 @@ conflict resolution.`,
 	addAppCmd(root, commands.ResetCmd(sharedApp))
 	addAppCmd(root, commands.RestartCmd(sharedApp))
 
+	// Agent registration commands (multi-runtime).
+	addAppCmd(root, commands.RegisterCmd(sharedApp))
+	addAppCmd(root, commands.DeregisterCmd(sharedApp))
+	addAppCmd(root, commands.HeartbeatCmd(sharedApp))
+
 	// Core commands.
 	addAppCmd(root, commands.SlingCmd(sharedApp))
 	addAppCmd(root, commands.StopCmd(sharedApp))
