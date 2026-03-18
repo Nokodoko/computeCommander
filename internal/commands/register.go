@@ -78,7 +78,7 @@ func RegisterCmd(app *App) *cobra.Command {
 					transcript_path, runtime, heartbeat_at)
 				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
 				sessionID, name, capability, worktreePath, branch,
-				taskID, string(agents.StateBooting), pid, parent, 0, "",
+				taskID, string(agents.StateBooting), pid, parent, 0, nil,
 				now.Format("2006-01-02T15:04:05Z"), now.Format("2006-01-02T15:04:05Z"), 0,
 				"", runtime, now.Format("2006-01-02T15:04:05Z"),
 			)
