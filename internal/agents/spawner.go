@@ -307,6 +307,11 @@ func (s *Spawner) ListSessions(ctx context.Context, opts ListOpts) ([]*AgentSess
 		args = append(args, opts.ProjectID)
 		argIdx++
 	}
+	if opts.Runtime != "" {
+		query += fmt.Sprintf(" AND s.runtime = $%d", argIdx)
+		args = append(args, string(opts.Runtime))
+		argIdx++
+	}
 
 	query += " ORDER BY s.started_at DESC"
 

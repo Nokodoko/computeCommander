@@ -145,4 +145,5 @@ type ListOpts struct {
 	State      SessionState
 	Parent     string
 	ProjectID  string
+	Runtime    runtimes.RuntimeID // Filter by runtime (e.g., "pi", "claude")
 }

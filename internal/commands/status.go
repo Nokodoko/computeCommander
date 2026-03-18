@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/noko/computecommander/internal/agents"
+	"github.com/noko/computecommander/pkg/runtimes"
 )
 
 // StatusCmd returns the "status" command for fleet overview.
@@ -30,6 +31,7 @@ func StatusCmd(app *App) *cobra.Command {
 			capability, _ := cmd.Flags().GetString("capability")
 			state, _ := cmd.Flags().GetString("state")
 			projectID, _ := cmd.Flags().GetString("project")
+			runtime, _ := cmd.Flags().GetString("runtime")
 			pane, _ := cmd.Flags().GetBool("pane")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
 
@@ -42,6 +44,9 @@ func StatusCmd(app *App) *cobra.Command {
 			}
 			if projectID != "" {
 				opts.ProjectID = projectID
+			}
+			if runtime != "" {
+				opts.Runtime = runtimes.RuntimeID(runtime)
 			}
 
 			if paneMode {
@@ -63,6 +68,12 @@ func StatusCmd(app *App) *cobra.Command {
 					dbDriver = app.Config.Database.Driver
 					dbPath = app.Config.Database.SQLite.Path
 				}
+				// Count sessions by runtime.
+				byRuntime := make(map[string]int)
+				for _, s := range sessions {
+					byRuntime[string(s.Runtime)]++
+				}
+
 				result := map[string]any{
 					"success": true,
 					"command": "status",
@@ -76,9 +87,10 @@ func StatusCmd(app *App) *cobra.Command {
 						"session": uiSession,
 						"uptime":  uiUptime,
 					},
-					"agents":  sessions,
-					"count":   len(sessions),
-					"version": app.Version,
+					"sessions":   sessions,
+					"count":      len(sessions),
+					"by_runtime": byRuntime,
+					"version":    app.Version,
 				}
 				if app.Config != nil {
 					result["project"] = app.Config.Project.Name
@@ -156,6 +168,7 @@ func StatusCmd(app *App) *cobra.Command {
 	cmd.Flags().String("capability", "", "Filter by capability")
 	cmd.Flags().String("state", "", "Filter by state")
 	cmd.Flags().String("project", "", "Filter by project ID")
+	cmd.Flags().String("runtime", "", "Filter by runtime (claude, pi, gemini, codex, goose)")
 	cmd.Flags().Bool("pane", false, "Run in long-lived pane mode (for zellij dashboard)")
 
 	return cmd
