@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,12 +16,158 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// ─── Knowledge entry types ───────────────────────────────────────────────────
+
+// validEntryTypes lists the allowed entry_type values for openbrain_entries.
+var validEntryTypes = map[string]bool{
+	"decision":  true,
+	"discovery": true,
+	"warning":   true,
+	"solution":  true,
+	"context":   true,
+}
+
+// knowledgeEntry represents a row from the openbrain_entries table.
+type knowledgeEntry struct {
+	ID          int64  `json:"id"`
+	ProjectName string `json:"project_name,omitempty"`
+	EntryType   string `json:"type"`
+	Summary     string `json:"summary"`
+	Detail      string `json:"detail,omitempty"`
+	Runtime     string `json:"runtime"`
+	AgentName   string `json:"agent_name,omitempty"`
+	Tags        string `json:"tags,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
+	Age         string `json:"age,omitempty"`
+}
+
+// ─── Color coding (T5) ──────────────────────────────────────────────────────
+
+// runtimeColor returns the ANSI color code for a given runtime.
+func runtimeColor(runtime string) string {
+	switch strings.ToLower(runtime) {
+	case "claude":
+		return "\033[34m" // blue
+	case "pi":
+		return "\033[35m" // magenta
+	case "gemini":
+		return "\033[36m" // cyan
+	case "codex":
+		return "\033[32m" // green
+	case "goose":
+		return "\033[33m" // yellow
+	default:
+		return "\033[2m" // dim
+	}
+}
+
+// entryTypeGlyph returns the display glyph and ANSI color for an entry type.
+func entryTypeGlyph(entryType string) (glyph string, color string) {
+	switch entryType {
+	case "decision":
+		return "D", "\033[1;37m" // bold white
+	case "discovery":
+		return "?", "\033[36m" // cyan
+	case "warning":
+		return "!", "\033[1;33m" // bold yellow
+	case "solution":
+		return "S", "\033[32m" // green
+	case "context":
+		return "~", "\033[2m" // dim
+	default:
+		return "·", "\033[2m"
+	}
+}
+
+// formatAge returns a human-readable age string like "2h ago", "1d ago".
+func formatAge(createdAt string) string {
+	t, err := time.Parse("2006-01-02 15:04:05", createdAt)
+	if err != nil {
+		// Try RFC3339 format.
+		t, err = time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return ""
+		}
+	}
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
+// ─── Project name derivation ─────────────────────────────────────────────────
+
+// deriveProjectName determines the project name using the spec precedence:
+// 1. Nearest parent with .computecommander/ directory
+// 2. Git repo root basename
+// 3. Current working directory basename
+func deriveProjectName() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "unknown"
+	}
+
+	// Walk up looking for .computecommander/.
+	dir := cwd
+	for {
+		if _, err := os.Stat(filepath.Join(dir, ".computecommander")); err == nil {
+			return filepath.Base(dir)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+
+	// Try git repo root.
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err == nil {
+		root := strings.TrimSpace(string(out))
+		if root != "" {
+			return filepath.Base(root)
+		}
+	}
+
+	// Fallback to cwd basename.
+	return filepath.Base(cwd)
+}
+
+// ─── TTL parsing ─────────────────────────────────────────────────────────────
+
+// parseTTL parses a duration string like "7d", "24h", "30m" into a time.Duration.
+func parseTTL(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, fmt.Errorf("empty TTL")
+	}
+	s = strings.TrimSpace(s)
+	if strings.HasSuffix(s, "d") {
+		days, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
+		if err != nil {
+			return 0, fmt.Errorf("invalid TTL days: %w", err)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	// Fall back to Go's time.ParseDuration for h, m, s.
+	return time.ParseDuration(s)
+}
+
+// ─── OpenBrainCmd ────────────────────────────────────────────────────────────
+
 // OpenBrainCmd returns the "openbrain" command for watching MEMORY.md changes.
 func OpenBrainCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "openbrain",
-		Short:   "Memory file change watcher for dashboard pane",
-		Long:    "Watch MEMORY.md files for changes. In --pane mode, streams updates with ANSI styling.",
+		Short:   "Shared knowledge store and memory watcher for dashboard pane",
+		Long:    "Watch MEMORY.md files for changes. Manage knowledge entries (write/read/prune). In --pane mode, streams updates with ANSI styling.",
 		GroupID: "CORE",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			pane, _ := cmd.Flags().GetBool("pane")
@@ -51,8 +199,407 @@ func OpenBrainCmd(app *App) *cobra.Command {
 	cmd.Flags().Bool("no-agents", false, "Suppress agent lifecycle events")
 	cmd.Flags().Int("agent-limit", 5, "Max recent agent events to display")
 
+	// Add subcommands.
+	cmd.AddCommand(openBrainWriteCmd(app))
+	cmd.AddCommand(openBrainReadCmd(app))
+	cmd.AddCommand(openBrainPruneCmd(app))
+
 	return cmd
 }
+
+// ─── Write subcommand (T2) ───────────────────────────────────────────────────
+
+func openBrainWriteCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "write",
+		Short: "Write a knowledge entry to OpenBrain",
+		Long:  "Insert a knowledge entry (decision, discovery, warning, solution, context) into the shared OpenBrain store.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			entryType, _ := cmd.Flags().GetString("type")
+			summary, _ := cmd.Flags().GetString("summary")
+			detail, _ := cmd.Flags().GetString("detail")
+			project, _ := cmd.Flags().GetString("project")
+			runtime, _ := cmd.Flags().GetString("runtime")
+			agentName, _ := cmd.Flags().GetString("agent")
+			tags, _ := cmd.Flags().GetString("tags")
+			ttl, _ := cmd.Flags().GetString("ttl")
+
+			// Validate entry type.
+			if !validEntryTypes[entryType] {
+				return fmt.Errorf("invalid entry type %q; must be one of: decision, discovery, warning, solution, context", entryType)
+			}
+
+			// Validate summary.
+			if summary == "" {
+				return fmt.Errorf("--summary is required")
+			}
+
+			// Derive project name if not provided.
+			if project == "" {
+				project = deriveProjectName()
+			}
+
+			// Default runtime from env or "claude".
+			if runtime == "" {
+				runtime = os.Getenv("CMDR_RUNTIME")
+				if runtime == "" {
+					runtime = "claude"
+				}
+			}
+
+			// Parse TTL if provided.
+			var expiresAt *string
+			if ttl != "" {
+				dur, err := parseTTL(ttl)
+				if err != nil {
+					return fmt.Errorf("invalid --ttl %q: %w", ttl, err)
+				}
+				t := time.Now().Add(dur).UTC().Format("2006-01-02 15:04:05")
+				expiresAt = &t
+			}
+
+			if app == nil || app.DB == nil {
+				return fmt.Errorf("database not available")
+			}
+
+			ctx := cmd.Context()
+
+			// INSERT OR IGNORE for dedup on (project_name, entry_type, summary).
+			query := `INSERT OR IGNORE INTO openbrain_entries
+				(project_name, entry_type, summary, detail, runtime, agent_name, tags, expires_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+
+			err := app.DB.Exec(ctx, query,
+				project, entryType, summary, detail, runtime, agentName, tags, expiresAt)
+			if err != nil {
+				return fmt.Errorf("write failed: %w", err)
+			}
+
+			fmt.Fprintf(os.Stderr, "ok: [%s] %s\n", entryType, summary)
+			return nil
+		},
+	}
+
+	cmd.Flags().String("type", "", "Entry type: decision, discovery, warning, solution, context (required)")
+	cmd.Flags().String("summary", "", "One-line summary (max 80 chars, required)")
+	cmd.Flags().String("detail", "", "Optional longer explanation (max 256 chars)")
+	cmd.Flags().String("project", "", "Project name (default: auto-detected from cwd)")
+	cmd.Flags().String("runtime", "", "Runtime that produced this entry (default: $CMDR_RUNTIME or claude)")
+	cmd.Flags().String("agent", "", "Agent name that produced this entry")
+	cmd.Flags().String("tags", "", "Comma-separated tags for future filtering")
+	cmd.Flags().String("ttl", "", "Time-to-live duration (e.g., 7d, 24h); entry auto-expires after this")
+
+	_ = cmd.MarkFlagRequired("type")
+	_ = cmd.MarkFlagRequired("summary")
+
+	return cmd
+}
+
+// ─── Read subcommand (T3) ────────────────────────────────────────────────────
+
+func openBrainReadCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "read",
+		Short: "Read recent knowledge entries from OpenBrain",
+		Long:  "Query knowledge entries for the current project. Output in text (for context injection) or JSON mode.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			project, _ := cmd.Flags().GetString("project")
+			limit, _ := cmd.Flags().GetInt("limit")
+			since, _ := cmd.Flags().GetString("since")
+			types, _ := cmd.Flags().GetString("types")
+			jsonOut, _ := cmd.Flags().GetBool("json")
+
+			if project == "" {
+				project = deriveProjectName()
+			}
+
+			if app == nil || app.DB == nil {
+				return fmt.Errorf("database not available")
+			}
+
+			ctx := cmd.Context()
+
+			// Auto-prune expired entries first.
+			_ = pruneExpiredEntries(ctx, app)
+
+			entries, err := queryKnowledgeEntries(ctx, app, project, limit, since, types)
+			if err != nil {
+				return fmt.Errorf("read failed: %w", err)
+			}
+
+			if jsonOut {
+				return json.NewEncoder(os.Stdout).Encode(map[string]any{
+					"success": true,
+					"command": "openbrain read",
+					"project": project,
+					"count":   len(entries),
+					"entries": entries,
+				})
+			}
+
+			// Text mode output for context injection.
+			if len(entries) == 0 {
+				fmt.Printf("## Recent OpenBrain Entries (%s)\n\nNo entries found.\n", project)
+				return nil
+			}
+
+			fmt.Printf("## Recent OpenBrain Entries (%s)\n\n", project)
+			for _, e := range entries {
+				age := formatAge(e.CreatedAt)
+				fmt.Printf("[%s] %s (%s) %s\n", e.EntryType, age, e.Runtime, e.Summary)
+				if e.Detail != "" {
+					fmt.Printf("  → %s\n", e.Detail)
+				}
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().String("project", "", "Project name (default: auto-detected from cwd)")
+	cmd.Flags().Int("limit", 20, "Max entries to return")
+	cmd.Flags().String("since", "72h", "Only entries from the last duration (e.g., 72h, 7d)")
+	cmd.Flags().String("types", "", "Comma-separated entry types to filter (default: all)")
+	cmd.Flags().Bool("json", false, "Output in JSON format for programmatic consumption")
+
+	return cmd
+}
+
+// queryKnowledgeEntries queries the openbrain_entries table with filters.
+func queryKnowledgeEntries(ctx context.Context, app *App, project string, limit int, since string, types string) ([]knowledgeEntry, error) {
+	if app == nil || app.DB == nil {
+		return nil, fmt.Errorf("database not available")
+	}
+
+	// Build the since threshold.
+	var sinceTime time.Time
+	if since != "" {
+		dur, err := parseTTL(since)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --since %q: %w", since, err)
+		}
+		sinceTime = time.Now().Add(-dur)
+	}
+
+	// Build query.
+	var queryParts []string
+	var queryArgs []any
+
+	queryParts = append(queryParts, "project_name = ?")
+	queryArgs = append(queryArgs, project)
+
+	if !sinceTime.IsZero() {
+		queryParts = append(queryParts, "created_at >= ?")
+		queryArgs = append(queryArgs, sinceTime.UTC().Format("2006-01-02 15:04:05"))
+	}
+
+	if types != "" {
+		typeList := strings.Split(types, ",")
+		placeholders := make([]string, len(typeList))
+		for i, t := range typeList {
+			placeholders[i] = "?"
+			queryArgs = append(queryArgs, strings.TrimSpace(t))
+		}
+		queryParts = append(queryParts, fmt.Sprintf("entry_type IN (%s)", strings.Join(placeholders, ",")))
+	}
+
+	if limit <= 0 {
+		limit = 20
+	}
+	queryArgs = append(queryArgs, limit)
+
+	query := fmt.Sprintf(
+		`SELECT id, project_name, entry_type, summary, COALESCE(detail, ''), runtime, COALESCE(agent_name, ''), COALESCE(tags, ''), created_at, COALESCE(expires_at, '')
+		FROM openbrain_entries
+		WHERE %s
+		ORDER BY created_at DESC
+		LIMIT ?`,
+		strings.Join(queryParts, " AND "),
+	)
+
+	rows, err := app.DB.Query(ctx, query, queryArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var entries []knowledgeEntry
+	for rows.Next() {
+		var e knowledgeEntry
+		if err := rows.Scan(&e.ID, &e.ProjectName, &e.EntryType, &e.Summary, &e.Detail, &e.Runtime, &e.AgentName, &e.Tags, &e.CreatedAt, &e.ExpiresAt); err != nil {
+			continue
+		}
+		e.Age = formatAge(e.CreatedAt)
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// ─── Prune subcommand (T8) ──────────────────────────────────────────────────
+
+func openBrainPruneCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "prune",
+		Short: "Remove old or expired knowledge entries",
+		Long:  "Delete entries older than the specified duration and any entries past their TTL.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			olderThan, _ := cmd.Flags().GetString("older-than")
+			project, _ := cmd.Flags().GetString("project")
+
+			if app == nil || app.DB == nil {
+				return fmt.Errorf("database not available")
+			}
+
+			ctx := cmd.Context()
+
+			// Always prune expired entries.
+			expiredCount, err := pruneExpiredEntriesCount(ctx, app)
+			if err != nil {
+				return fmt.Errorf("prune expired: %w", err)
+			}
+
+			var agedCount int64
+			if olderThan != "" {
+				dur, err := parseTTL(olderThan)
+				if err != nil {
+					return fmt.Errorf("invalid --older-than %q: %w", olderThan, err)
+				}
+				cutoff := time.Now().Add(-dur).UTC().Format("2006-01-02 15:04:05")
+
+				query := "DELETE FROM openbrain_entries WHERE created_at < ?"
+				var queryArgs []any
+				queryArgs = append(queryArgs, cutoff)
+
+				if project != "" {
+					query += " AND project_name = ?"
+					queryArgs = append(queryArgs, project)
+				}
+
+				// We can't get affected rows easily with the DB interface,
+				// so just execute and report success.
+				if err := app.DB.Exec(ctx, query, queryArgs...); err != nil {
+					return fmt.Errorf("prune old entries: %w", err)
+				}
+				// Report that we attempted the prune.
+				agedCount = -1 // indicates "unknown count"
+			}
+
+			if agedCount == -1 {
+				fmt.Fprintf(os.Stderr, "pruned expired: %d, pruned old: (done)\n", expiredCount)
+			} else {
+				fmt.Fprintf(os.Stderr, "pruned expired: %d\n", expiredCount)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().String("older-than", "", "Delete entries older than this duration (e.g., 7d, 30d)")
+	cmd.Flags().String("project", "", "Limit pruning to a specific project")
+
+	return cmd
+}
+
+// pruneExpiredEntries deletes entries where expires_at < now. Returns error only.
+func pruneExpiredEntries(ctx context.Context, app *App) error {
+	if app == nil || app.DB == nil {
+		return nil
+	}
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	return app.DB.Exec(ctx,
+		"DELETE FROM openbrain_entries WHERE expires_at IS NOT NULL AND expires_at < ?", now)
+}
+
+// pruneExpiredEntriesCount deletes expired entries and returns approximate count.
+func pruneExpiredEntriesCount(ctx context.Context, app *App) (int64, error) {
+	if app == nil || app.DB == nil {
+		return 0, nil
+	}
+	now := time.Now().UTC().Format("2006-01-02 15:04:05")
+
+	// Count first, then delete.
+	var count int64
+	row := app.DB.QueryRow(ctx,
+		"SELECT COUNT(*) FROM openbrain_entries WHERE expires_at IS NOT NULL AND expires_at < ?", now)
+	if err := row.Scan(&count); err != nil {
+		return 0, err
+	}
+
+	if count > 0 {
+		if err := app.DB.Exec(ctx,
+			"DELETE FROM openbrain_entries WHERE expires_at IS NOT NULL AND expires_at < ?", now); err != nil {
+			return 0, err
+		}
+	}
+	return count, nil
+}
+
+// ─── Knowledge section renderer (T4) ────────────────────────────────────────
+
+// renderKnowledgeSection renders the Knowledge section of the OpenBrain pane.
+func renderKnowledgeSection(ctx context.Context, app *App, project string) {
+	if app == nil || app.DB == nil {
+		return
+	}
+
+	entries, err := queryKnowledgeEntries(ctx, app, project, 10, "72h", "")
+	if err != nil || len(entries) == 0 {
+		return
+	}
+
+	fmt.Printf("\n\033[2m─────────────────────────────────────────────\033[0m\n")
+	fmt.Printf("\033[1;35m Knowledge \033[0m")
+	fmt.Printf(" \033[2m(%d entries, last 72h)\033[0m\n", len(entries))
+
+	for _, e := range entries {
+		glyph, glyphColor := entryTypeGlyph(e.EntryType)
+		age := formatAge(e.CreatedAt)
+		rtColor := runtimeColor(e.Runtime)
+
+		fmt.Printf(" %s%s\033[0m  %-7s %-45s %s%s\033[0m\n",
+			glyphColor, glyph,
+			age,
+			truncate(e.Summary, 45),
+			rtColor, truncate(e.Runtime, 8),
+		)
+	}
+}
+
+// renderAgentActivityDimmed renders a collapsed Activity section (last 3 events, dimmed).
+func renderAgentActivityDimmed(entries []agentActivityEntry) {
+	if len(entries) == 0 {
+		return
+	}
+
+	// Show at most 3 entries in dim text.
+	max := 3
+	if len(entries) < max {
+		max = len(entries)
+	}
+
+	fmt.Printf("\n\033[2m─────────────────────────────────────────────\033[0m\n")
+	fmt.Printf("\033[2m Activity \033[0m")
+	fmt.Printf(" \033[2m(%d recent)\033[0m\n", max)
+
+	for i := 0; i < max; i++ {
+		e := entries[i]
+		shortType := e.EventType
+		if idx := strings.LastIndex(shortType, "."); idx >= 0 {
+			shortType = shortType[idx+1:]
+		}
+		shortTime := ""
+		if len(e.Timestamp) >= 16 {
+			shortTime = e.Timestamp[11:16]
+		}
+
+		fmt.Printf("\033[2m  %-12s %-14s %-8s %s\033[0m\n",
+			shortType,
+			truncate(e.AgentName, 14),
+			truncate(e.Runtime, 8),
+			shortTime,
+		)
+	}
+}
+
+// ─── Existing code (memory watcher, unchanged) ──────────────────────────────
 
 // memoryEntry records a change detected in a MEMORY.md file.
 type memoryEntry struct {
@@ -271,11 +818,11 @@ func printOpenBrainSummary(projectDir string, jsonOut bool) error {
 
 // agentActivityEntry represents an agent lifecycle event for the Activity section.
 type agentActivityEntry struct {
-	EventType string
-	AgentName string
-	Runtime   string
+	EventType  string
+	AgentName  string
+	Runtime    string
 	Capability string
-	Timestamp string
+	Timestamp  string
 }
 
 // queryAgentActivity queries recent agent lifecycle events from the events table.
@@ -321,7 +868,7 @@ func queryAgentActivity(ctx context.Context, app *App, limit int) []agentActivit
 	return entries
 }
 
-// renderAgentActivity renders the Activity section of the OpenBrain pane.
+// renderAgentActivity renders the Activity section of the OpenBrain pane (full version).
 func renderAgentActivity(entries []agentActivityEntry) {
 	if len(entries) == 0 {
 		return
@@ -375,6 +922,9 @@ func runOpenBrainPane(ctx context.Context, app *App, projectDir string, showAgen
 		projectDir, _ = os.Getwd()
 	}
 
+	// Derive project name for knowledge queries.
+	projectName := deriveProjectName()
+
 	// Track content hashes and sections per file.
 	hashes := make(map[string]string)
 	sections := make(map[string]map[string]string)
@@ -405,7 +955,7 @@ func runOpenBrainPane(ctx context.Context, app *App, projectDir string, showAgen
 	// Try fsnotify, fall back to polling.
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		return runOpenBrainPoll(ctx, app, paths, hashes, sections, &recentEntries, maxRecent, showAgents, agentLimit)
+		return runOpenBrainPoll(ctx, app, projectName, paths, hashes, sections, &recentEntries, maxRecent, showAgents, agentLimit)
 	}
 	defer watcher.Close()
 
@@ -419,17 +969,18 @@ func runOpenBrainPane(ctx context.Context, app *App, projectDir string, showAgen
 		_ = watcher.Add(dir)
 	}
 
-	// Render helper that includes agent activity when enabled.
-	renderWithActivity := func() {
+	// Render helper that includes Knowledge section and dimmed Activity.
+	renderAll := func() {
 		renderOpenBrainPane(recentEntries, paths)
+		renderKnowledgeSection(ctx, app, projectName)
 		if showAgents {
 			agentEvents := queryAgentActivity(ctx, app, agentLimit)
-			renderAgentActivity(agentEvents)
+			renderAgentActivityDimmed(agentEvents)
 		}
 	}
 
 	// Initial render.
-	renderWithActivity()
+	renderAll()
 
 	// Polling fallback ticker for CWD changes.
 	pollTicker := time.NewTicker(5 * time.Second)
@@ -449,7 +1000,7 @@ func runOpenBrainPane(ctx context.Context, app *App, projectDir string, showAgen
 					paths = openBrainMemoryPaths("")
 				}
 				processOpenBrainChange(event.Name, paths, hashes, sections, &recentEntries, maxRecent)
-				renderWithActivity()
+				renderAll()
 			}
 		case <-watcher.Errors:
 			// Ignore watcher errors — continue polling.
@@ -457,13 +1008,13 @@ func runOpenBrainPane(ctx context.Context, app *App, projectDir string, showAgen
 			for _, p := range paths {
 				processOpenBrainChange(p, paths, hashes, sections, &recentEntries, maxRecent)
 			}
-			renderWithActivity()
+			renderAll()
 		}
 	}
 }
 
 // runOpenBrainPoll is the polling fallback when fsnotify is unavailable.
-func runOpenBrainPoll(ctx context.Context, app *App, paths []string, hashes map[string]string,
+func runOpenBrainPoll(ctx context.Context, app *App, projectName string, paths []string, hashes map[string]string,
 	sections map[string]map[string]string, recentEntries *[]memoryEntry, maxRecent int,
 	showAgents bool, agentLimit int) error {
 
@@ -471,9 +1022,10 @@ func runOpenBrainPoll(ctx context.Context, app *App, paths []string, hashes map[
 	defer ticker.Stop()
 
 	renderOpenBrainPane(*recentEntries, paths)
+	renderKnowledgeSection(ctx, app, projectName)
 	if showAgents {
 		agentEvents := queryAgentActivity(ctx, app, agentLimit)
-		renderAgentActivity(agentEvents)
+		renderAgentActivityDimmed(agentEvents)
 	}
 
 	for {
@@ -485,9 +1037,10 @@ func runOpenBrainPoll(ctx context.Context, app *App, paths []string, hashes map[
 				processOpenBrainChange(p, paths, hashes, sections, recentEntries, maxRecent)
 			}
 			renderOpenBrainPane(*recentEntries, paths)
+			renderKnowledgeSection(ctx, app, projectName)
 			if showAgents {
 				agentEvents := queryAgentActivity(ctx, app, agentLimit)
-				renderAgentActivity(agentEvents)
+				renderAgentActivityDimmed(agentEvents)
 			}
 		}
 	}
