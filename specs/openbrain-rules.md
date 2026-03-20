@@ -263,30 +263,80 @@ The runtime name on the right is rendered in the runtime's color. The type glyph
 1. **Memory** section — MEMORY.md file change watcher (fsnotify)
 2. **Activity** section — agent lifecycle events from `events` table
 
-### New Layout
+### New Layout (MCP Server Integration)
 
-1. **Memory** section — unchanged (MEMORY.md watcher)
-2. **Knowledge** section — replaces Activity; reads from `openbrain_entries` table
-3. **Activity** section — moved to bottom, collapsed by default, shows last 3 lifecycle events in dim text
+The OpenBrain TUI pane now has two data sources:
 
-The Activity section is not removed entirely (it has diagnostic value) but is visually de-emphasized. The Knowledge section becomes the primary content below Memory.
+**Local data** (existing, unchanged):
+1. **Memory** section — MEMORY.md file change watcher (fsnotify) via `internal/commands/openbrain.go`
+2. **Knowledge** section — reads from local `openbrain_entries` table
+3. **Activity** section — collapsed, last 3 lifecycle events in dim text
+
+**MCP server data** (new, added via CC integration):
+The `internal/tui/openbrain_pane.go` pane fetches entries from the OpenBrain MCP server
+(`ob-mcp`) via the computeCommander gateway proxy:
+
+- **REST** (initial load + fallback): `GET /api/v1/openbrain/entries` on the gateway
+- **SSE** (real-time): `GET /api/v1/openbrain/stream` on the gateway
+
+The gateway proxies these to the MCP server configured in `config.yaml`:
+
+```yaml
+openbrain:
+  enabled: true
+  mcp_sse_url: "http://localhost:8200"
+  api_key: "${OB_API_KEY}"
+  poll_interval_ms: 30000
+  max_entries: 20
+  default_since: "72h"
+```
+
+### Data Flow
+
+```
+Agent calls ob.write (via MCP)
+  -> MCP server inserts into PostgreSQL
+  -> MCP server publishes to MemoryBroadcast
+  -> SSE endpoint pushes "event: memory" to subscribers
+  -> CC gateway receives SSE event
+  -> CC gateway forwards to TUI pane
+  -> OpenBrainPane prepends entry and re-renders
+```
+
+### Failure Modes
+
+| Failure | Recovery |
+|---------|----------|
+| MCP server unreachable | Pane shows "disconnected"; retries on each Refresh() cycle |
+| API key invalid | Pane shows "error" status |
+| High write volume | Broadcast drops events for slow subscribers |
 
 ## On-Disk Format (Files Changed)
 
 ```
+openbrain/
+  mcp/
+    internal/
+      server/
+        server.go                         # modified: enhanced REST endpoint, SSE filtering
+    tests/
+      events_test.go                      # new: broadcast and SSE tests
+
 computeCommander/
   internal/
-    platform/db/
-      migrations/
-        sqlite/
-          NNN_openbrain_entries.sql     # new: openbrain_entries table
-        postgres/
-          NNN_openbrain_entries.sql     # new: postgres equivalent
+    config/
+      config.go                           # modified: added OpenBrainConfig section
+    gateway/
+      openbrain.go                        # new: proxy routes for /api/v1/openbrain/*
+      openbrain_test.go                   # new: proxy route tests
+    tui/
+      openbrain_pane.go                   # modified: replaced placeholder with full implementation
     commands/
-      openbrain.go                      # modified: add write/read subcommands, knowledge section render
-      openbrain_test.go                 # modified: tests for write/read/render
-  scripts/
-    (none — write/read are Go commands, not shell scripts)
+      app.go                             # modified: wire OpenBrainProxy into gateway
+      openbrain.go                        # existing: local write/read subcommands (unchanged)
+      openbrain_test.go                   # existing: tests for write/read/render (unchanged)
+  specs/
+    openbrain-rules.md                    # modified: updated to reference MCP server
 ```
 
 ## Implementation Tasks
@@ -395,3 +445,8 @@ Command: cmdr openbrain write --type <type> --summary "..." [--detail "..."]
 3. Claude entries render with blue color coding, pi with magenta (visual verification)
 4. `cmdr openbrain read` completes in <500ms for a table with 1000 entries
 5. No increase in session start time beyond 500ms attributable to OpenBrain reads
+6. `ob.write` from an agent produces an SSE event on `/events/memories` within 100ms
+7. computeCommander OpenBrain pane displays MCP server entries within 200ms of SSE event
+8. Pane degrades gracefully when MCP server is unreachable (shows "disconnected" status)
+9. REST fallback populates pane on dashboard start even when SSE is unavailable
+10. Gateway proxy routes return well-formed JSON matching the documented response schema
