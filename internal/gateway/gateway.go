@@ -23,24 +23,26 @@ import (
 
 // GatewayOpts configures a Gateway instance.
 type GatewayOpts struct {
-	DB       db.DB
-	Spawner  *agents.Spawner
-	Mail     mail.MailStore
-	Queue    merge.MergeQueue
-	Version  string
-	StartAt  time.Time
+	DB        db.DB
+	Spawner   *agents.Spawner
+	Mail      mail.MailStore
+	Queue     merge.MergeQueue
+	Version   string
+	StartAt   time.Time
+	OpenBrain *OpenBrainProxy
 }
 
 // Gateway is the HTTP API server for ComputeCommander.
 type Gateway struct {
-	db      db.DB
-	spawner *agents.Spawner
-	mail    mail.MailStore
-	queue   merge.MergeQueue
-	version string
-	startAt time.Time
-	mux     *http.ServeMux
-	reqID   atomic.Uint64
+	db        db.DB
+	spawner   *agents.Spawner
+	mail      mail.MailStore
+	queue     merge.MergeQueue
+	version   string
+	startAt   time.Time
+	mux       *http.ServeMux
+	reqID     atomic.Uint64
+	openBrain *OpenBrainProxy
 }
 
 // NewGateway creates a Gateway from the provided options.
@@ -55,13 +57,14 @@ func NewGateway(opts GatewayOpts) *Gateway {
 	}
 
 	g := &Gateway{
-		db:      opts.DB,
-		spawner: opts.Spawner,
-		mail:    opts.Mail,
-		queue:   opts.Queue,
-		version: version,
-		startAt: startAt,
-		mux:     http.NewServeMux(),
+		db:        opts.DB,
+		spawner:   opts.Spawner,
+		mail:      opts.Mail,
+		queue:     opts.Queue,
+		version:   version,
+		startAt:   startAt,
+		mux:       http.NewServeMux(),
+		openBrain: opts.OpenBrain,
 	}
 
 	g.registerRoutes()
@@ -120,6 +123,11 @@ func (g *Gateway) registerRoutes() {
 	// Multi-agent tracking endpoints.
 	g.mux.HandleFunc("POST /api/v1/agents/register", g.handleRegisterAgent)
 	g.mux.HandleFunc("POST /api/v1/agents/heartbeat/", g.handleHeartbeat)
+
+	// OpenBrain proxy routes (MCP server integration).
+	if g.openBrain != nil {
+		g.openBrain.RegisterRoutes(g.mux)
+	}
 }
 
 // middleware chains logging, CORS, and request ID middleware.
