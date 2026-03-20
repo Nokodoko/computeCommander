@@ -133,6 +133,12 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		eventsPane.SetDB(opts.DB)
 	}
 
+	// Resolve OpenBrain config for the pane.
+	var obCfg config.OpenBrainConfig
+	if opts.Config != nil {
+		obCfg = opts.Config.OpenBrain
+	}
+
 	d := &Dashboard{
 		filePicker:     fp,
 		agentSession:   NewAgentSession(agentCmd, theme),
@@ -146,7 +152,7 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		costs:          NewCostTracker(theme),
 		palette:        NewCommandPalette(theme),
 		lazygit:        NewLazyGitPane(root, theme),
-		openbrain:      NewOpenBrainPane(theme),
+		openbrain:      NewOpenBrainPane(theme, obCfg),
 		focusedPane:    PaneAgentSession,
 		interval:       interval,
 		theme:          theme,
@@ -310,6 +316,9 @@ func (d *Dashboard) Refresh() error {
 		errs = append(errs, err.Error())
 	}
 	if err := d.jira.Refresh(ctx); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := d.openbrain.Refresh(); err != nil {
 		errs = append(errs, err.Error())
 	}
 
