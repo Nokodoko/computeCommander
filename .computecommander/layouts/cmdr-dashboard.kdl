@@ -47,15 +47,11 @@ layout {
                     command "cmdr"
                     args "evals" "--pane"
                 }
-                pane name="Merge Queue" size="20%" {
-                    command "cmdr"
-                    args "merge" "list" "--pane"
-                }
-                pane name="OpenBrain" size="20%" {
+                pane name="OpenBrain" size="30%" {
                     command "cmdr"
                     args "openbrain" "--pane"
                 }
-                pane size="20%" {
+                pane size="30%" {
                     command "bash"
                     args "/home/n0ko/.computecommander/scripts/lazygit-wrapper.sh" "/home/n0ko/Programs/ai/computeCommander" "e33fa584"
                 }
