@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -158,6 +160,44 @@ func parseTTL(s string) (time.Duration, error) {
 	}
 	// Fall back to Go's time.ParseDuration for h, m, s.
 	return time.ParseDuration(s)
+}
+
+// ─── MCP connection count ─────────────────────────────────────────────────
+
+// obConnectionCounts holds the response from the OpenBrain MCP connections endpoint.
+type obConnectionCounts struct {
+	SSEConnections int `json:"sse_connections"`
+	MCPConnections int `json:"mcp_connections"`
+	Total          int `json:"total"`
+}
+
+// obMCPEndpoint is the default OpenBrain MCP server connections endpoint.
+const obMCPEndpoint = "http://localhost:8200/api/v1/openbrain/connections"
+
+// fetchOBConnections retrieves the current connection counts from the OpenBrain
+// MCP server. Returns zero counts on any error (server down, timeout, etc.).
+func fetchOBConnections() obConnectionCounts {
+	client := http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(obMCPEndpoint)
+	if err != nil {
+		return obConnectionCounts{}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return obConnectionCounts{}
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return obConnectionCounts{}
+	}
+
+	var counts obConnectionCounts
+	if err := json.Unmarshal(body, &counts); err != nil {
+		return obConnectionCounts{}
+	}
+	return counts
 }
 
 // ─── OpenBrainCmd ────────────────────────────────────────────────────────────
@@ -971,7 +1011,8 @@ func runOpenBrainPane(ctx context.Context, app *App, projectDir string, showAgen
 
 	// Render helper that includes Knowledge section and dimmed Activity.
 	renderAll := func() {
-		renderOpenBrainPane(recentEntries, paths)
+		conns := fetchOBConnections()
+		renderOpenBrainPane(recentEntries, paths, conns)
 		renderKnowledgeSection(ctx, app, projectName)
 		if showAgents {
 			agentEvents := queryAgentActivity(ctx, app, agentLimit)
@@ -1021,7 +1062,8 @@ func runOpenBrainPoll(ctx context.Context, app *App, projectName string, paths [
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	renderOpenBrainPane(*recentEntries, paths)
+	conns := fetchOBConnections()
+	renderOpenBrainPane(*recentEntries, paths, conns)
 	renderKnowledgeSection(ctx, app, projectName)
 	if showAgents {
 		agentEvents := queryAgentActivity(ctx, app, agentLimit)
@@ -1036,7 +1078,8 @@ func runOpenBrainPoll(ctx context.Context, app *App, projectName string, paths [
 			for _, p := range paths {
 				processOpenBrainChange(p, paths, hashes, sections, recentEntries, maxRecent)
 			}
-			renderOpenBrainPane(*recentEntries, paths)
+			conns := fetchOBConnections()
+			renderOpenBrainPane(*recentEntries, paths, conns)
 			renderKnowledgeSection(ctx, app, projectName)
 			if showAgents {
 				agentEvents := queryAgentActivity(ctx, app, agentLimit)
@@ -1087,7 +1130,7 @@ func processOpenBrainChange(changedFile string, paths []string, hashes map[strin
 }
 
 // renderOpenBrainPane renders one frame of the OpenBrain pane.
-func renderOpenBrainPane(entries []memoryEntry, watchedPaths []string) {
+func renderOpenBrainPane(entries []memoryEntry, watchedPaths []string, conns obConnectionCounts) {
 	// Clear screen and move cursor to top.
 	fmt.Print("\033[2J\033[H")
 
@@ -1102,7 +1145,15 @@ func renderOpenBrainPane(entries []memoryEntry, watchedPaths []string) {
 			existing++
 		}
 	}
-	fmt.Printf(" \033[2m(%d files)\033[0m\n", existing)
+	fmt.Printf(" \033[2m(%d files)\033[0m", existing)
+
+	// Connection count (shown after file count).
+	if conns.Total > 0 {
+		fmt.Printf(" \033[1;36m%d connected\033[0m", conns.Total)
+	} else {
+		fmt.Print(" \033[2m0 connected\033[0m")
+	}
+	fmt.Println()
 
 	if len(entries) == 0 {
 		fmt.Print("\033[2m Watching for changes...\033[0m\n")
