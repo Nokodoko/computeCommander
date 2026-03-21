@@ -45,16 +45,18 @@ func (p *OpenBrainProxy) handleEntries(w http.ResponseWriter, r *http.Request) {
 		target += "?" + rawQuery
 	}
 
-	// Inject API key if configured and not already present.
-	if p.cfg.APIKey != "" && r.URL.Query().Get("api_key") == "" {
-		sep := "?"
-		if r.URL.RawQuery != "" {
-			sep = "&"
-		}
-		target += sep + "api_key=" + p.cfg.APIKey
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{
+			"error": fmt.Sprintf("build request: %v", err),
+		})
+		return
+	}
+	if p.cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
 	}
 
-	resp, err := p.client.Get(target)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{
 			"error":  fmt.Sprintf("mcp server unreachable: %v", err),
@@ -87,21 +89,15 @@ func (p *OpenBrainProxy) handleStream(w http.ResponseWriter, r *http.Request) {
 		target += "?" + rawQuery
 	}
 
-	// Inject API key.
-	if p.cfg.APIKey != "" && r.URL.Query().Get("api_key") == "" {
-		sep := "?"
-		if r.URL.RawQuery != "" {
-			sep = "&"
-		}
-		target += sep + "api_key=" + p.cfg.APIKey
-	}
-
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("build request: %v", err), http.StatusInternalServerError)
 		return
 	}
 	req.Header.Set("Accept", "text/event-stream")
+	if p.cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+	}
 
 	// Use a client without timeout for long-lived SSE connections.
 	sseClient := &http.Client{
@@ -147,11 +143,20 @@ type openBrainStatusResponse struct {
 // handleStatus returns the connection health for the OpenBrain MCP server.
 func (p *OpenBrainProxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 	target := fmt.Sprintf("%s/api/v1/openbrain/entries?limit=1", p.cfg.MCPSseURL)
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, target, nil)
+	if err != nil {
+		writeJSON(w, http.StatusOK, openBrainStatusResponse{
+			Status: "error",
+			MCPURL: p.cfg.MCPSseURL,
+		})
+		return
+	}
 	if p.cfg.APIKey != "" {
-		target += "&api_key=" + p.cfg.APIKey
+		req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
 	}
 
-	resp, err := p.client.Get(target)
+	resp, err := p.client.Do(req)
 	if err != nil {
 		writeJSON(w, http.StatusOK, openBrainStatusResponse{
 			Status: "disconnected",

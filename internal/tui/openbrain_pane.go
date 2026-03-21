@@ -100,11 +100,19 @@ func (ob *OpenBrainPane) Refresh() error {
 			url += "&since=" + since
 		}
 	}
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		ob.mu.Lock()
+		ob.status = StatusError
+		ob.mu.Unlock()
+		return nil
+	}
 	if ob.cfg.APIKey != "" {
-		url += "&api_key=" + ob.cfg.APIKey
+		req.Header.Set("Authorization", "Bearer "+ob.cfg.APIKey)
 	}
 
-	resp, err := ob.client.Get(url)
+	resp, err := ob.client.Do(req)
 	if err != nil {
 		ob.mu.Lock()
 		ob.status = StatusDisconnected
@@ -225,22 +233,21 @@ func (ob *OpenBrainPane) View() string {
 	return strings.Join(lines, "\n")
 }
 
-// renderEntry renders a single entry line with type glyph and runtime color.
+// renderEntry renders a single entry line: [HH:MM:SS] type     | content...
 func (ob *OpenBrainPane) renderEntry(e OpenBrainEntry, maxW int) string {
-	glyph, glyphColor := obEntryTypeGlyph(e.Type)
-	age := obFormatAge(e.CreatedAt)
-	rtColor := obRuntimeColor(e.Source)
+	_, glyphColor := obEntryTypeGlyph(e.Type)
+	timeStr := obFormatTime(e.CreatedAt)
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+	typeStyle := lipgloss.NewStyle().Foreground(glyphColor).Bold(true)
 
-	// Build the line: " D  2m ago   Switched from PTY embedding...       claude"
-	glyphStr := lipgloss.NewStyle().Foreground(glyphColor).Bold(true).Render(glyph)
+	// Layout: [HH:MM:SS] type     | content...
+	// Fixed widths: bracket+time+bracket(10) + space(1) + type(9) + sep(3) = 23
+	typePadded := fmt.Sprintf("%-9s", e.Type)
+	prefix := dimStyle.Render("[") + dimStyle.Render(timeStr) + dimStyle.Render("]") +
+		" " + typeStyle.Render(typePadded) + dimStyle.Render("| ")
 
-	// Truncate content for available width.
-	// Layout: " G  AGE   CONTENT   SOURCE"
-	ageStr := fmt.Sprintf("%-7s", age)
-	sourceStr := obSourceShort(e.Source)
-
-	// Available width for content: total - glyph(3) - age(9) - source(10) - spacing(5)
-	contentW := maxW - 27
+	// Visible prefix width: 10 + 1 + 9 + 2 = 22
+	contentW := maxW - 22
 	if contentW < 10 {
 		contentW = 10
 	}
@@ -249,11 +256,7 @@ func (ob *OpenBrainPane) renderEntry(e OpenBrainEntry, maxW int) string {
 		content = content[:contentW-2] + ".."
 	}
 
-	contentPadded := fmt.Sprintf("%-*s", contentW, content)
-
-	sourceStyled := lipgloss.NewStyle().Foreground(rtColor).Render(sourceStr)
-
-	return fmt.Sprintf(" %s  %s %s %s", glyphStr, ageStr, contentPadded, sourceStyled)
+	return prefix + content
 }
 
 // renderStatusLine renders the bottom status bar.
@@ -370,11 +373,22 @@ func obSourceShort(source string) string {
 	}
 }
 
+// obFormatTime returns the local HH:MM:SS from an RFC3339 or datetime timestamp.
+func obFormatTime(createdAt string) string {
+	t, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		t, err = time.Parse("2006-01-02 15:04:05", createdAt)
+		if err != nil {
+			return "        "
+		}
+	}
+	return t.Local().Format("15:04:05")
+}
+
 // obFormatAge returns a human-readable age string from an RFC3339 timestamp.
 func obFormatAge(createdAt string) string {
 	t, err := time.Parse(time.RFC3339, createdAt)
 	if err != nil {
-		// Try alternate format.
 		t, err = time.Parse("2006-01-02 15:04:05", createdAt)
 		if err != nil {
 			return ""
