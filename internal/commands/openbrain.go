@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/noko/computecommander/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -956,8 +957,244 @@ func renderAgentActivity(entries []agentActivityEntry) {
 	}
 }
 
+// ─── ob1 REST API types ──────────────────────────────────────────────────────
+
+// obAPIEntry represents a single entry from the ob1 REST API.
+type obAPIEntry struct {
+	ID        string   `json:"id"`
+	Type      string   `json:"item_type"`
+	Content   string   `json:"raw_content"`
+	Priority  int      `json:"priority"`
+	Source    string   `json:"source"`
+	Tags      []string `json:"tags"`
+	CreatedAt string   `json:"created_at"`
+	Session   string   `json:"session_name"`
+}
+
+// obAPIResponse represents the JSON response from the ob1 entries endpoint.
+type obAPIResponse struct {
+	Entries []obAPIEntry `json:"entries"`
+	Count   int          `json:"count"`
+	HasMore bool         `json:"has_more"`
+}
+
+// obAPIStatus tracks the connection state for the REST API poller.
+type obAPIStatus int
+
+const (
+	obAPIDisconnected obAPIStatus = iota
+	obAPIConnected
+	obAPIError
+)
+
+// fetchOBEntries polls the ob1 REST API for recent entries.
+// Returns the response and connection status. Never returns an error —
+// failures are reflected in the status for graceful degradation.
+func fetchOBEntries(cfg *config.OpenBrainConfig) (obAPIResponse, obAPIStatus) {
+	if cfg == nil || cfg.MCPSseURL == "" {
+		return obAPIResponse{}, obAPIDisconnected
+	}
+
+	maxEntries := cfg.MaxEntries
+	if maxEntries <= 0 {
+		maxEntries = 25
+	}
+
+	url := fmt.Sprintf("%s/api/v1/openbrain/entries?limit=%d", cfg.MCPSseURL, maxEntries)
+	if cfg.DefaultSince != "" {
+		dur, err := time.ParseDuration(cfg.DefaultSince)
+		if err == nil {
+			since := time.Now().Add(-dur).UTC().Format(time.RFC3339)
+			url += "&since=" + since
+		}
+	}
+
+	client := http.Client{Timeout: 5 * time.Second}
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return obAPIResponse{}, obAPIError
+	}
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return obAPIResponse{}, obAPIDisconnected
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return obAPIResponse{}, obAPIError
+	}
+	if resp.StatusCode != http.StatusOK {
+		return obAPIResponse{}, obAPIError
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return obAPIResponse{}, obAPIError
+	}
+
+	var result obAPIResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return obAPIResponse{}, obAPIError
+	}
+
+	return result, obAPIConnected
+}
+
+// obAPIEntryTypeColor returns the ANSI color for an ob1 entry type.
+func obAPIEntryTypeColor(itemType string) string {
+	switch itemType {
+	case "project", "reference":
+		return "\033[1;36m" // bold cyan
+	case "task":
+		return "\033[1;33m" // bold yellow
+	case "event":
+		return "\033[2;37m" // dim white
+	case "observation":
+		return "\033[36m" // cyan
+	case "session":
+		return "\033[35m" // magenta
+	case "contact":
+		return "\033[32m" // green
+	default:
+		return "\033[2m" // dim
+	}
+}
+
+// obAPIStatusLabel returns the ANSI-styled status string for display.
+func obAPIStatusLabel(s obAPIStatus) string {
+	switch s {
+	case obAPIConnected:
+		return "\033[32mconnected\033[0m"
+	case obAPIError:
+		return "\033[31merror\033[0m"
+	default:
+		return "\033[2mdisconnected\033[0m"
+	}
+}
+
+// obFormatTimestamp returns HH:MM:SS from an RFC3339 or datetime string.
+func obFormatTimestamp(createdAt string) string {
+	t, err := time.Parse(time.RFC3339, createdAt)
+	if err != nil {
+		t, err = time.Parse("2006-01-02 15:04:05", createdAt)
+		if err != nil {
+			return "        "
+		}
+	}
+	return t.Local().Format("15:04:05")
+}
+
+// renderOBAPIPane renders one frame of the REST API-driven OpenBrain pane.
+func renderOBAPIPane(result obAPIResponse, status obAPIStatus) {
+	// Clear screen and move cursor to top.
+	fmt.Print("\033[2J\033[H")
+
+	// Header: " OB1  HH:MM:SS  (N entries)  status"
+	fmt.Print("\033[1;35m OB1 \033[0m")
+	fmt.Printf(" \033[2m%s\033[0m", time.Now().Format("15:04:05"))
+	fmt.Printf(" \033[2m(%d entries)\033[0m", result.Count)
+	fmt.Printf("  %s", obAPIStatusLabel(status))
+	fmt.Println()
+
+	if len(result.Entries) == 0 {
+		if status == obAPIDisconnected {
+			fmt.Print("\033[2m API unreachable, retrying...\033[0m\n")
+		} else {
+			fmt.Print("\033[2m No entries found.\033[0m\n")
+		}
+		return
+	}
+
+	// Limit entries to terminal height so newest entries stay visible.
+	// Reserve 2 lines: 1 for header, 1 for zellij pane border.
+	entries := result.Entries
+	th := terminalHeight()
+	if th <= 0 {
+		th = 15 // conservative fallback for zellij pane
+	}
+	maxRows := th - 2
+	if maxRows < 1 {
+		maxRows = 1
+	}
+	if len(entries) > maxRows {
+		entries = entries[:maxRows]
+	}
+
+	// Reverse so newest entries appear at the bottom (log/feed style).
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+
+	// Render entries: [HH:MM:SS] type     | content...
+	for _, e := range entries {
+		ts := obFormatTimestamp(e.CreatedAt)
+		typeColor := obAPIEntryTypeColor(e.Type)
+		typePadded := fmt.Sprintf("%-9s", e.Type)
+
+		content := strings.ReplaceAll(e.Content, "\n", " ")
+		content = truncate(content, 70)
+
+		fmt.Printf(" \033[2m[\033[0m\033[2m%s\033[0m\033[2m]\033[0m %s%s\033[0m\033[2m| \033[0m%s\n",
+			ts, typeColor, typePadded, content)
+	}
+}
+
 // runOpenBrainPane runs the OpenBrain pane in watch mode with ANSI output.
+// If the ob1 REST API is configured (MCPSseURL is set), it polls the API.
+// Otherwise, it falls back to the legacy MEMORY.md file watcher.
 func runOpenBrainPane(ctx context.Context, app *App, projectDir string, showAgents bool, agentLimit int) error {
+	// Check if ob1 REST API is configured.
+	if app != nil && app.Config != nil &&
+		app.Config.OpenBrain.Enabled && app.Config.OpenBrain.MCPSseURL != "" {
+		return runOpenBrainAPIPane(ctx, app, showAgents, agentLimit)
+	}
+
+	// Legacy fallback: MEMORY.md file watcher.
+	return runOpenBrainFilewatchPane(ctx, app, projectDir, showAgents, agentLimit)
+}
+
+// runOpenBrainAPIPane polls the ob1 REST API and renders entries.
+func runOpenBrainAPIPane(ctx context.Context, app *App, showAgents bool, agentLimit int) error {
+	cfg := &app.Config.OpenBrain
+
+	pollMs := cfg.PollIntervalMs
+	if pollMs <= 0 {
+		pollMs = 5000
+	}
+	pollInterval := time.Duration(pollMs) * time.Millisecond
+
+	// Render helper.
+	renderAll := func() {
+		result, status := fetchOBEntries(cfg)
+		renderOBAPIPane(result, status)
+		if showAgents {
+			agentEvents := queryAgentActivity(ctx, app, agentLimit)
+			renderAgentActivityDimmed(agentEvents)
+		}
+	}
+
+	// Initial render.
+	renderAll()
+
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			renderAll()
+		}
+	}
+}
+
+// runOpenBrainFilewatchPane is the legacy MEMORY.md file watcher pane.
+func runOpenBrainFilewatchPane(ctx context.Context, app *App, projectDir string, showAgents bool, agentLimit int) error {
 	if projectDir == "" {
 		projectDir, _ = os.Getwd()
 	}
