@@ -155,7 +155,7 @@ func GenerateTypeScript(structs []StructInfo) string {
 			if f.Optional {
 				opt = "?"
 			}
-			buf.WriteString(fmt.Sprintf("  %s%s: %s;\n", f.JSONName, opt, f.TSType))
+			fmt.Fprintf(&buf, "  %s%s: %s;\n", f.JSONName, opt, f.TSType)
 		}
 		buf.WriteString("}\n")
 		if i < len(structs)-1 {
@@ -251,7 +251,7 @@ func resolveType(expr ast.Expr) string {
 // parseJSONTag extracts the field name and omitempty flag from a struct tag.
 func parseJSONTag(tagValue string) (name string, omitempty bool) {
 	tag := strings.Trim(tagValue, "`")
-	for _, part := range strings.Split(tag, " ") {
+	for part := range strings.SplitSeq(tag, " ") {
 		part = strings.TrimSpace(part)
 		if !strings.HasPrefix(part, `json:"`) {
 			continue
