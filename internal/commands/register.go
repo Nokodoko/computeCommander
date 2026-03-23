@@ -53,6 +53,8 @@ func RegisterCmd(app *App) *cobra.Command {
 			parent, _ := cmd.Flags().GetString("parent")
 			worktreePath, _ := cmd.Flags().GetString("worktree")
 			branch, _ := cmd.Flags().GetString("branch")
+			model, _ := cmd.Flags().GetString("model")
+			sessionName, _ := cmd.Flags().GetString("session-name")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
 
 			if name == "" {
@@ -70,18 +72,35 @@ func RegisterCmd(app *App) *cobra.Command {
 
 			sessionID := generateSessionID(runtime)
 			now := time.Now().UTC()
+			nowStr := now.Format("2006-01-02T15:04:05Z")
 
+			// Try v3 INSERT with model/session_name columns first;
+			// fall back to base INSERT for pre-migration databases.
 			err := app.DB.Exec(ctx,
 				`INSERT INTO sessions (id, agent_name, capability, worktree_path, branch_name,
 					task_id, state, pid, parent_agent, depth, run_id,
 					started_at, last_activity, escalation_level,
-					transcript_path, runtime, heartbeat_at)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+					transcript_path, runtime, heartbeat_at, model, session_name)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 				sessionID, name, capability, worktreePath, branch,
 				taskID, string(agents.StateBooting), pid, parent, 0, nil,
-				now.Format("2006-01-02T15:04:05Z"), now.Format("2006-01-02T15:04:05Z"), 0,
-				"", runtime, now.Format("2006-01-02T15:04:05Z"),
+				nowStr, nowStr, 0,
+				"", runtime, nowStr, model, sessionName,
 			)
+			if err != nil {
+				// Retry without v3 columns for pre-migration DBs.
+				err = app.DB.Exec(ctx,
+					`INSERT INTO sessions (id, agent_name, capability, worktree_path, branch_name,
+						task_id, state, pid, parent_agent, depth, run_id,
+						started_at, last_activity, escalation_level,
+						transcript_path, runtime, heartbeat_at)
+					VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+					sessionID, name, capability, worktreePath, branch,
+					taskID, string(agents.StateBooting), pid, parent, 0, nil,
+					nowStr, nowStr, 0,
+					"", runtime, nowStr,
+				)
+			}
 			if err != nil {
 				if jsonOut {
 					return printJSON(map[string]any{
@@ -123,6 +142,8 @@ func RegisterCmd(app *App) *cobra.Command {
 	cmd.Flags().String("parent", "", "Parent agent (for subagent tracking)")
 	cmd.Flags().String("worktree", "", "Worktree path")
 	cmd.Flags().String("branch", "", "Git branch")
+	cmd.Flags().String("model", "", "LLM model name (e.g., claude-opus-4-6, gpt-4o)")
+	cmd.Flags().String("session-name", "", "Human-readable session name")
 
 	return cmd
 }
