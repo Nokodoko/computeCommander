@@ -15,6 +15,7 @@ reviewed (e.g., `reviews/jira-board-generator-review.md`).
 | [jira-pane-refactor.md](jira-pane-refactor.md) | Jira pane refactor — filter sub-tasks from issue lists |
 | [openbrain-rules.md](openbrain-rules.md) | OpenBrain rules overhaul — write/read governance, color coding, performance |
 | [session-persistence.md](session-persistence.md) | Session state persistence and restore |
+| [go-typescript-bridge.md](go-typescript-bridge.md) | Go-TypeScript bridge layer for Pi agent extension integration |
 
 ## Reviews
 
