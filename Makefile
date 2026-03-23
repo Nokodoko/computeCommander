@@ -5,7 +5,7 @@ LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 FOCUS_WATCHER_DIR := plugins/focus-watcher
 FOCUS_WATCHER_BIN := $(FOCUS_WATCHER_DIR)/target/release/focus-watcher
 
-.PHONY: build build-focus-watcher test lint vet clean install
+.PHONY: build build-focus-watcher build-bridge test lint vet clean install install-bridge generate-types
 
 build: build-focus-watcher
 	go build $(LDFLAGS) -o cmdr ./cmd/cc/
@@ -28,6 +28,17 @@ lint: vet
 vet:
 	go vet ./...
 
+build-bridge:
+	go build $(LDFLAGS) -o bin/hook-bridge ./cmd/hook-bridge/
+
+install-bridge: build-bridge
+	@mkdir -p $(HOME)/.local/bin
+	cp bin/hook-bridge $(HOME)/.local/bin/hook-bridge
+
+generate-types:
+	go run ./cmd/hook-bridge/ --generate
+
 clean:
 	rm -f cmdr
+	rm -f bin/hook-bridge
 	cargo clean --manifest-path $(FOCUS_WATCHER_DIR)/Cargo.toml 2>/dev/null || true
