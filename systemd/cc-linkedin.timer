@@ -1,0 +1,9 @@
+[Unit]
+Description=LinkedIn Post Generator (2x/week)
+
+[Timer]
+OnCalendar=Tue,Thu 08:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
