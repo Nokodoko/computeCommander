@@ -68,8 +68,9 @@ type Dashboard struct {
 	jira         *JiraPane
 	costs        *CostTracker
 	palette      *CommandPalette
-	lazygit      *LazyGitPane   // PTY: lazygit process
-	openbrain    *OpenBrainPane // Data: OpenBrain placeholder
+	lazygit      *LazyGitPane      // PTY: lazygit process
+	openbrain    *OpenBrainPane    // Data: OpenBrain placeholder
+	trustGraph   *TrustGraphPane   // Data: TrustGraph knowledge graph
 
 	// State.
 	focusedPane    PaneID
@@ -139,6 +140,12 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		obCfg = opts.Config.OpenBrain
 	}
 
+	// Resolve TrustGraph config for the pane.
+	var tgCfg config.TrustGraphConfig
+	if opts.Config != nil {
+		tgCfg = opts.Config.TrustGraph
+	}
+
 	d := &Dashboard{
 		filePicker:     fp,
 		agentSession:   NewAgentSession(agentCmd, theme),
@@ -153,6 +160,7 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		palette:        NewCommandPalette(theme),
 		lazygit:        NewLazyGitPane(root, theme),
 		openbrain:      NewOpenBrainPane(theme, obCfg),
+		trustGraph:     NewTrustGraphPane(theme, tgCfg),
 		focusedPane:    PaneAgentSession,
 		interval:       interval,
 		theme:          theme,
@@ -208,12 +216,14 @@ func (d *Dashboard) Run(ctx context.Context) error {
 		_ = d.agentSession.Stop()
 		_ = d.filePicker.Stop()
 		_ = d.lazygit.Stop()
+		d.trustGraph.Close()
 		return err
 	case <-ctx.Done():
 		p.Quit()
 		_ = d.agentSession.Stop()
 		_ = d.filePicker.Stop()
 		_ = d.lazygit.Stop()
+		d.trustGraph.Close()
 		return ctx.Err()
 	}
 }
@@ -319,6 +329,9 @@ func (d *Dashboard) Refresh() error {
 		errs = append(errs, err.Error())
 	}
 	if err := d.openbrain.Refresh(); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := d.trustGraph.Refresh(); err != nil {
 		errs = append(errs, err.Error())
 	}
 
@@ -454,6 +467,8 @@ func (d *Dashboard) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		d.focusedPane = PaneMergeQueue
 	case "7":
 		d.focusedPane = PaneOpenBrain
+	case "8":
+		d.focusedPane = PaneTrustGraph
 	case "9":
 		d.focusedPane = PaneJira
 	case "0":
@@ -578,6 +593,19 @@ func (d *Dashboard) handleFocusedPaneKey(msg tea.KeyMsg) {
 				d.err = fmt.Errorf("lazygit start: %w", err)
 			}
 		}
+	case PaneTrustGraph:
+		switch key {
+		case "j", "down":
+			d.trustGraph.ScrollDown()
+		case "k", "up":
+			d.trustGraph.ScrollUp()
+		case "r":
+			// Force refresh by clearing the last refresh time.
+			d.trustGraph.mu.Lock()
+			d.trustGraph.lastRefresh = time.Time{}
+			d.trustGraph.mu.Unlock()
+			_ = d.trustGraph.Refresh()
+		}
 	}
 }
 
@@ -693,6 +721,9 @@ func (d *Dashboard) forwardToPTY(msg tea.KeyMsg, writeFn func([]byte)) (tea.Mode
 // When PaneJira is focused it renders a full-screen Jira overlay instead of
 // the normal grid so the issue tree has maximum space.
 func (d *Dashboard) View() string {
+	if d.focusedPane == PaneTrustGraph {
+		return d.viewTrustGraph()
+	}
 	if d.focusedPane == PaneJira {
 		return d.viewJira()
 	}
@@ -775,6 +806,39 @@ func (d *Dashboard) View() string {
 	}
 
 	return layout
+}
+
+// viewTrustGraph renders a full-screen TrustGraph pane (active when key 8 is pressed).
+func (d *Dashboard) viewTrustGraph() string {
+	w := d.width
+	h := d.height
+	if w < 40 {
+		w = 80
+	}
+	if h < 10 {
+		h = 24
+	}
+
+	// Reserve 2 lines for status/help bars.
+	innerH := h - 2
+	d.trustGraph.SetSize(w-2, innerH-3)
+
+	tgMeta := paneMetaByID(PaneTrustGraph)
+	content := d.trustGraph.View()
+	tgPane := RenderPane(content, tgMeta, true, w, innerH, d.theme)
+
+	statusBar := renderStatusBarWithProject(
+		d.projectName,
+		len(d.agents.Sessions()),
+		d.mail.UnreadCount(),
+		d.queue.PendingCount(),
+		d.costs.TotalCost(),
+		d.theme,
+	)
+
+	helpBar := d.theme.HelpBar.Render("8=trustgraph  j/k:nav  r:refresh  Tab:back  q:quit")
+
+	return lipgloss.JoinVertical(lipgloss.Left, tgPane, statusBar, helpBar)
 }
 
 // viewJira renders a full-screen Jira pane (active when key 9 is pressed).

@@ -90,10 +90,22 @@ func TestWriteLayout_NoKeybinds(t *testing.T) {
 	if strings.Contains(string(data), "focus-tracker.wasm") {
 		t.Errorf("written layout must NOT contain deprecated focus-tracker WASM plugin")
 	}
-	// Verify focus-watcher script was generated.
+	// Verify focus-watcher is available: either the bash script was generated
+	// (when no Rust binary is found), or the wrapper script was generated
+	// (wrapping whichever watcher binary/script was resolved).
 	fwScript := filepath.Join(dir, ".computecommander", "scripts", "focus-watcher.sh")
-	if _, err := os.Stat(fwScript); os.IsNotExist(err) {
-		t.Errorf("focus-watcher.sh not generated at %s", fwScript)
+	fwWrapperPath := filepath.Join(dir, ".computecommander", "scripts", "focus-watcher-wrapper.sh")
+	hasBashOnDisk := false
+	if _, err := os.Stat(fwScript); err == nil {
+		hasBashOnDisk = true
+	}
+	hasWrapperOnDisk := false
+	if _, err := os.Stat(fwWrapperPath); err == nil {
+		hasWrapperOnDisk = true
+	}
+	hasWatcherInLayout := strings.Contains(string(data), "focus-watcher")
+	if !hasBashOnDisk && !hasWrapperOnDisk && !hasWatcherInLayout {
+		t.Errorf("no focus-watcher variant found: neither bash script at %s, wrapper at %s, nor reference in layout", fwScript, fwWrapperPath)
 	}
 	// Verify wrapper scripts were generated in the project dir, not home.
 	fpWrapper := filepath.Join(dir, ".computecommander", "scripts", "fp-wrapper.sh")
@@ -103,5 +115,21 @@ func TestWriteLayout_NoKeybinds(t *testing.T) {
 	lgWrapper := filepath.Join(dir, ".computecommander", "scripts", "lazygit-wrapper.sh")
 	if _, err := os.Stat(lgWrapper); os.IsNotExist(err) {
 		t.Errorf("lazygit-wrapper.sh not generated at %s", lgWrapper)
+	}
+}
+
+func TestGenerateLayout_ContainsTGPane(t *testing.T) {
+	opts := LayoutOpts{
+		CmdrBinary:   "/usr/local/bin/cmdr",
+		ProjectDir:   "/home/user",
+		AgentCommand: "claude --dangerously-skip-permissions",
+		SystemWide:   true,
+	}
+	layout := GenerateLayout(opts)
+	if !strings.Contains(layout, `name="TG"`) {
+		t.Errorf("layout must contain a TG (TrustGraph) pane")
+	}
+	if !strings.Contains(layout, `"tg" "--pane"`) {
+		t.Errorf("layout TG pane must run 'tg --pane' command")
 	}
 }

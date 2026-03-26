@@ -49,12 +49,12 @@ type LayoutOpts struct {
 //	|  (10%)   |                                          |  Jira     |
 //	|          |                                          |  (35%)    |
 //	+----------+------------------------------------------+-----------+
-//	| Event Log | Evals |     OpenBrain     |       LazyGit          |
-//	|  (20%)    | (20%) |      (30%)        |        (30%)           |
-//	+----------+-------+-------------------+------------------------+
+//	| Event Log | Evals |  OpenBrain  |    TG    |     LazyGit       |
+//	|  (16%)    | (16%) |   (20%)     |  (20%)   |      (28%)        |
+//	+----------+-------+-------------+----------+-------------------+
 //
 // Top row: 67% height — left column (prompt+fp, 10%) | agent (67%, borderless) | right column (Agents+Jira, 23%)
-// Bottom row: 33% height — Event Log | Evals | OpenBrain | LazyGit
+// Bottom row: 33% height — Event Log | Evals | OpenBrain | TrustGraph | LazyGit
 //
 // The fp pane uses fp-wrapper.sh which watches the per-tab CWD file
 // so the file picker updates when the agent switches sessions.
@@ -174,19 +174,23 @@ func GenerateLayout(opts LayoutOpts) string {
                 }
             }
             pane split_direction="vertical" size="33%%" {
-                pane name="Event Log" size="20%%" {
+                pane name="Event Log" size="16%%" {
                     command "%s"
                     args "feed" "--pane"%s
                 }
-                pane name="Evals" size="20%%" {
+                pane name="Evals" size="16%%" {
                     command "%s"
                     args "evals" "--pane"%s
                 }
-                pane name="OB1" size="30%%" {
+                pane name="OB1" size="20%%" {
                     command "%s"
                     args "openbrain" "--pane"%s
                 }
-                pane size="30%%" {
+                pane name="TG" size="20%%" {
+                    command "%s"
+                    args "tg" "--pane"%s
+                }
+                pane size="28%%" {
                     command "bash"
                     args "%s" "%s" "%s"
                 }
@@ -194,7 +198,7 @@ func GenerateLayout(opts LayoutOpts) string {
         }
     }
 }
-`, projectDir, tabName, focusWatcherPane, cmdrBin, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, lazygitWrapperPath, projectDir, opts.TabHash)
+`, projectDir, tabName, focusWatcherPane, cmdrBin, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, lazygitWrapperPath, projectDir, opts.TabHash)
 }
 
 

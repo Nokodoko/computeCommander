@@ -224,6 +224,7 @@ conflict resolution.`,
 		&cobra.Group{ID: "GROUPS", Title: "Groups:"},
 		&cobra.Group{ID: "OBSERVABILITY", Title: "Observability:"},
 		&cobra.Group{ID: "SETTINGS", Title: "Settings:"},
+		&cobra.Group{ID: "CONTENT", Title: "Content:"},
 		&cobra.Group{ID: "INFRASTRUCTURE", Title: "Infrastructure:"},
 	)
 
@@ -304,6 +305,9 @@ conflict resolution.`,
 	addAppCmd(root, commands.IntegrationsCmd(sharedApp))
 	addAppCmd(root, commands.AutomationCmd(sharedApp))
 
+	// Content commands.
+	addAppCmd(root, commands.LinkedInCmd(sharedApp))
+
 	// Navigation commands.
 	addAppCmd(root, commands.FpCmd(sharedApp))
 	addAppCmd(root, commands.SessionCmd(sharedApp))
@@ -314,6 +318,7 @@ conflict resolution.`,
 	addAppCmd(root, commands.JiraBoardCmd(sharedApp))
 	addAppCmd(root, commands.OpenBrainCmd(sharedApp))
 	addAppCmd(root, commands.PromptLineCmd(sharedApp))
+	addAppCmd(root, commands.TrustGraphCmd(sharedApp))
 
 	// Infrastructure commands.
 	addAppCmd(root, commands.WorktreeCmd(sharedApp))

@@ -20,6 +20,7 @@ const (
 	PaneJira                       // 6 - Data: Jira API cache
 	PaneOpenBrain                  // 7 - Data: OpenBrain status (placeholder)
 	PaneLazyGit                    // 8 - PTY: lazygit process
+	PaneTrustGraph                 // 9 - Data: TrustGraph knowledge graph (full-screen overlay)
 )
 
 // PaneMeta holds display metadata for a pane.
@@ -31,8 +32,8 @@ type PaneMeta struct {
 }
 
 // AllPanes returns metadata for every dashboard pane in display order.
-// Keys 1-7 map to grid panes in order, 9=Jira (full-screen overlay), 0=LazyGit.
-// Key 8 is intentionally unassigned (PaneMail and PaneGitStatus removed from grid).
+// Keys 1-7 map to grid panes in order, 8=TrustGraph (full-screen overlay),
+// 9=Jira (full-screen overlay), 0=LazyGit.
 func AllPanes() []PaneMeta {
 	return []PaneMeta{
 		{ID: PaneFilePicker, Title: "File Picker", FocusKey: "1"},
@@ -42,6 +43,7 @@ func AllPanes() []PaneMeta {
 		{ID: PaneEvals, Title: "Evals", FocusKey: "5"},
 		{ID: PaneMergeQueue, Title: "Merge Queue", FocusKey: "6"},
 		{ID: PaneOpenBrain, Title: "OpenBrain", FocusKey: "7"},
+		{ID: PaneTrustGraph, Title: "TrustGraph", FocusKey: "8"},
 		{ID: PaneJira, Title: "Jira", FocusKey: "9"},
 		{ID: PaneLazyGit, Title: "LazyGit", FocusKey: "0"},
 	}
@@ -58,6 +60,7 @@ var paneOrder = []PaneID{
 	PaneMergeQueue,
 	PaneOpenBrain,
 	PaneLazyGit,
+	PaneTrustGraph,
 	PaneJira,
 }
 
