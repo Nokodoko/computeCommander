@@ -5,10 +5,13 @@ LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 FOCUS_WATCHER_DIR := plugins/focus-watcher
 FOCUS_WATCHER_BIN := $(FOCUS_WATCHER_DIR)/target/release/focus-watcher
 
-.PHONY: build build-focus-watcher build-bridge test lint vet clean install install-bridge generate-types
+.PHONY: build build-focus-watcher build-tg-viz build-bridge test lint vet clean install install-bridge generate-types
 
-build: build-focus-watcher
+build: build-focus-watcher build-tg-viz
 	go build $(LDFLAGS) -o cmdr ./cmd/cc/
+
+build-tg-viz:
+	go build $(LDFLAGS) -o bin/tg-viz ./cmd/tg-viz/
 
 build-focus-watcher:
 	@command -v cargo >/dev/null 2>&1 || { echo "ERROR: cargo (Rust toolchain) is required to build focus-watcher"; exit 1; }
@@ -18,6 +21,7 @@ install: build
 	@mkdir -p $(HOME)/.local/bin
 	cp cmdr $(HOME)/.local/bin/cmdr
 	cp $(FOCUS_WATCHER_BIN) $(HOME)/.local/bin/focus-watcher
+	cp bin/tg-viz $(HOME)/.local/bin/tg-viz
 
 test:
 	go test ./...
@@ -41,4 +45,5 @@ generate-types:
 clean:
 	rm -f cmdr
 	rm -f bin/hook-bridge
+	rm -f bin/tg-viz
 	cargo clean --manifest-path $(FOCUS_WATCHER_DIR)/Cargo.toml 2>/dev/null || true

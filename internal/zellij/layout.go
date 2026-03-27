@@ -83,12 +83,22 @@ func GenerateLayout(opts LayoutOpts) string {
 	// the per-tab CWD file and restarts fp when the project changes.
 	fpWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "fp-wrapper.sh")
 	lazygitWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "lazygit-wrapper.sh")
-	tgVizWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "tg-viz-wrapper.sh")
 	if opts.SystemWide {
 		home, _ := os.UserHomeDir()
 		fpWrapperPath = filepath.Join(home, ".computecommander", "scripts", "fp-wrapper.sh")
 		lazygitWrapperPath = filepath.Join(home, ".computecommander", "scripts", "lazygit-wrapper.sh")
-		tgVizWrapperPath = filepath.Join(home, ".computecommander", "scripts", "tg-viz-wrapper.sh")
+	}
+
+	// Resolve the tg-viz binary (Go binary or bash fallback).
+	tgVizBinPath := findTGVizBinary()
+	tgVizIsBinary := tgVizBinPath != ""
+	if !tgVizIsBinary {
+		// Fall back to bash script.
+		tgVizBinPath = filepath.Join(projectDir, ".computecommander", "scripts", "tg-viz-wrapper.sh")
+		if opts.SystemWide {
+			home, _ := os.UserHomeDir()
+			tgVizBinPath = filepath.Join(home, ".computecommander", "scripts", "tg-viz-wrapper.sh")
+		}
 	}
 
 	// Build optional --project flag for pane commands.
@@ -141,6 +151,22 @@ func GenerateLayout(opts LayoutOpts) string {
         }`, focusWatcherPath, opts.TabHash)
 	}
 
+	// Build the TG Viz pane KDL. Use the Go binary directly if available,
+	// otherwise fall back to running the bash script via bash.
+	// Note: use %% here (not %%%%) because the result is injected via %s
+	// into the outer Sprintf, which does NOT re-process substituted text.
+	var tgVizPane string
+	if tgVizIsBinary {
+		tgVizPane = fmt.Sprintf(`                pane name="TG Viz" size="20%%" {
+                    command "%s"
+                }`, tgVizBinPath)
+	} else {
+		tgVizPane = fmt.Sprintf(`                pane name="TG Viz" size="20%%" {
+                    command "bash"
+                    args "%s"
+                }`, tgVizBinPath)
+	}
+
 	return fmt.Sprintf(`layout {
     cwd "%s"
     default_tab_template {
@@ -188,10 +214,7 @@ func GenerateLayout(opts LayoutOpts) string {
                     command "%s"
                     args "openbrain" "--pane"%s
                 }
-                pane name="TG Viz" size="20%%" {
-                    command "bash"
-                    args "%s"
-                }
+%s
                 pane size="28%%" {
                     command "bash"
                     args "%s" "%s" "%s"
@@ -200,9 +223,45 @@ func GenerateLayout(opts LayoutOpts) string {
         }
     }
 }
-`, projectDir, tabName, focusWatcherPane, cmdrBin, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, tgVizWrapperPath, lazygitWrapperPath, projectDir, opts.TabHash)
+`, projectDir, tabName, focusWatcherPane, cmdrBin, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, tgVizPane, lazygitWrapperPath, projectDir, opts.TabHash)
 }
 
+
+// findTGVizBinary locates the compiled tg-viz Go binary. It checks:
+//  1. Next to the running cmdr binary (make install copies it there)
+//  2. ~/.local/bin/tg-viz (standard user install location)
+//  3. The PATH via exec.LookPath
+//
+// Returns the absolute path if found, or empty string if not found.
+func findTGVizBinary() string {
+	const binName = "tg-viz"
+
+	var candidates []string
+
+	// Prefer the installed location first (~/.local/bin).
+	if home, err := os.UserHomeDir(); err == nil {
+		candidates = append(candidates, filepath.Join(home, ".local", "bin", binName))
+	}
+
+	// Fall back to next to the running binary (dev builds).
+	if exe, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exe)
+		candidates = append(candidates, filepath.Join(exeDir, binName))
+	}
+
+	for _, candidate := range candidates {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
+			return candidate
+		}
+	}
+
+	// Try PATH as a last resort.
+	if p, err := exec.LookPath(binName); err == nil {
+		return p
+	}
+
+	return ""
+}
 
 // WriteFocusWatcher locates the compiled Rust focus-watcher binary and returns
 // its path. The binary is expected at plugins/focus-watcher/target/release/focus-watcher
