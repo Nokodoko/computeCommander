@@ -28,7 +28,30 @@ type Config struct {
 	Logging   LoggingConfig    `yaml:"logging"`
 	Runtimes  RuntimesConfig   `yaml:"runtimes"`
 	Agentic   AgenticConfig    `yaml:"agentic"`
-	Jira      JiraConfig       `yaml:"jira"`
+	Jira       JiraConfig       `yaml:"jira"`
+	OpenBrain  OpenBrainConfig  `yaml:"openbrain"`
+	TrustGraph TrustGraphConfig `yaml:"trustgraph"`
+}
+
+// OpenBrainConfig holds the configuration for the OpenBrain MCP server integration.
+type OpenBrainConfig struct {
+	Enabled        bool   `yaml:"enabled"`
+	MCPSseURL      string `yaml:"mcp_sse_url"`       // ob-mcp SSE transport address (default: http://localhost:8200)
+	APIKey         string `yaml:"api_key"`            // API key for authentication (supports ${OB_API_KEY})
+	PollIntervalMs int    `yaml:"poll_interval_ms"`   // Fallback poll interval in milliseconds (default: 30000)
+	MaxEntries     int    `yaml:"max_entries"`         // Max entries shown in pane (default: 20)
+	DefaultSince   string `yaml:"default_since"`       // Default time window for reads (default: 72h)
+}
+
+// TrustGraphConfig holds the configuration for the TrustGraph knowledge graph integration.
+type TrustGraphConfig struct {
+	Enabled     bool   `yaml:"enabled"`
+	GatewayURL  string `yaml:"gateway_url"`   // TrustGraph REST gateway address (default: http://localhost:8088)
+	Token       string `yaml:"token"`          // API key for gateway auth (supports ${TG_TOKEN})
+	FlowID      string `yaml:"flow_id"`        // TrustGraph flow ID for service queries (default: default)
+	MaxNodes    int    `yaml:"max_nodes"`      // max nodes to display (default: 100)
+	MaxTriples  int    `yaml:"max_triples"`    // max triples per query (default: 200)
+	RefreshSecs int    `yaml:"refresh_secs"`   // override refresh interval (default: 5)
 }
 
 // JiraConfig holds multi-instance Jira integration configuration.
@@ -443,6 +466,23 @@ func DefaultConfig() *Config {
 				UATTimeout:         "15m",
 				MaxConcurrentTasks: 3,
 			},
+		},
+		OpenBrain: OpenBrainConfig{
+			Enabled:        true,
+			MCPSseURL:      "http://localhost:8200",
+			APIKey:         "",
+			PollIntervalMs: 30000,
+			MaxEntries:     20,
+			DefaultSince:   "72h",
+		},
+		TrustGraph: TrustGraphConfig{
+			Enabled:     false,
+			GatewayURL:  "http://localhost:8088",
+			Token:       "",
+			FlowID:      "default",
+			MaxNodes:    100,
+			MaxTriples:  200,
+			RefreshSecs: 5,
 		},
 		Runtimes: RuntimesConfig{
 			Claude: RuntimeConfig{

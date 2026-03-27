@@ -86,7 +86,7 @@ func renderStatusBarWithProject(projectName string, agentCount int, unreadMail i
 
 // renderHelpBar renders the keybinding hints at the bottom of the dashboard.
 func renderHelpBar(theme *Theme) string {
-	return theme.HelpBar.Render("Tab: cycle  1-9: jump  9=jira  Ctrl+K: palette  q: quit")
+	return theme.HelpBar.Render("Tab:cycle  1-7:panes  8:tg  9:jira  0:lazygit  Ctrl+K:palette  q:quit")
 }
 
 // truncate shortens a string to maxLen, appending ".." if truncated.

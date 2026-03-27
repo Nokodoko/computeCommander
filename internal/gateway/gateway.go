@@ -23,24 +23,26 @@ import (
 
 // GatewayOpts configures a Gateway instance.
 type GatewayOpts struct {
-	DB       db.DB
-	Spawner  *agents.Spawner
-	Mail     mail.MailStore
-	Queue    merge.MergeQueue
-	Version  string
-	StartAt  time.Time
+	DB        db.DB
+	Spawner   *agents.Spawner
+	Mail      mail.MailStore
+	Queue     merge.MergeQueue
+	Version   string
+	StartAt   time.Time
+	OpenBrain *OpenBrainProxy
 }
 
 // Gateway is the HTTP API server for ComputeCommander.
 type Gateway struct {
-	db      db.DB
-	spawner *agents.Spawner
-	mail    mail.MailStore
-	queue   merge.MergeQueue
-	version string
-	startAt time.Time
-	mux     *http.ServeMux
-	reqID   atomic.Uint64
+	db        db.DB
+	spawner   *agents.Spawner
+	mail      mail.MailStore
+	queue     merge.MergeQueue
+	version   string
+	startAt   time.Time
+	mux       *http.ServeMux
+	reqID     atomic.Uint64
+	openBrain *OpenBrainProxy
 }
 
 // NewGateway creates a Gateway from the provided options.
@@ -55,13 +57,14 @@ func NewGateway(opts GatewayOpts) *Gateway {
 	}
 
 	g := &Gateway{
-		db:      opts.DB,
-		spawner: opts.Spawner,
-		mail:    opts.Mail,
-		queue:   opts.Queue,
-		version: version,
-		startAt: startAt,
-		mux:     http.NewServeMux(),
+		db:        opts.DB,
+		spawner:   opts.Spawner,
+		mail:      opts.Mail,
+		queue:     opts.Queue,
+		version:   version,
+		startAt:   startAt,
+		mux:       http.NewServeMux(),
+		openBrain: opts.OpenBrain,
 	}
 
 	g.registerRoutes()
@@ -116,6 +119,15 @@ func (g *Gateway) registerRoutes() {
 	g.mux.HandleFunc("GET /api/v1/projects", g.handleListProjects)
 	g.mux.HandleFunc("POST /api/v1/projects", g.handleAddProject)
 	g.mux.HandleFunc("DELETE /api/v1/projects/", g.handleDeleteProject)
+
+	// Multi-agent tracking endpoints.
+	g.mux.HandleFunc("POST /api/v1/agents/register", g.handleRegisterAgent)
+	g.mux.HandleFunc("POST /api/v1/agents/heartbeat/", g.handleHeartbeat)
+
+	// OpenBrain proxy routes (MCP server integration).
+	if g.openBrain != nil {
+		g.openBrain.RegisterRoutes(g.mux)
+	}
 }
 
 // middleware chains logging, CORS, and request ID middleware.
@@ -526,4 +538,111 @@ func writeError(w http.ResponseWriter, status int, format string, args ...any) {
 		"error":  msg,
 		"status": status,
 	})
+}
+
+// handleRegisterAgent registers a new agent session via the API.
+// Equivalent to `cmdr register`.
+func (g *Gateway) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req struct {
+		Name       string `json:"name"`
+		Runtime    string `json:"runtime"`
+		Capability string `json:"capability"`
+		TaskID     string `json:"task_id"`
+		PID        int    `json:"pid"`
+		Parent     string `json:"parent"`
+		Worktree   string `json:"worktree"`
+		Branch     string `json:"branch"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "decode request: %v", err)
+		return
+	}
+
+	if req.Name == "" || req.Runtime == "" || req.Capability == "" || req.TaskID == "" {
+		writeError(w, http.StatusBadRequest, "name, runtime, capability, and task_id are required")
+		return
+	}
+
+	// Generate session ID.
+	sessionID := fmt.Sprintf("%s-%x", req.Runtime, time.Now().UnixNano()%0xFFFFFFFF)
+
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+
+	err := g.db.Exec(ctx,
+		`INSERT INTO sessions (id, agent_name, capability, worktree_path, branch_name,
+			task_id, state, pid, parent_agent, depth, run_id,
+			started_at, last_activity, escalation_level,
+			transcript_path, runtime, heartbeat_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+		sessionID, req.Name, req.Capability, req.Worktree, req.Branch,
+		req.TaskID, "booting", req.PID, req.Parent, 0, "",
+		now, now, 0,
+		"", req.Runtime, now,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "register agent: %v", err)
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"success":    true,
+		"command":    "register",
+		"session_id": sessionID,
+		"agent_name": req.Name,
+		"runtime":    req.Runtime,
+		"state":      "booting",
+	})
+}
+
+// handleHeartbeat updates the heartbeat for an agent session.
+// Equivalent to `cmdr heartbeat <session-id>`.
+func (g *Gateway) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	sessionID := extractPathParam(r.URL.Path, "/api/v1/agents/heartbeat/")
+	if sessionID == "" {
+		writeError(w, http.StatusBadRequest, "session ID is required in path")
+		return
+	}
+
+	var req struct {
+		State string `json:"state"`
+	}
+	// Body is optional.
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+
+	var err error
+	if req.State != "" {
+		err = g.db.Exec(ctx,
+			"UPDATE sessions SET heartbeat_at = $1, last_activity = $2, state = $3 WHERE id = $4",
+			now, now, req.State, sessionID,
+		)
+	} else {
+		err = g.db.Exec(ctx,
+			"UPDATE sessions SET heartbeat_at = $1, last_activity = $2 WHERE id = $3",
+			now, now, sessionID,
+		)
+	}
+
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "heartbeat: %v", err)
+		return
+	}
+
+	result := map[string]any{
+		"success":      true,
+		"command":      "heartbeat",
+		"session_id":   sessionID,
+		"heartbeat_at": now,
+	}
+	if req.State != "" {
+		result["state"] = req.State
+	}
+
+	writeJSON(w, http.StatusOK, result)
 }

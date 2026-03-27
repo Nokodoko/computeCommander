@@ -167,13 +167,20 @@ func newAppFromConfig(cfg *config.Config, version string) (*App, error) {
 
 	wd := watchdog.NewWatchdog(watchdogOpts)
 
+	// Create OpenBrain proxy if enabled in config.
+	var obProxy *gateway.OpenBrainProxy
+	if cfg.OpenBrain.Enabled {
+		obProxy = gateway.NewOpenBrainProxy(cfg.OpenBrain)
+	}
+
 	gw := gateway.NewGateway(gateway.GatewayOpts{
-		DB:      database,
-		Spawner: spawner,
-		Mail:    mailStore,
-		Queue:   mq,
-		Version: version,
-		StartAt: time.Now(),
+		DB:        database,
+		Spawner:   spawner,
+		Mail:      mailStore,
+		Queue:     mq,
+		Version:   version,
+		StartAt:   time.Now(),
+		OpenBrain: obProxy,
 	})
 
 	// Agentic foundation engines.

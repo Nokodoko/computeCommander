@@ -135,11 +135,13 @@ func ReplayCmd(app *App) *cobra.Command {
 }
 
 // FeedCmd returns the "feed" command for real-time event streaming.
+// It is structured as a parent command with backwards-compatible default RunE
+// and a "feed emit" subcommand for multi-runtime event emission.
 func FeedCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "feed",
-		Short:   "Real-time event stream",
-		Long:    "Stream events in real-time as agents produce them. Use Ctrl+C to stop.",
+		Short:   "Real-time event stream and event emission",
+		Long:    "Stream events in real-time as agents produce them. Use Ctrl+C to stop.\nSubcommand 'emit' allows any runtime to emit events into the feed.",
 		GroupID: "OBSERVABILITY",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			paneMode, _ := cmd.Flags().GetBool("pane")
@@ -163,6 +165,86 @@ func FeedCmd(app *App) *cobra.Command {
 	}
 
 	cmd.Flags().Bool("pane", false, "Run in long-lived pane mode (for zellij dashboard)")
+
+	cmd.AddCommand(feedEmitCmd(app))
+
+	return cmd
+}
+
+// feedEmitCmd creates the "feed emit" subcommand for multi-runtime event emission.
+func feedEmitCmd(app *App) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "emit",
+		Short: "Emit an event from any agent/runtime into the event feed",
+		Long: `Emit an event from any agent or runtime into the events table.
+This allows non-Claude runtimes (pi, gemini, codex, goose) to produce events
+that appear in the feed pane and trace timeline.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			agent, _ := cmd.Flags().GetString("agent")
+			eventType, _ := cmd.Flags().GetString("type")
+			level, _ := cmd.Flags().GetString("level")
+			data, _ := cmd.Flags().GetString("data")
+			sessionID, _ := cmd.Flags().GetString("session")
+			runtime, _ := cmd.Flags().GetString("runtime")
+			jsonOut, _ := cmd.Root().Flags().GetBool("json")
+
+			if agent == "" {
+				return fmt.Errorf("--agent is required")
+			}
+			if eventType == "" {
+				return fmt.Errorf("--type is required")
+			}
+			if level == "" {
+				level = "info"
+			}
+
+			// Build data string with runtime if provided.
+			if runtime != "" && data != "" {
+				data = fmt.Sprintf("runtime=%s %s", runtime, data)
+			} else if runtime != "" {
+				data = fmt.Sprintf("runtime=%s", runtime)
+			}
+
+			now := time.Now().UTC().Format("2006-01-02T15:04:05Z")
+
+			err := app.DB.Exec(ctx,
+				`INSERT INTO events (agent_name, event_type, level, data, session_id, created_at)
+				VALUES ($1, $2, $3, $4, $5, $6)`,
+				agent, eventType, level, data, sessionID, now,
+			)
+			if err != nil {
+				if jsonOut {
+					return printJSON(map[string]any{
+						"success": false,
+						"command": "feed emit",
+						"error":   err.Error(),
+					})
+				}
+				return fmt.Errorf("emit event: %w", err)
+			}
+
+			if jsonOut {
+				return printJSON(map[string]any{
+					"success":    true,
+					"command":    "feed emit",
+					"agent":      agent,
+					"event_type": eventType,
+					"level":      level,
+				})
+			}
+
+			fmt.Printf("Emitted event: agent=%s type=%s level=%s\n", agent, eventType, level)
+			return nil
+		},
+	}
+
+	cmd.Flags().String("agent", "", "Agent that produced the event (required)")
+	cmd.Flags().String("type", "", "Event type: tool_start, tool_end, spawn, session_end, error, custom (required)")
+	cmd.Flags().String("level", "info", "Level: debug, info, warn, error")
+	cmd.Flags().String("data", "", "Freeform event data string")
+	cmd.Flags().String("session", "", "Link to a registered session")
+	cmd.Flags().String("runtime", "", "Runtime that produced the event (for filtering)")
 
 	return cmd
 }

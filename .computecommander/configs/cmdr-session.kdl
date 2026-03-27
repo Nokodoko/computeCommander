@@ -252,7 +252,7 @@ keybinds clear-defaults=true {
             SwitchToMode "normal"
         }
         bind "s" "S" {
-            Run "/home/n0ko/Programs/ai/computeCommander/cmdr" {
+            Run "/home/n0ko/.local/bin/cmdr" {
                 args "sessions"
                 floating true
                 close_on_exit true
@@ -327,6 +327,22 @@ load_plugins {
 // theme "tokyo-night-storm"
 // theme "tokyo-night"
 theme "vesper"
+
+themes {
+    vesper {
+        fg "#b4b4b4"
+        bg "#101010"
+        black "#343434"
+        red "#f5a191"
+        green "#00d4d4"
+        yellow "#d8c484"
+        blue "#8eb5f5"
+        magenta "#c5a3d1"
+        cyan "#00d4d4"
+        white "#b4b4b4"
+        orange "#e8a87a"
+    }
+}
  
 // Choose the base input mode of zellij.
 // Default: normal

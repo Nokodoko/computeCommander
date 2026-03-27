@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/noko/computecommander/internal/agents"
+	"github.com/noko/computecommander/pkg/runtimes"
 )
 
 // StatusCmd returns the "status" command for fleet overview.
@@ -30,6 +31,7 @@ func StatusCmd(app *App) *cobra.Command {
 			capability, _ := cmd.Flags().GetString("capability")
 			state, _ := cmd.Flags().GetString("state")
 			projectID, _ := cmd.Flags().GetString("project")
+			runtime, _ := cmd.Flags().GetString("runtime")
 			pane, _ := cmd.Flags().GetBool("pane")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
 
@@ -42,6 +44,9 @@ func StatusCmd(app *App) *cobra.Command {
 			}
 			if projectID != "" {
 				opts.ProjectID = projectID
+			}
+			if runtime != "" {
+				opts.Runtime = runtimes.RuntimeID(runtime)
 			}
 
 			if paneMode {
@@ -63,6 +68,12 @@ func StatusCmd(app *App) *cobra.Command {
 					dbDriver = app.Config.Database.Driver
 					dbPath = app.Config.Database.SQLite.Path
 				}
+				// Count sessions by runtime.
+				byRuntime := make(map[string]int)
+				for _, s := range sessions {
+					byRuntime[string(s.Runtime)]++
+				}
+
 				result := map[string]any{
 					"success": true,
 					"command": "status",
@@ -76,9 +87,10 @@ func StatusCmd(app *App) *cobra.Command {
 						"session": uiSession,
 						"uptime":  uiUptime,
 					},
-					"agents":  sessions,
-					"count":   len(sessions),
-					"version": app.Version,
+					"sessions":   sessions,
+					"count":      len(sessions),
+					"by_runtime": byRuntime,
+					"version":    app.Version,
 				}
 				if app.Config != nil {
 					result["project"] = app.Config.Project.Name
@@ -135,16 +147,20 @@ func StatusCmd(app *App) *cobra.Command {
 			// Build agent color resolver for colorized output.
 			colorResolver := app.Spawner.BuildColorResolver(cmd.Context())
 
-			fmt.Printf("%-14s %-12s %-10s %-14s %-8s\n", "NAME", "CAPABILITY", "STATE", "TASK", "RUNTIME")
+			fmt.Printf("%-14s %-12s %-10s %-14s %-14s %-10s %-8s\n", "NAME", "CAPABILITY", "STATE", "TASK", "MODEL", "SESSION", "RUNTIME")
 			for _, s := range sessions {
 				agentName := colorizeAgent(truncate(s.AgentName, 14), colorResolver(s.AgentName))
 				_, stateColor := stateStyle(s.State)
 				stateStr := fmt.Sprintf("%s%-10s%s", stateColor, truncate(string(s.State), 10), ansiReset)
-				fmt.Printf("%-14s %-12s %s %-14s %-8s\n",
+				modelDisplay := formatModelShort(s.Model)
+				sessionDisplay := formatSessionShort(s.SessionName)
+				fmt.Printf("%-14s %-12s %s %-14s %-14s %-10s %-8s\n",
 					agentName,
 					truncate(string(s.Capability), 12),
 					stateStr,
 					truncate(s.TaskID, 14),
+					truncate(modelDisplay, 14),
+					truncate(sessionDisplay, 10),
 					truncate(string(s.Runtime), 8),
 				)
 			}
@@ -156,6 +172,7 @@ func StatusCmd(app *App) *cobra.Command {
 	cmd.Flags().String("capability", "", "Filter by capability")
 	cmd.Flags().String("state", "", "Filter by state")
 	cmd.Flags().String("project", "", "Filter by project ID")
+	cmd.Flags().String("runtime", "", "Filter by runtime (claude, pi, gemini, codex, goose)")
 	cmd.Flags().Bool("pane", false, "Run in long-lived pane mode (for zellij dashboard)")
 
 	return cmd
@@ -244,7 +261,7 @@ func runStatusPane(cmd *cobra.Command, app *App, opts agents.ListOpts) error {
 		}
 
 		colorResolver := app.Spawner.BuildColorResolver(ctx)
-		fmt.Printf("\033[2m%-14s %-12s %-10s %-14s\033[0m\n", "NAME", "CAPABILITY", "STATE", "TASK")
+		fmt.Printf("\033[2m%-14s %-10s %-10s %-14s %-10s %-12s\033[0m\n", "NAME", "CAPABILITY", "STATE", "MODEL", "SESSION", "TASK")
 		for _, s := range sessions {
 			stateColor := "\033[32m" // green for working
 			switch s.State {
@@ -258,12 +275,16 @@ func runStatusPane(cmd *cobra.Command, app *App, opts agents.ListOpts) error {
 				stateColor = "\033[36m" // cyan
 			}
 			agentName := colorizeAgent(truncate(s.AgentName, 14), colorResolver(s.AgentName))
-			fmt.Printf("%-14s %-12s %s%-10s\033[0m %-14s\n",
+			modelDisplay := formatModelShort(s.Model)
+			sessionDisplay := formatSessionShort(s.SessionName)
+			fmt.Printf("%-14s %-10s %s%-10s\033[0m %-14s %-10s %-12s\n",
 				agentName,
-				truncate(string(s.Capability), 12),
+				truncate(string(s.Capability), 10),
 				stateColor,
 				truncate(string(s.State), 10),
-				truncate(s.TaskID, 14),
+				truncate(modelDisplay, 14),
+				truncate(sessionDisplay, 10),
+				truncate(s.TaskID, 12),
 			)
 		}
 		fmt.Printf("\n\033[2mTotal: %d agent(s)\033[0m\n", len(sessions))
@@ -377,8 +398,8 @@ func printAgentsPane(sessions []*agents.AgentSession, colorResolver func(string)
 	}
 
 	// Table header.
-	fmt.Printf(" %s%-16s %-12s %-10s %-10s %-14s%s\n",
-		ansiDim, "Name", "Capability", "State", "Duration", "Task", ansiReset)
+	fmt.Printf(" %s%-14s %-10s %-10s %-8s %-14s %-10s %-12s%s\n",
+		ansiDim, "Name", "Capability", "State", "Duration", "Model", "Session", "Task", ansiReset)
 
 	// Detect terminal height to show only what fits.
 	// Reserve 4 lines: header, column header, footer, + zellij pane border.
@@ -402,19 +423,27 @@ func printAgentsPane(sessions []*agents.AgentSession, colorResolver func(string)
 		dur := formatAgentDuration(s)
 
 		// Color agent name using their assigned palette color.
-		agentName := truncate(s.AgentName, 16)
+		agentName := truncate(s.AgentName, 14)
 		if colorResolver != nil {
 			agentName = colorizeAgent(agentName, colorResolver(s.AgentName))
 		} else {
 			agentName = ansiBold + agentName + ansiReset
 		}
 
-		fmt.Printf(" %-16s %-12s %s%s%-10s%s %-10s %-14s\n",
+		// Format model name: strip "claude-" prefix for brevity.
+		modelDisplay := formatModelShort(s.Model)
+
+		// Format session name: use last 8 chars of session ID for brevity.
+		sessionDisplay := formatSessionShort(s.SessionName)
+
+		fmt.Printf(" %-14s %-10s %s%s%-10s%s %-8s %-14s %-10s %-12s\n",
 			agentName,
-			truncate(string(s.Capability), 12),
+			truncate(string(s.Capability), 10),
 			stateColor, stateIcon, truncate(string(s.State), 9), ansiReset,
 			dur,
-			truncate(s.TaskID, 14),
+			truncate(modelDisplay, 14),
+			truncate(sessionDisplay, 10),
+			truncate(s.TaskID, 12),
 		)
 	}
 
@@ -511,6 +540,34 @@ func isProcessAlive(pid int) bool {
 	// Use kill -0 to check if process exists without sending a signal.
 	cmd := exec.Command("kill", "-0", strconv.Itoa(pid))
 	return cmd.Run() == nil
+}
+
+// formatModelShort returns a compact display name for the model.
+// Strips the "claude-" prefix and common suffixes for brevity.
+// Examples: "claude-opus-4-6" -> "opus-4-6", "claude-sonnet-4-6" -> "sonnet-4-6"
+func formatModelShort(model string) string {
+	if model == "" {
+		return "-"
+	}
+	// Strip "claude-" prefix for brevity.
+	short := strings.TrimPrefix(model, "claude-")
+	if short == "" {
+		return model
+	}
+	return short
+}
+
+// formatSessionShort returns a compact display name for the session.
+// Uses the last 8 characters of the session ID for brevity since
+// session IDs are typically long UUIDs or hash-based identifiers.
+func formatSessionShort(sessionName string) string {
+	if sessionName == "" {
+		return "-"
+	}
+	if len(sessionName) <= 10 {
+		return sessionName
+	}
+	return ".." + sessionName[len(sessionName)-8:]
 }
 
 // truncate shortens a string to maxLen, adding ".." if truncated.
