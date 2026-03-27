@@ -83,10 +83,12 @@ func GenerateLayout(opts LayoutOpts) string {
 	// the per-tab CWD file and restarts fp when the project changes.
 	fpWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "fp-wrapper.sh")
 	lazygitWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "lazygit-wrapper.sh")
+	tgVizWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "tg-viz-wrapper.sh")
 	if opts.SystemWide {
 		home, _ := os.UserHomeDir()
 		fpWrapperPath = filepath.Join(home, ".computecommander", "scripts", "fp-wrapper.sh")
 		lazygitWrapperPath = filepath.Join(home, ".computecommander", "scripts", "lazygit-wrapper.sh")
+		tgVizWrapperPath = filepath.Join(home, ".computecommander", "scripts", "tg-viz-wrapper.sh")
 	}
 
 	// Build optional --project flag for pane commands.
@@ -186,9 +188,9 @@ func GenerateLayout(opts LayoutOpts) string {
                     command "%s"
                     args "openbrain" "--pane"%s
                 }
-                pane name="TG" size="20%%" {
-                    command "%s"
-                    args "tg" "--pane"%s
+                pane name="TG Viz" size="20%%" {
+                    command "bash"
+                    args "%s"
                 }
                 pane size="28%%" {
                     command "bash"
@@ -198,7 +200,7 @@ func GenerateLayout(opts LayoutOpts) string {
         }
     }
 }
-`, projectDir, tabName, focusWatcherPane, cmdrBin, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, lazygitWrapperPath, projectDir, opts.TabHash)
+`, projectDir, tabName, focusWatcherPane, cmdrBin, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, tgVizWrapperPath, lazygitWrapperPath, projectDir, opts.TabHash)
 }
 
 

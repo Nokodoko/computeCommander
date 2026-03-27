@@ -78,7 +78,7 @@ func NewTrustGraphPane(theme *Theme, cfg config.TrustGraphConfig) *TrustGraphPan
 	}
 
 	if cfg.Enabled && cfg.GatewayURL != "" {
-		p.client = trustgraph.New(cfg.GatewayURL, cfg.Token)
+		p.client = trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
 	}
 
 	return p

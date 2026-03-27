@@ -126,10 +126,10 @@ func TestGenerateLayout_ContainsTGPane(t *testing.T) {
 		SystemWide:   true,
 	}
 	layout := GenerateLayout(opts)
-	if !strings.Contains(layout, `name="TG"`) {
-		t.Errorf("layout must contain a TG (TrustGraph) pane")
+	if !strings.Contains(layout, `name="TG Viz"`) {
+		t.Errorf("layout must contain a TG Viz (TrustGraph visualization) pane")
 	}
-	if !strings.Contains(layout, `"tg" "--pane"`) {
-		t.Errorf("layout TG pane must run 'tg --pane' command")
+	if !strings.Contains(layout, `tg-viz-wrapper.sh`) {
+		t.Errorf("layout TG Viz pane must run tg-viz-wrapper.sh")
 	}
 }

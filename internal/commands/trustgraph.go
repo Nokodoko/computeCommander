@@ -49,7 +49,7 @@ func printTGSummary(app *App, jsonOut bool) error {
 		return nil
 	}
 
-	client := trustgraph.New(cfg.GatewayURL, cfg.Token)
+	client := trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
 	defer client.Close()
 
 	if !client.Available() {
@@ -147,7 +147,7 @@ func runTGPane(ctx context.Context, app *App) error {
 
 		// Lazily create client.
 		if client == nil {
-			client = trustgraph.New(cfg.GatewayURL, cfg.Token)
+			client = trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
 		}
 
 		if !client.Available() {

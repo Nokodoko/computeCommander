@@ -12,7 +12,7 @@ import (
 func TestGraphRAG_Success(t *testing.T) {
 	expected := "TrustGraph uses Apache Cassandra for storage."
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/graph-rag" {
+		if r.URL.Path != "/api/v1/flow/default/service/graph-rag" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Method != http.MethodPost {
@@ -86,7 +86,7 @@ func TestGraphRAG_ServerError(t *testing.T) {
 
 func TestTriplesQuery_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/triples" {
+		if r.URL.Path != "/api/v1/flow/default/service/triples" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 
@@ -143,7 +143,7 @@ func TestTriplesQuery_Success(t *testing.T) {
 
 func TestGraphEmbeddingsQuery_Success(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/graph-embeddings" {
+		if r.URL.Path != "/api/v1/flow/default/service/graph-embeddings" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 

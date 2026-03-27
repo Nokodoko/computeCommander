@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>TrustGraph</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0f; color: #c0c0c0; font-family: monospace; overflow: hidden; font-size: 9px; }
+  #header {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    padding: 2px 6px; background: rgba(10,10,15,0.95);
+    border-bottom: 1px solid #1a1a2e;
+    display: flex; align-items: center; gap: 8px; height: 16px;
+  }
+  #header h1 { font-size: 9px; color: #00ff88; font-weight: 600; letter-spacing: 1px; }
+  #header .stats { font-size: 9px; color: #555; }
+  #status { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  #status.ok { background: #00ff88; }
+  #status.err { background: #ff4444; }
+  #status.stale { background: #ffaa00; }
+  #empty {
+    position: fixed; top: 16px; left: 0; right: 0; bottom: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #333; font-size: 10px;
+  }
+  svg { position: fixed; top: 16px; left: 0; width: 100vw; height: calc(100vh - 16px); }
+  .link { stroke-opacity: 0.4; }
+  .node-label { font-size: 8px; pointer-events: none; text-anchor: middle; }
+</style>
+</head>
+<body>
+<div id="header">
+  <div id="status" class="err"></div>
+  <h1>TrustGraph</h1>
+  <span class="stats" id="stats">connecting...</span>
+</div>
+<div id="empty">Waiting for graph data...</div>
+<svg></svg>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+const GATEWAY = 'http://localhost:8088/api/v1/flow/default/service/triples';
+const POLL_MS = 10000;
+
+// State
+let lastData = null;
+let connected = false;
+let sim = null;
+let svgG = null;
+
+const statusEl = document.getElementById('status');
+const statsEl = document.getElementById('stats');
+const emptyEl = document.getElementById('empty');
+
+function shortLabel(iri) {
+  if (!iri) return '';
+  if (iri.startsWith('lit:')) return iri.slice(4);
+  const hash = iri.lastIndexOf('#');
+  if (hash >= 0) return iri.slice(hash + 1);
+  const slash = iri.lastIndexOf('/');
+  if (slash >= 0) return iri.slice(slash + 1);
+  return iri;
+}
+
+function triplesToGraph(triples) {
+  const nodeMap = new Map();
+  const links = [];
+
+  function addNode(iri) {
+    if (nodeMap.has(iri)) return nodeMap.get(iri);
+    const isLiteral = iri.startsWith('lit:') || !iri.startsWith('http');
+    const n = { id: iri, label: shortLabel(iri), type: isLiteral ? 'literal' : 'entity' };
+    nodeMap.set(iri, n);
+    return n;
+  }
+
+  // TG RDF term format: {t:"i", i:"<IRI>"} or {t:"l", v:"<value>"}
+  function termValue(term) {
+    if (!term) return '';
+    if (typeof term === 'string') return term;
+    if (term.t === 'l') return 'lit:' + (term.v || '');
+    return term.i || term.v || '';
+  }
+  function isLiteralTerm(term) {
+    if (!term) return false;
+    if (typeof term === 'string') return !term.startsWith('http');
+    return term.t === 'l';
+  }
+
+  for (const t of triples) {
+    const s = t.s || t.subject;
+    const p = t.p || t.predicate;
+    const o = t.o || t.object;
+    if (!s || !p || !o) continue;
+    const sv = termValue(s);
+    const pv = termValue(p);
+    const ov = termValue(o);
+    if (!sv || !ov) continue;
+    addNode(sv);
+    addNode(ov);
+    links.push({ source: sv, target: ov, label: shortLabel(pv) });
+  }
+
+  return { nodes: [...nodeMap.values()], links };
+}
+
+function nodeRadius(d) {
+  if (d.type === 'literal') return 3;
+  return 5;
+}
+
+function nodeColor(d) {
+  if (d.type === 'literal') return '#FFB347';
+  return '#00aaff';
+}
+
+const svg = d3.select('svg');
+const width = () => window.innerWidth;
+const height = () => window.innerHeight - 16;
+
+svgG = svg.append('g');
+
+function render(graphData) {
+  emptyEl.style.display = 'none';
+
+  // Stop old sim
+  if (sim) sim.stop();
+
+  // Clone nodes/links to avoid mutation across renders
+  const nodes = graphData.nodes.map(d => Object.assign({}, d));
+  const links = graphData.links.map(d => ({ ...d }));
+
+  svgG.selectAll('*').remove();
+
+  const linkSel = svgG.append('g')
+    .selectAll('line')
+    .data(links)
+    .join('line')
+    .attr('class', 'link')
+    .attr('stroke', '#555')
+    .attr('stroke-width', 0.8)
+    .attr('stroke-opacity', 0.4);
+
+  const nodeSel = svgG.append('g')
+    .selectAll('circle')
+    .data(nodes)
+    .join('circle')
+    .attr('r', d => nodeRadius(d))
+    .attr('fill', d => nodeColor(d))
+    .attr('opacity', d => d.type === 'literal' ? 0.6 : 0.85);
+
+  const labelSel = svgG.append('g')
+    .selectAll('text')
+    .data(nodes.filter(d => d.type === 'entity'))
+    .join('text')
+    .attr('class', 'node-label')
+    .attr('fill', '#888')
+    .attr('dy', d => nodeRadius(d) + 8)
+    .text(d => d.label.length > 18 ? d.label.slice(0, 16) + '..' : d.label);
+
+  const w = width(), h = height();
+
+  sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink(links).id(d => d.id).distance(55))
+    .force('charge', d3.forceManyBody().strength(-120))
+    .force('center', d3.forceCenter(w / 2, h / 2))
+    .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 4))
+    .alphaDecay(0.04)  // stabilize fast
+    .velocityDecay(0.4);
+
+  sim.on('tick', () => {
+    linkSel
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+    nodeSel.attr('cx', d => d.x).attr('cy', d => d.y);
+    labelSel.attr('x', d => d.x).attr('y', d => d.y);
+  });
+
+  // Stop after ~3s to save CPU
+  setTimeout(() => { if (sim) sim.stop(); }, 3000);
+}
+
+async function fetchGraph() {
+  try {
+    const res = await fetch(GATEWAY, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ limit: 200 }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    // TG returns {response: [...]}
+    const triples = Array.isArray(data) ? data : (data.response || data.triples || data.results || []);
+    const graph = triplesToGraph(triples);
+
+    connected = true;
+    statusEl.className = 'ok';
+    statsEl.textContent = `${graph.nodes.length} nodes, ${graph.links.length} edges`;
+
+    if (graph.nodes.length > 0) {
+      lastData = graph;
+      render(graph);
+    } else if (lastData) {
+      // No data returned but we had prior data; keep showing it
+      statusEl.className = 'stale';
+      statsEl.textContent = `${lastData.nodes.length} nodes (cached)`;
+    } else {
+      emptyEl.style.display = 'flex';
+    }
+  } catch (e) {
+    connected = false;
+    if (lastData) {
+      // Show stale data with disconnected indicator
+      statusEl.className = 'err';
+      statsEl.textContent = `${lastData.nodes.length} nodes (disconnected)`;
+    } else {
+      statusEl.className = 'err';
+      statsEl.textContent = 'gateway unreachable';
+      emptyEl.style.display = 'flex';
+    }
+  }
+}
+
+// Initial fetch then poll
+fetchGraph();
+setInterval(fetchGraph, POLL_MS);
+</script>
+</body>
+</html>

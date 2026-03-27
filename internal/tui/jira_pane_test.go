@@ -86,15 +86,9 @@ func TestJiraPaneHierarchy(t *testing.T) {
 		t.Fatalf("expected 1 project root, got %d", len(p.roots))
 	}
 
-	// Root collapsed: flat should just be the project node.
-	if len(p.flat) != 1 {
-		t.Errorf("expected 1 flat row (collapsed), got %d", len(p.flat))
-	}
-
-	// Expand project.
-	p.Expand()
-	if len(p.flat) != 3 { // project + epic + PROJ-1
-		t.Errorf("expected 3 flat rows after expanding project, got %d", len(p.flat))
+	// Root auto-expanded: project + PROJ-1 (no epic) + epic1 node = 3.
+	if len(p.flat) != 3 {
+		t.Errorf("expected 3 flat rows (auto-expanded project), got %d", len(p.flat))
 	}
 
 	// Navigate to epic and expand it.
@@ -155,21 +149,21 @@ func TestJiraPaneExpandCollapse(t *testing.T) {
 	p := NewJiraPane(&mockJiraLister{issues: issues}, theme)
 	_ = p.Refresh(context.Background())
 
-	// Initially collapsed.
-	if len(p.flat) != 1 {
-		t.Fatalf("expected 1 flat row, got %d", len(p.flat))
-	}
-
-	// Expand.
-	p.Expand()
+	// Initially auto-expanded: project + 1 issue = 2.
 	if len(p.flat) != 2 {
-		t.Errorf("expected 2 rows after expand, got %d", len(p.flat))
+		t.Fatalf("expected 2 flat rows (auto-expanded), got %d", len(p.flat))
 	}
 
 	// Collapse.
 	p.Collapse()
 	if len(p.flat) != 1 {
 		t.Errorf("expected 1 row after collapse, got %d", len(p.flat))
+	}
+
+	// Re-expand.
+	p.Expand()
+	if len(p.flat) != 2 {
+		t.Errorf("expected 2 rows after re-expand, got %d", len(p.flat))
 	}
 }
 
@@ -182,8 +176,8 @@ func TestJiraPaneSelectedKey(t *testing.T) {
 	_ = p.Refresh(context.Background())
 
 	key := p.SelectedKey()
-	if key != "p1" {
-		t.Errorf("expected selected key 'p1', got %q", key)
+	if key != "C" {
+		t.Errorf("expected selected key 'C', got %q", key)
 	}
 
 	p.Expand()
@@ -263,14 +257,9 @@ func TestJiraPaneIssueCount(t *testing.T) {
 	p := NewJiraPane(&mockJiraLister{issues: issues}, theme)
 	_ = p.Refresh(context.Background())
 
-	// Collapsed: just the project node.
-	if p.IssueCount() != 1 {
-		t.Errorf("expected 1 visible row collapsed, got %d", p.IssueCount())
-	}
-
-	p.Expand()
+	// Auto-expanded: project + 2 issues = 3 visible rows.
 	if p.IssueCount() != 3 {
-		t.Errorf("expected 3 visible rows expanded, got %d", p.IssueCount())
+		t.Errorf("expected 3 visible rows (auto-expanded), got %d", p.IssueCount())
 	}
 }
 
@@ -363,7 +352,8 @@ func TestJiraPaneHeightClamp(t *testing.T) {
 	if len(lines) > 11 { // some tolerance for footer
 		t.Errorf("expected at most ~11 lines, got %d", len(lines))
 	}
-	if !strings.Contains(view, "... +") {
-		t.Error("should show overflow indicator")
+	// The page indicator shows [start-end/total] when rows overflow.
+	if !strings.Contains(view, "/") {
+		t.Error("should show page indicator when rows overflow")
 	}
 }

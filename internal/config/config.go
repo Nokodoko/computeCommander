@@ -48,6 +48,7 @@ type TrustGraphConfig struct {
 	Enabled     bool   `yaml:"enabled"`
 	GatewayURL  string `yaml:"gateway_url"`   // TrustGraph REST gateway address (default: http://localhost:8088)
 	Token       string `yaml:"token"`          // API key for gateway auth (supports ${TG_TOKEN})
+	FlowID      string `yaml:"flow_id"`        // TrustGraph flow ID for service queries (default: default)
 	MaxNodes    int    `yaml:"max_nodes"`      // max nodes to display (default: 100)
 	MaxTriples  int    `yaml:"max_triples"`    // max triples per query (default: 200)
 	RefreshSecs int    `yaml:"refresh_secs"`   // override refresh interval (default: 5)
@@ -478,6 +479,7 @@ func DefaultConfig() *Config {
 			Enabled:     false,
 			GatewayURL:  "http://localhost:8088",
 			Token:       "",
+			FlowID:      "default",
 			MaxNodes:    100,
 			MaxTriples:  200,
 			RefreshSecs: 5,

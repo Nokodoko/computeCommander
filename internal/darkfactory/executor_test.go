@@ -32,7 +32,7 @@ func TestExecutorSteppedMode(t *testing.T) {
 		switch {
 		case r.URL.Path == "/rest/api/3/project/TEST":
 			json.NewEncoder(w).Encode(jira.APIProject{ID: "1", Key: "TEST", Name: "Test"})
-		case r.URL.Path == "/rest/api/3/search":
+		case r.URL.Path == "/rest/api/3/search/jql":
 			json.NewEncoder(w).Encode(jira.SearchResult{
 				Total: 1,
 				Issues: []jira.APIIssue{
@@ -98,7 +98,7 @@ func TestExecutorEmptyProject(t *testing.T) {
 		switch {
 		case r.URL.Path == "/rest/api/3/project/EMPTY":
 			json.NewEncoder(w).Encode(jira.APIProject{ID: "2", Key: "EMPTY", Name: "Empty"})
-		case r.URL.Path == "/rest/api/3/search":
+		case r.URL.Path == "/rest/api/3/search/jql":
 			json.NewEncoder(w).Encode(jira.SearchResult{Total: 0, Issues: []jira.APIIssue{}})
 		}
 	}))
@@ -133,7 +133,7 @@ func TestExecutorWithVerifier(t *testing.T) {
 		switch {
 		case r.URL.Path == "/rest/api/3/project/TEST":
 			json.NewEncoder(w).Encode(jira.APIProject{ID: "1", Key: "TEST", Name: "Test"})
-		case r.URL.Path == "/rest/api/3/search":
+		case r.URL.Path == "/rest/api/3/search/jql":
 			json.NewEncoder(w).Encode(jira.SearchResult{
 				Total: 1,
 				Issues: []jira.APIIssue{

@@ -16,7 +16,7 @@ import (
 // healthProbeInterval is how often the background probe checks TrustGraph.
 const healthProbeInterval = 30 * time.Second
 
-// Client wraps TrustGraph's REST gateway at /api/v1/{service}.
+// Client wraps TrustGraph's REST gateway at /api/v1/flow/{flow}/service/{kind}.
 //
 // This is a bootstrap copy from openbrain/mcp/internal/trustgraph.
 // Post-MVP, this will be replaced by an import from the shared module
@@ -24,6 +24,7 @@ const healthProbeInterval = 30 * time.Second
 type Client struct {
 	baseURL    string       // e.g., "http://localhost:8088"
 	token      string       // API key for gateway auth (matches GATEWAY_SECRET)
+	flowID     string       // TrustGraph flow ID (default: "default")
 	httpClient *http.Client // shared, goroutine-safe
 	available  atomic.Bool  // availability cache, updated by health probe
 	lastCheck  atomic.Int64 // unix timestamp of last health check
@@ -32,14 +33,21 @@ type Client struct {
 
 // New creates a TrustGraph Client. Starts a background health probe goroutine
 // that checks availability every 30 seconds via TCP connect.
-func New(baseURL string, token string) *Client {
+// The flowID parameter specifies which TrustGraph flow to query (e.g., "default").
+func New(baseURL string, token string, flowID ...string) *Client {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConnsPerHost = 10
 	transport.IdleConnTimeout = 90 * time.Second
 
+	fid := "default"
+	if len(flowID) > 0 && flowID[0] != "" {
+		fid = flowID[0]
+	}
+
 	c := &Client{
 		baseURL: baseURL,
 		token:   token,
+		flowID:  fid,
 		httpClient: &http.Client{
 			Transport: transport,
 		},
@@ -56,11 +64,17 @@ func New(baseURL string, token string) *Client {
 	return c
 }
 
+// flowServicePath returns the flow-scoped service path for the given service kind.
+// TrustGraph's gateway routes per-flow services at /api/v1/flow/{flow}/service/{kind}.
+func (c *Client) flowServicePath(kind string) string {
+	return fmt.Sprintf("/api/v1/flow/%s/service/%s", c.flowID, kind)
+}
+
 // GraphRAG sends a graph-rag query. Returns the LLM-generated response
 // informed by graph context.
 func (c *Client) GraphRAG(ctx context.Context, req GraphRAGRequest) (GraphRAGResponse, error) {
 	var resp GraphRAGResponse
-	if err := c.post(ctx, "/api/v1/graph-rag", req, &resp); err != nil {
+	if err := c.post(ctx, c.flowServicePath("graph-rag"), req, &resp); err != nil {
 		return GraphRAGResponse{}, err
 	}
 	return resp, nil
@@ -69,7 +83,7 @@ func (c *Client) GraphRAG(ctx context.Context, req GraphRAGRequest) (GraphRAGRes
 // TriplesQuery queries knowledge graph triples by subject-predicate-object pattern.
 func (c *Client) TriplesQuery(ctx context.Context, req TriplesQueryRequest) (TriplesQueryResponse, error) {
 	var resp TriplesQueryResponse
-	if err := c.post(ctx, "/api/v1/triples", req, &resp); err != nil {
+	if err := c.post(ctx, c.flowServicePath("triples"), req, &resp); err != nil {
 		return TriplesQueryResponse{}, err
 	}
 	return resp, nil
@@ -78,7 +92,7 @@ func (c *Client) TriplesQuery(ctx context.Context, req TriplesQueryRequest) (Tri
 // GraphEmbeddingsQuery finds entities by vector similarity search.
 func (c *Client) GraphEmbeddingsQuery(ctx context.Context, req GraphEmbeddingsRequest) (GraphEmbeddingsResponse, error) {
 	var resp GraphEmbeddingsResponse
-	if err := c.post(ctx, "/api/v1/graph-embeddings", req, &resp); err != nil {
+	if err := c.post(ctx, c.flowServicePath("graph-embeddings"), req, &resp); err != nil {
 		return GraphEmbeddingsResponse{}, err
 	}
 	return resp, nil
@@ -87,7 +101,7 @@ func (c *Client) GraphEmbeddingsQuery(ctx context.Context, req GraphEmbeddingsRe
 // Embeddings generates vector embeddings for text via TrustGraph's embeddings service.
 func (c *Client) Embeddings(ctx context.Context, text string) (EmbeddingsResponse, error) {
 	var resp EmbeddingsResponse
-	if err := c.post(ctx, "/api/v1/embeddings", EmbeddingsRequest{Text: text}, &resp); err != nil {
+	if err := c.post(ctx, c.flowServicePath("embeddings"), EmbeddingsRequest{Text: text}, &resp); err != nil {
 		return EmbeddingsResponse{}, err
 	}
 	return resp, nil
