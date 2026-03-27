@@ -251,23 +251,32 @@ func (s *Spawner) Stop(ctx context.Context, agentName string, opts StopOpts) err
 // (missing color_index, color_hex, project_id columns) by falling back to
 // a base query without those columns.
 func (s *Spawner) ListSessions(ctx context.Context, opts ListOpts) ([]*AgentSession, error) {
-	// Detect whether the v2 columns exist. We cache this per-call since
+	// Detect whether the v2/v3 columns exist. We cache this per-call since
 	// migrations could run between calls, but column detection is cheap.
 	hasV2 := s.hasV2Columns(ctx)
+	hasV3 := s.hasV3Columns(ctx)
 
 	var selectCols string
-	if hasV2 {
-		selectCols = `s.id, s.agent_name, s.capability, s.worktree_path, s.branch_name,
-		s.task_id, s.zellij_pane, s.state, s.pid, s.parent_agent, s.depth, s.run_id,
-		s.started_at, s.last_activity, s.escalation_level, s.stalled_since,
-		s.transcript_path, s.runtime,
+	if hasV3 {
+		selectCols = `s.id, s.agent_name, s.capability, COALESCE(s.worktree_path, ''), COALESCE(s.branch_name, ''),
+		s.task_id, COALESCE(s.zellij_pane, ''), s.state, s.pid, COALESCE(s.parent_agent, ''), s.depth, COALESCE(s.run_id, ''),
+		s.started_at, s.last_activity, s.escalation_level, COALESCE(s.stalled_since, ''),
+		COALESCE(s.transcript_path, ''), COALESCE(s.runtime, 'claude'),
+		COALESCE(m.total_in, 0), COALESCE(m.total_out, 0),
+		COALESCE(s.color_index, 0), COALESCE(s.color_hex, ''), COALESCE(s.project_id, ''),
+		COALESCE(s.model, ''), COALESCE(s.session_name, '')`
+	} else if hasV2 {
+		selectCols = `s.id, s.agent_name, s.capability, COALESCE(s.worktree_path, ''), COALESCE(s.branch_name, ''),
+		s.task_id, COALESCE(s.zellij_pane, ''), s.state, s.pid, COALESCE(s.parent_agent, ''), s.depth, COALESCE(s.run_id, ''),
+		s.started_at, s.last_activity, s.escalation_level, COALESCE(s.stalled_since, ''),
+		COALESCE(s.transcript_path, ''), COALESCE(s.runtime, 'claude'),
 		COALESCE(m.total_in, 0), COALESCE(m.total_out, 0),
 		COALESCE(s.color_index, 0), COALESCE(s.color_hex, ''), COALESCE(s.project_id, '')`
 	} else {
-		selectCols = `s.id, s.agent_name, s.capability, s.worktree_path, s.branch_name,
-		s.task_id, s.zellij_pane, s.state, s.pid, s.parent_agent, s.depth, s.run_id,
-		s.started_at, s.last_activity, s.escalation_level, s.stalled_since,
-		s.transcript_path, s.runtime,
+		selectCols = `s.id, s.agent_name, s.capability, COALESCE(s.worktree_path, ''), COALESCE(s.branch_name, ''),
+		s.task_id, COALESCE(s.zellij_pane, ''), s.state, s.pid, COALESCE(s.parent_agent, ''), s.depth, COALESCE(s.run_id, ''),
+		s.started_at, s.last_activity, s.escalation_level, COALESCE(s.stalled_since, ''),
+		COALESCE(s.transcript_path, ''), COALESCE(s.runtime, 'claude'),
 		COALESCE(m.total_in, 0), COALESCE(m.total_out, 0)`
 	}
 
@@ -307,6 +316,11 @@ func (s *Spawner) ListSessions(ctx context.Context, opts ListOpts) ([]*AgentSess
 		args = append(args, opts.ProjectID)
 		argIdx++
 	}
+	if opts.Runtime != "" {
+		query += fmt.Sprintf(" AND s.runtime = $%d", argIdx)
+		args = append(args, string(opts.Runtime))
+		argIdx++
+	}
 
 	query += " ORDER BY s.started_at DESC"
 
@@ -320,7 +334,19 @@ func (s *Spawner) ListSessions(ctx context.Context, opts ListOpts) ([]*AgentSess
 	for rows.Next() {
 		sess := &AgentSession{}
 		var scanErr error
-		if hasV2 {
+		if hasV3 {
+			scanErr = rows.Scan(
+				&sess.ID, &sess.AgentName, &sess.Capability,
+				&sess.WorktreePath, &sess.BranchName, &sess.TaskID,
+				&sess.ZellijPane, &sess.State, &sess.PID,
+				&sess.ParentAgent, &sess.Depth, &sess.RunID,
+				&sess.StartedAt, &sess.LastActivity, &sess.EscalationLevel,
+				&sess.StalledSince, &sess.TranscriptPath, &sess.Runtime,
+				&sess.InputTokens, &sess.OutputTokens,
+				&sess.ColorIndex, &sess.ColorHex, &sess.ProjectID,
+				&sess.Model, &sess.SessionName,
+			)
+		} else if hasV2 {
 			scanErr = rows.Scan(
 				&sess.ID, &sess.AgentName, &sess.Capability,
 				&sess.WorktreePath, &sess.BranchName, &sess.TaskID,
@@ -331,6 +357,9 @@ func (s *Spawner) ListSessions(ctx context.Context, opts ListOpts) ([]*AgentSess
 				&sess.InputTokens, &sess.OutputTokens,
 				&sess.ColorIndex, &sess.ColorHex, &sess.ProjectID,
 			)
+			// Set defaults for missing v3 fields.
+			sess.Model = ""
+			sess.SessionName = ""
 		} else {
 			scanErr = rows.Scan(
 				&sess.ID, &sess.AgentName, &sess.Capability,
@@ -341,10 +370,12 @@ func (s *Spawner) ListSessions(ctx context.Context, opts ListOpts) ([]*AgentSess
 				&sess.StalledSince, &sess.TranscriptPath, &sess.Runtime,
 				&sess.InputTokens, &sess.OutputTokens,
 			)
-			// Set defaults for missing v2 fields.
+			// Set defaults for missing v2/v3 fields.
 			sess.ColorIndex = 0
 			sess.ColorHex = ""
 			sess.ProjectID = ""
+			sess.Model = ""
+			sess.SessionName = ""
 		}
 		if scanErr != nil {
 			return nil, fmt.Errorf("list sessions scan: %w", scanErr)
@@ -365,6 +396,18 @@ func (s *Spawner) hasV2Columns(ctx context.Context) bool {
 	// Use a lightweight probe: try to select the v2 columns from a LIMIT 0 query.
 	// If the columns don't exist, the query will fail.
 	rows, err := s.db.Query(ctx, "SELECT color_index FROM sessions LIMIT 0")
+	if err != nil {
+		return false
+	}
+	rows.Close()
+	return true
+}
+
+// hasV3Columns checks whether the sessions table has the v3 schema columns
+// (model, session_name) added by migration 010_model_session_name.
+// Returns false for pre-migration databases so queries can adapt gracefully.
+func (s *Spawner) hasV3Columns(ctx context.Context) bool {
+	rows, err := s.db.Query(ctx, "SELECT model FROM sessions LIMIT 0")
 	if err != nil {
 		return false
 	}
@@ -456,10 +499,10 @@ func (s *Spawner) countSessionsInRun(ctx context.Context, _ string) (int, error)
 // findSessionByName locates a session by agent name.
 func (s *Spawner) findSessionByName(ctx context.Context, name string) (*AgentSession, error) {
 	row := s.db.QueryRow(ctx,
-		`SELECT id, agent_name, capability, worktree_path, branch_name, task_id,
-			zellij_pane, state, pid, parent_agent, depth, run_id,
-			started_at, last_activity, escalation_level, stalled_since,
-			transcript_path, runtime
+		`SELECT id, agent_name, capability, COALESCE(worktree_path, ''), COALESCE(branch_name, ''), task_id,
+			COALESCE(zellij_pane, ''), state, pid, COALESCE(parent_agent, ''), depth, COALESCE(run_id, ''),
+			started_at, last_activity, escalation_level, COALESCE(stalled_since, ''),
+			COALESCE(transcript_path, ''), COALESCE(runtime, 'claude')
 		FROM sessions WHERE agent_name = $1 AND state NOT IN ('completed', 'zombie')
 		ORDER BY started_at DESC LIMIT 1`, name)
 

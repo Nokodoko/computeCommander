@@ -402,12 +402,17 @@ func evalsRemoveCmd(app *App) *cobra.Command {
 	return cmd
 }
 
-// evalsEmitCmd creates the "evals emit" subcommand for recording hook-driven eval results.
-// This is used by intent verification hooks to push per-objective results into the DB.
+// evalsEmitCmd creates the "evals emit" subcommand for recording eval results.
+// This is the public API for any runtime to emit eval results into the database.
+// Claude's intent verification hooks use this, and non-Claude runtimes (pi, gemini,
+// codex, goose) can also call it from wrapper scripts.
 func evalsEmitCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "emit",
-		Short: "Record a hook-driven eval result (upsert by id)",
+		Short: "Record an eval result from any runtime (upsert by id)",
+		Long: `Record an eval result in the database. This is a public API callable by any runtime.
+Claude's intent hooks use it, and non-Claude runtimes (pi, gemini, codex, goose)
+can call it from wrapper scripts to record build, test, and lint results.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			id, _ := cmd.Flags().GetString("id")

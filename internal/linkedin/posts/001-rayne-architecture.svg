@@ -1,0 +1,157 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 700 500" width="700" height="500" font-family="'Segoe UI', Arial, Helvetica, sans-serif">
+  <defs>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="112%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.08"/>
+    </filter>
+    <filter id="shadow-lg" x="-4%" y="-4%" width="108%" height="115%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#000" flood-opacity="0.10"/>
+    </filter>
+    <marker id="arrow" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#5f6368"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 7" refX="9" refY="3.5" markerWidth="8" markerHeight="6" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 3.5 L 0 7 z" fill="#4285f4"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="700" height="500" rx="8" fill="#ffffff"/>
+
+  <!-- ==================== DATADOG WEBHOOKS (Top) ==================== -->
+  <g filter="url(#shadow)">
+    <rect x="248" y="20" width="204" height="52" rx="12" fill="#e8f0fe" stroke="#4285f4" stroke-width="1.5"/>
+    <text x="350" y="44" text-anchor="middle" font-size="14" font-weight="600" fill="#1a73e8">Datadog Webhooks</text>
+    <text x="350" y="60" text-anchor="middle" font-size="9.5" fill="#5f6368">Alert Ingestion</text>
+  </g>
+
+  <!-- Arrow: Webhooks -> Pod -->
+  <line x1="350" y1="72" x2="350" y2="104" stroke="#5f6368" stroke-width="1.8" marker-end="url(#arrow)"/>
+  <text x="366" y="93" font-size="9" fill="#9aa0a6" font-style="italic">HTTP POST</text>
+
+  <!-- ==================== RAYNE POD (K8s Container) ==================== -->
+  <rect x="68" y="108" width="564" height="176" rx="14" fill="#f8f9fa" stroke="#dadce0" stroke-width="2" stroke-dasharray="8 4" filter="url(#shadow-lg)"/>
+  <!-- Pod label -->
+  <text x="98" y="130" font-size="11.5" font-weight="600" fill="#5f6368">Rayne Pod</text>
+  <text x="172" y="130" font-size="10" fill="#9aa0a6">(Kubernetes)</text>
+
+  <!-- Go API Gateway -->
+  <g filter="url(#shadow)">
+    <rect x="96" y="146" width="230" height="118" rx="10" fill="#ffffff" stroke="#1a73e8" stroke-width="1.5"/>
+    <!-- Blue badge -->
+    <rect x="116" y="160" width="24" height="24" rx="6" fill="#1a73e8"/>
+    <text x="128" y="177" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">Go</text>
+    <!-- Title and port -->
+    <text x="152" y="176" font-size="14" font-weight="600" fill="#1a73e8">API Gateway</text>
+    <text x="116" y="196" font-size="10" fill="#5f6368">Port 8080</text>
+    <!-- Feature list with bullet dots -->
+    <circle cx="122" cy="214" r="2" fill="#9aa0a6"/>
+    <text x="130" y="218" font-size="9.5" fill="#80868b">Webhook Routing</text>
+    <circle cx="122" cy="230" r="2" fill="#9aa0a6"/>
+    <text x="130" y="234" font-size="9.5" fill="#80868b">Multi-Account Management</text>
+    <circle cx="122" cy="246" r="2" fill="#9aa0a6"/>
+    <text x="130" y="250" font-size="9.5" fill="#80868b">Processor Pipeline</text>
+  </g>
+
+  <!-- Claude AI Sidecar -->
+  <g filter="url(#shadow)">
+    <rect x="374" y="146" width="230" height="118" rx="10" fill="#ffffff" stroke="#f9ab00" stroke-width="1.5"/>
+    <!-- Orange badge -->
+    <rect x="394" y="160" width="24" height="24" rx="6" fill="#f9ab00"/>
+    <text x="406" y="177" text-anchor="middle" font-size="10" font-weight="700" fill="#fff">AI</text>
+    <!-- Title and port -->
+    <text x="430" y="176" font-size="14" font-weight="600" fill="#e37400">Claude Sidecar</text>
+    <text x="394" y="196" font-size="10" fill="#5f6368">Port 9000</text>
+    <!-- Feature list with bullet dots -->
+    <circle cx="400" cy="214" r="2" fill="#9aa0a6"/>
+    <text x="408" y="218" font-size="9.5" fill="#80868b">Role Classification</text>
+    <circle cx="400" cy="230" r="2" fill="#9aa0a6"/>
+    <text x="408" y="234" font-size="9.5" fill="#80868b">RLM Analysis Loop</text>
+    <circle cx="400" cy="246" r="2" fill="#9aa0a6"/>
+    <text x="408" y="250" font-size="9.5" fill="#80868b">Notebook Generation</text>
+  </g>
+
+  <!-- Bidirectional arrow between Gateway and Sidecar -->
+  <line x1="326" y1="205" x2="374" y2="205" stroke="#4285f4" stroke-width="2" marker-end="url(#arrow-blue)" marker-start="url(#arrow-blue)"/>
+  <text x="350" y="198" text-anchor="middle" font-size="9" font-weight="500" fill="#4285f4">gRPC</text>
+
+  <!-- ==================== ARROWS FROM POD TO EXTERNAL SERVICES ==================== -->
+  <!-- Gateway -> PostgreSQL -->
+  <path d="M 170 264 L 112 318" stroke="#5f6368" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <!-- Gateway -> Datadog APIs -->
+  <path d="M 250 264 L 278 318" stroke="#5f6368" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <!-- Sidecar -> Qdrant -->
+  <path d="M 450 264 L 438 318" stroke="#5f6368" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+  <!-- Sidecar -> Ollama -->
+  <path d="M 540 264 L 600 318" stroke="#5f6368" stroke-width="1.5" fill="none" marker-end="url(#arrow)"/>
+
+  <!-- ==================== EXTERNAL SERVICES (Bottom Row) ==================== -->
+
+  <!-- PostgreSQL -->
+  <g filter="url(#shadow)">
+    <rect x="32" y="322" width="156" height="60" rx="10" fill="#ffffff" stroke="#0f9d58" stroke-width="1.5"/>
+    <rect x="50" y="336" width="22" height="22" rx="5" fill="#e6f4ea"/>
+    <text x="61" y="352" text-anchor="middle" font-size="12" font-weight="700" fill="#0f9d58">P</text>
+    <text x="82" y="350" font-size="13" font-weight="600" fill="#0f9d58">PostgreSQL</text>
+    <text x="110" y="370" text-anchor="middle" font-size="9.5" fill="#80868b">Alert Storage &amp; State</text>
+  </g>
+
+  <!-- Datadog APIs -->
+  <g filter="url(#shadow)">
+    <rect x="204" y="322" width="156" height="60" rx="10" fill="#ffffff" stroke="#7b1fa2" stroke-width="1.5"/>
+    <rect x="222" y="336" width="22" height="22" rx="5" fill="#f3e8fd"/>
+    <text x="233" y="352" text-anchor="middle" font-size="12" font-weight="700" fill="#7b1fa2">D</text>
+    <text x="254" y="350" font-size="13" font-weight="600" fill="#7b1fa2">Datadog APIs</text>
+    <text x="282" y="370" text-anchor="middle" font-size="9.5" fill="#80868b">Logs, Metrics, Events</text>
+  </g>
+
+  <!-- Qdrant -->
+  <g filter="url(#shadow)">
+    <rect x="376" y="322" width="136" height="60" rx="10" fill="#ffffff" stroke="#0f9d58" stroke-width="1.5"/>
+    <rect x="394" y="336" width="22" height="22" rx="5" fill="#e6f4ea"/>
+    <text x="405" y="352" text-anchor="middle" font-size="12" font-weight="700" fill="#0f9d58">Q</text>
+    <text x="426" y="350" font-size="13" font-weight="600" fill="#0f9d58">Qdrant</text>
+    <text x="444" y="370" text-anchor="middle" font-size="9.5" fill="#80868b">Vector DB / Memory</text>
+  </g>
+
+  <!-- Ollama -->
+  <g filter="url(#shadow)">
+    <rect x="528" y="322" width="136" height="60" rx="10" fill="#ffffff" stroke="#f9ab00" stroke-width="1.5"/>
+    <rect x="546" y="336" width="22" height="22" rx="5" fill="#fef7e0"/>
+    <text x="557" y="352" text-anchor="middle" font-size="12" font-weight="700" fill="#e37400">O</text>
+    <text x="578" y="350" font-size="13" font-weight="600" fill="#e37400">Ollama</text>
+    <text x="596" y="370" text-anchor="middle" font-size="9.5" fill="#80868b">Embeddings (Gemma 2B)</text>
+  </g>
+
+  <!-- ==================== LEGEND (Compact) ==================== -->
+  <g transform="translate(32, 410)">
+    <text x="0" y="14" font-size="11" font-weight="600" fill="#3c4043">Data Flow</text>
+    <line x1="0" y1="22" x2="636" y2="22" stroke="#e8eaed" stroke-width="1"/>
+
+    <!-- Row 1 -->
+    <circle cx="8" cy="40" r="4" fill="#e8f0fe" stroke="#4285f4" stroke-width="1"/>
+    <text x="18" y="44" font-size="9" fill="#5f6368">Webhook arrives via HTTP POST</text>
+
+    <circle cx="230" cy="40" r="4" fill="#fff" stroke="#1a73e8" stroke-width="1"/>
+    <text x="240" y="44" font-size="9" fill="#5f6368">Gateway routes alert to AI sidecar</text>
+
+    <!-- Row 2 -->
+    <circle cx="8" cy="58" r="4" fill="#fff" stroke="#f9ab00" stroke-width="1"/>
+    <text x="18" y="62" font-size="9" fill="#5f6368">Sidecar runs RLM loop, queries services</text>
+
+    <circle cx="230" cy="58" r="4" fill="#fff" stroke="#0f9d58" stroke-width="1"/>
+    <text x="240" y="62" font-size="9" fill="#5f6368">Past incidents stored as vectors for memory</text>
+
+    <!-- Component legend -->
+    <g transform="translate(470, 28)">
+      <rect x="0" y="0" width="10" height="10" rx="2" fill="#e8f0fe" stroke="#4285f4" stroke-width="0.8"/>
+      <text x="15" y="9" font-size="8.5" fill="#5f6368">Entry</text>
+      <rect x="48" y="0" width="10" height="10" rx="2" fill="#fff" stroke="#1a73e8" stroke-width="0.8"/>
+      <text x="63" y="9" font-size="8.5" fill="#5f6368">Core</text>
+      <rect x="0" y="18" width="10" height="10" rx="2" fill="#fff" stroke="#f9ab00" stroke-width="0.8"/>
+      <text x="15" y="27" font-size="8.5" fill="#5f6368">AI</text>
+      <rect x="48" y="18" width="10" height="10" rx="2" fill="#fff" stroke="#0f9d58" stroke-width="0.8"/>
+      <text x="63" y="27" font-size="8.5" fill="#5f6368">Storage</text>
+    </g>
+  </g>
+
+</svg>

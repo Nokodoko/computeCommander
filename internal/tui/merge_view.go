@@ -13,6 +13,8 @@ type MergeQueueView struct {
 	entries       []*merge.MergeEntry
 	theme         *Theme
 	colorResolver AgentColorResolver
+	width         int
+	height        int
 }
 
 // NewMergeQueueView constructs a MergeQueueView.
@@ -21,6 +23,12 @@ func NewMergeQueueView(queue merge.MergeQueue, theme *Theme) *MergeQueueView {
 		queue: queue,
 		theme: theme,
 	}
+}
+
+// SetSize updates display dimensions.
+func (v *MergeQueueView) SetSize(w, h int) {
+	v.width = w
+	v.height = h
 }
 
 // SetColorResolver sets the function used to resolve agent colors for agent names.

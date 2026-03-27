@@ -161,10 +161,10 @@ func TestDashboardView(t *testing.T) {
 	if !strings.Contains(view, "Agents") {
 		t.Error("view should contain Agents pane title")
 	}
-	if !strings.Contains(view, "Tab: cycle") {
+	if !strings.Contains(view, "Tab:cycle") {
 		t.Error("view should contain updated help bar")
 	}
-	if !strings.Contains(view, "Ctrl+K: palette") {
+	if !strings.Contains(view, "Ctrl+K:palette") {
 		t.Error("view should contain palette hint")
 	}
 }
@@ -481,10 +481,10 @@ func TestRenderHelpers(t *testing.T) {
 	t.Run("renderDashHelpBar", func(t *testing.T) {
 		theme := DefaultTheme()
 		bar := renderHelpBar(theme)
-		if !strings.Contains(bar, "Tab: cycle") {
+		if !strings.Contains(bar, "Tab:cycle") {
 			t.Error("help bar should contain Tab hint")
 		}
-		if !strings.Contains(bar, "Ctrl+K: palette") {
+		if !strings.Contains(bar, "Ctrl+K:palette") {
 			t.Error("help bar should contain palette hint")
 		}
 	})
@@ -831,8 +831,8 @@ func TestPaneEvalsFocusKey(t *testing.T) {
 	if meta.Title != "Evals" {
 		t.Errorf("expected Evals pane title, got %q", meta.Title)
 	}
-	if meta.FocusKey != "6" {
-		t.Errorf("expected Evals focus key '6', got %q", meta.FocusKey)
+	if meta.FocusKey != "5" {
+		t.Errorf("expected Evals focus key '5', got %q", meta.FocusKey)
 	}
 }
 

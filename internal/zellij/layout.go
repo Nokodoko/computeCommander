@@ -49,12 +49,12 @@ type LayoutOpts struct {
 //	|  (10%)   |                                          |  Jira     |
 //	|          |                                          |  (35%)    |
 //	+----------+------------------------------------------+-----------+
-//	| Event Log | Evals | Merge Q | OpenBrain | LazyGit              |
-//	|  (20%)    | (20%) |  (20%)  |  (20%)    |  (20%)               |
-//	+----------+-------+---------+-----------+----------------------+
+//	| Event Log | Evals |  OpenBrain  |    TG    |     LazyGit       |
+//	|  (16%)    | (16%) |   (20%)     |  (20%)   |      (28%)        |
+//	+----------+-------+-------------+----------+-------------------+
 //
 // Top row: 67% height — left column (prompt+fp, 10%) | agent (67%, borderless) | right column (Agents+Jira, 23%)
-// Bottom row: 33% height — Event Log | Evals | Merge Queue | OpenBrain | LazyGit
+// Bottom row: 33% height — Event Log | Evals | OpenBrain | TrustGraph | LazyGit
 //
 // The fp pane uses fp-wrapper.sh which watches the per-tab CWD file
 // so the file picker updates when the agent switches sessions.
@@ -83,10 +83,12 @@ func GenerateLayout(opts LayoutOpts) string {
 	// the per-tab CWD file and restarts fp when the project changes.
 	fpWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "fp-wrapper.sh")
 	lazygitWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "lazygit-wrapper.sh")
+	tgVizWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "tg-viz-wrapper.sh")
 	if opts.SystemWide {
 		home, _ := os.UserHomeDir()
 		fpWrapperPath = filepath.Join(home, ".computecommander", "scripts", "fp-wrapper.sh")
 		lazygitWrapperPath = filepath.Join(home, ".computecommander", "scripts", "lazygit-wrapper.sh")
+		tgVizWrapperPath = filepath.Join(home, ".computecommander", "scripts", "tg-viz-wrapper.sh")
 	}
 
 	// Build optional --project flag for pane commands.
@@ -163,34 +165,34 @@ func GenerateLayout(opts LayoutOpts) string {
                 }
 %s
                 pane split_direction="horizontal" size="18%%" {
-                    pane name="Agents" size="40%%" {
+                    pane name="Agents" size="64%%" {
                         command "%s"
                         args "status" "--pane"%s
                     }
-                    pane name="Jira" size="60%%" {
+                    pane name="Jira" size="36%%" {
                         command "%s"
                         args "jira" "--pane"%s
                     }
                 }
             }
             pane split_direction="vertical" size="33%%" {
-                pane name="Event Log" size="20%%" {
+                pane name="Event Log" size="16%%" {
                     command "%s"
                     args "feed" "--pane"%s
                 }
-                pane name="Evals" size="20%%" {
+                pane name="Evals" size="16%%" {
                     command "%s"
                     args "evals" "--pane"%s
                 }
-                pane name="Merge Queue" size="20%%" {
-                    command "%s"
-                    args "merge" "list" "--pane"%s
-                }
-                pane name="OpenBrain" size="20%%" {
+                pane name="OB1" size="20%%" {
                     command "%s"
                     args "openbrain" "--pane"%s
                 }
-                pane size="20%%" {
+                pane name="TG Viz" size="20%%" {
+                    command "bash"
+                    args "%s"
+                }
+                pane size="28%%" {
                     command "bash"
                     args "%s" "%s" "%s"
                 }
@@ -198,7 +200,7 @@ func GenerateLayout(opts LayoutOpts) string {
         }
     }
 }
-`, projectDir, tabName, focusWatcherPane, cmdrBin, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, lazygitWrapperPath, projectDir, opts.TabHash)
+`, projectDir, tabName, focusWatcherPane, cmdrBin, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, tgVizWrapperPath, lazygitWrapperPath, projectDir, opts.TabHash)
 }
 
 

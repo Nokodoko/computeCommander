@@ -68,6 +68,9 @@ type Dashboard struct {
 	jira         *JiraPane
 	costs        *CostTracker
 	palette      *CommandPalette
+	lazygit      *LazyGitPane      // PTY: lazygit process
+	openbrain    *OpenBrainPane    // Data: OpenBrain placeholder
+	trustGraph   *TrustGraphPane   // Data: TrustGraph knowledge graph
 
 	// State.
 	focusedPane    PaneID
@@ -131,6 +134,18 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		eventsPane.SetDB(opts.DB)
 	}
 
+	// Resolve OpenBrain config for the pane.
+	var obCfg config.OpenBrainConfig
+	if opts.Config != nil {
+		obCfg = opts.Config.OpenBrain
+	}
+
+	// Resolve TrustGraph config for the pane.
+	var tgCfg config.TrustGraphConfig
+	if opts.Config != nil {
+		tgCfg = opts.Config.TrustGraph
+	}
+
 	d := &Dashboard{
 		filePicker:     fp,
 		agentSession:   NewAgentSession(agentCmd, theme),
@@ -143,6 +158,9 @@ func NewDashboard(opts DashboardOpts) *Dashboard {
 		jira:           NewJiraPane(opts.JiraLister, theme),
 		costs:          NewCostTracker(theme),
 		palette:        NewCommandPalette(theme),
+		lazygit:        NewLazyGitPane(root, theme),
+		openbrain:      NewOpenBrainPane(theme, obCfg),
+		trustGraph:     NewTrustGraphPane(theme, tgCfg),
 		focusedPane:    PaneAgentSession,
 		interval:       interval,
 		theme:          theme,
@@ -197,11 +215,15 @@ func (d *Dashboard) Run(ctx context.Context) error {
 	case err := <-done:
 		_ = d.agentSession.Stop()
 		_ = d.filePicker.Stop()
+		_ = d.lazygit.Stop()
+		d.trustGraph.Close()
 		return err
 	case <-ctx.Done():
 		p.Quit()
 		_ = d.agentSession.Stop()
 		_ = d.filePicker.Stop()
+		_ = d.lazygit.Stop()
+		d.trustGraph.Close()
 		return ctx.Err()
 	}
 }
@@ -306,6 +328,12 @@ func (d *Dashboard) Refresh() error {
 	if err := d.jira.Refresh(ctx); err != nil {
 		errs = append(errs, err.Error())
 	}
+	if err := d.openbrain.Refresh(); err != nil {
+		errs = append(errs, err.Error())
+	}
+	if err := d.trustGraph.Refresh(); err != nil {
+		errs = append(errs, err.Error())
+	}
 
 	if len(errs) > 0 {
 		return fmt.Errorf("refresh errors: %s", strings.Join(errs, "; "))
@@ -362,6 +390,7 @@ func (d *Dashboard) waitForPTYOutput() tea.Cmd {
 		select {
 		case <-d.agentSession.Notify():
 		case <-d.filePicker.Notify():
+		case <-d.lazygit.Notify():
 		}
 		return ptyOutputMsg{}
 	}
@@ -409,6 +438,9 @@ func (d *Dashboard) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if d.focusedPane == PaneFilePicker && d.filePicker.Running() {
 		return d.forwardToPTY(msg, func(data []byte) { _ = d.filePicker.WriteInput(data) })
 	}
+	if d.focusedPane == PaneLazyGit && d.lazygit.Running() {
+		return d.forwardToPTY(msg, func(data []byte) { _ = d.lazygit.WriteInput(data) })
+	}
 
 	switch key {
 	case "q", "ctrl+c":
@@ -430,15 +462,17 @@ func (d *Dashboard) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "4":
 		d.focusedPane = PaneEvents
 	case "5":
-		d.focusedPane = PaneMail
-	case "6":
 		d.focusedPane = PaneEvals
-	case "7":
+	case "6":
 		d.focusedPane = PaneMergeQueue
+	case "7":
+		d.focusedPane = PaneOpenBrain
 	case "8":
-		d.focusedPane = PaneGitStatus
+		d.focusedPane = PaneTrustGraph
 	case "9":
 		d.focusedPane = PaneJira
+	case "0":
+		d.focusedPane = PaneLazyGit
 	default:
 		d.handleFocusedPaneKey(msg)
 	}
@@ -552,6 +586,26 @@ func (d *Dashboard) handleFocusedPaneKey(msg tea.KeyMsg) {
 		case "?":
 			d.jira.ToggleHelp()
 		}
+	case PaneLazyGit:
+		if key == "enter" && !d.lazygit.Running() {
+			w, h := d.lazyGitDimensions()
+			if err := d.lazygit.Start(w, h); err != nil {
+				d.err = fmt.Errorf("lazygit start: %w", err)
+			}
+		}
+	case PaneTrustGraph:
+		switch key {
+		case "j", "down":
+			d.trustGraph.ScrollDown()
+		case "k", "up":
+			d.trustGraph.ScrollUp()
+		case "r":
+			// Force refresh by clearing the last refresh time.
+			d.trustGraph.mu.Lock()
+			d.trustGraph.lastRefresh = time.Time{}
+			d.trustGraph.mu.Unlock()
+			_ = d.trustGraph.Refresh()
+		}
 	}
 }
 
@@ -561,14 +615,21 @@ func (d *Dashboard) handleFocusedPaneKey(msg tea.KeyMsg) {
 func (d *Dashboard) updatePaneSizes() {
 	topH, bottomH, fpW, asW, agW, bottomPaneW := d.calculateLayout()
 
+	// Top row.
 	d.filePicker.SetSize(fpW-2, topH-3)
 	d.agentSession.SetSize(asW-2, topH-3)
-	d.eventsPane.SetSize(bottomPaneW-2, bottomH-3)
-	d.gitStatus.SetSize(bottomPaneW-2, bottomH-3)
-	d.evals.SetSize(bottomPaneW-2, bottomH-3)
-	d.palette.SetSize(d.width, d.height)
+	// agents pane uses CompactView which gets width/height at render time.
+	_ = agW
 
-	_ = agW // agents pane uses CompactView which gets width/height at render time
+	// Bottom row -- ALL panes must receive SetSize.
+	d.eventsPane.SetSize(bottomPaneW-2, bottomH-3)
+	d.evals.SetSize(bottomPaneW-2, bottomH-3)
+	d.queue.SetSize(bottomPaneW-2, bottomH-3)
+	d.openbrain.SetSize(bottomPaneW-2, bottomH-3)
+	d.lazygit.SetSize(bottomPaneW-2, bottomH-3)
+
+	// Overlays.
+	d.palette.SetSize(d.width, d.height)
 }
 
 // calculateLayout returns the dimensions for each section of the grid.
@@ -631,6 +692,12 @@ func (d *Dashboard) filePickerDimensions() (int, int) {
 	return fpW - 2, topH - 3
 }
 
+// lazyGitDimensions returns the inner dimensions of the lazygit pane.
+func (d *Dashboard) lazyGitDimensions() (int, int) {
+	_, bottomH, _, _, _, bottomPaneW := d.calculateLayout()
+	return bottomPaneW - 2, bottomH - 3
+}
+
 // forwardToPTY handles keyboard input for a focused PTY pane. Only a small
 // set of control-key chords are intercepted for dashboard navigation;
 // everything else — including digits, printable characters, and arrow keys
@@ -654,6 +721,9 @@ func (d *Dashboard) forwardToPTY(msg tea.KeyMsg, writeFn func([]byte)) (tea.Mode
 // When PaneJira is focused it renders a full-screen Jira overlay instead of
 // the normal grid so the issue tree has maximum space.
 func (d *Dashboard) View() string {
+	if d.focusedPane == PaneTrustGraph {
+		return d.viewTrustGraph()
+	}
 	if d.focusedPane == PaneJira {
 		return d.viewJira()
 	}
@@ -675,13 +745,10 @@ func (d *Dashboard) View() string {
 	topRow := lipgloss.JoinHorizontal(lipgloss.Top, filePicker, agentSession, agentsPane)
 
 	// --- Bottom Row ---
+	// Events | Evals | MergeQueue | OpenBrain | LazyGit
 	evContent := d.eventsPane.View()
 	evMeta := paneMetaByID(PaneEvents)
 	eventsPane := RenderPane(evContent, evMeta, d.focusedPane == PaneEvents, bottomPaneW, bottomH, d.theme)
-
-	mlContent := d.mail.View()
-	mlMeta := paneMetaByID(PaneMail)
-	mailPane := RenderPane(mlContent, mlMeta, d.focusedPane == PaneMail, bottomPaneW, bottomH, d.theme)
 
 	evalsContent := d.evals.View()
 	evalsMeta := paneMetaByID(PaneEvals)
@@ -691,16 +758,20 @@ func (d *Dashboard) View() string {
 	mqMeta := paneMetaByID(PaneMergeQueue)
 	mergePane := RenderPane(mqContent, mqMeta, d.focusedPane == PaneMergeQueue, bottomPaneW, bottomH, d.theme)
 
-	// Git Status pane gets remaining width (last pane in row).
+	obContent := d.openbrain.View()
+	obMeta := paneMetaByID(PaneOpenBrain)
+	openbrainPane := RenderPane(obContent, obMeta, d.focusedPane == PaneOpenBrain, bottomPaneW, bottomH, d.theme)
+
+	// LazyGit pane gets remaining width (last pane in row).
 	lastPaneW := d.width - (bottomPaneW * 4)
 	if lastPaneW < 10 {
 		lastPaneW = bottomPaneW
 	}
-	gsContent := d.gitStatus.View()
-	gsMeta := paneMetaByID(PaneGitStatus)
-	gitPane := RenderPane(gsContent, gsMeta, d.focusedPane == PaneGitStatus, lastPaneW, bottomH, d.theme)
+	lgContent := d.lazygit.View()
+	lgMeta := paneMetaByID(PaneLazyGit)
+	lazygitPane := RenderPane(lgContent, lgMeta, d.focusedPane == PaneLazyGit, lastPaneW, bottomH, d.theme)
 
-	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, eventsPane, mailPane, evalsPane, mergePane, gitPane)
+	bottomRow := lipgloss.JoinHorizontal(lipgloss.Top, eventsPane, evalsPane, mergePane, openbrainPane, lazygitPane)
 
 	// --- Status and help bars ---
 	statusBar := renderStatusBarWithProject(
@@ -735,6 +806,39 @@ func (d *Dashboard) View() string {
 	}
 
 	return layout
+}
+
+// viewTrustGraph renders a full-screen TrustGraph pane (active when key 8 is pressed).
+func (d *Dashboard) viewTrustGraph() string {
+	w := d.width
+	h := d.height
+	if w < 40 {
+		w = 80
+	}
+	if h < 10 {
+		h = 24
+	}
+
+	// Reserve 2 lines for status/help bars.
+	innerH := h - 2
+	d.trustGraph.SetSize(w-2, innerH-3)
+
+	tgMeta := paneMetaByID(PaneTrustGraph)
+	content := d.trustGraph.View()
+	tgPane := RenderPane(content, tgMeta, true, w, innerH, d.theme)
+
+	statusBar := renderStatusBarWithProject(
+		d.projectName,
+		len(d.agents.Sessions()),
+		d.mail.UnreadCount(),
+		d.queue.PendingCount(),
+		d.costs.TotalCost(),
+		d.theme,
+	)
+
+	helpBar := d.theme.HelpBar.Render("8=trustgraph  j/k:nav  r:refresh  Tab:back  q:quit")
+
+	return lipgloss.JoinVertical(lipgloss.Left, tgPane, statusBar, helpBar)
 }
 
 // viewJira renders a full-screen Jira pane (active when key 9 is pressed).

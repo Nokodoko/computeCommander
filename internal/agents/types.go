@@ -96,6 +96,10 @@ type AgentSession struct {
 	ColorIndex int    `json:"colorIndex" db:"color_index"`
 	ColorHex   string `json:"colorHex" db:"color_hex"`
 
+	// v3: Model and session name fields (migration 010)
+	Model       string `json:"model" db:"model"`
+	SessionName string `json:"sessionName" db:"session_name"`
+
 	// Token usage aggregated from the metrics table (populated by ListSessions JOIN).
 	InputTokens  int64 `json:"inputTokens"`
 	OutputTokens int64 `json:"outputTokens"`
@@ -145,4 +149,5 @@ type ListOpts struct {
 	State      SessionState
 	Parent     string
 	ProjectID  string
+	Runtime    runtimes.RuntimeID // Filter by runtime (e.g., "pi", "claude")
 }

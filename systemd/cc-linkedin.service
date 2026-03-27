@@ -1,0 +1,17 @@
+[Unit]
+Description=LinkedIn Post Generator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/n0ko/Programs/ai/computeCommander
+ExecStart=/usr/local/bin/claude -p "Run cc linkedin generate. Scan projects for content, select a topic, generate a LinkedIn post, send the draft via Gmail MCP to cmonty614@gmail.com, and trigger a dunst notification. After generation, use the gmail_create_draft MCP tool to create a Gmail draft with the email subject and HTML body that the command outputs."
+Environment=HOME=/home/n0ko
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:/home/n0ko/.local/bin:/home/n0ko/go/bin
+# Headless Claude Code session -- full access to:
+#   - Claude LLM (Max account, no API key needed)
+#   - Gmail MCP tools (email delivery)
+#   - Local filesystem (project scanning)
+# The session runs non-interactively and exits when the task completes.
+TimeoutStartSec=300
