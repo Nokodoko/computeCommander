@@ -157,11 +157,11 @@ func GenerateLayout(opts LayoutOpts) string {
 	// into the outer Sprintf, which does NOT re-process substituted text.
 	var tgVizPane string
 	if tgVizIsBinary {
-		tgVizPane = fmt.Sprintf(`                pane name="TG Viz" size="20%%" {
+		tgVizPane = fmt.Sprintf(`                pane name="TG Viz" size="38%%" {
                     command "%s"
                 }`, tgVizBinPath)
 	} else {
-		tgVizPane = fmt.Sprintf(`                pane name="TG Viz" size="20%%" {
+		tgVizPane = fmt.Sprintf(`                pane name="TG Viz" size="38%%" {
                     command "bash"
                     args "%s"
                 }`, tgVizBinPath)
@@ -202,20 +202,20 @@ func GenerateLayout(opts LayoutOpts) string {
                 }
             }
             pane split_direction="vertical" size="33%%" {
-                pane name="Event Log" size="16%%" {
+                pane name="Event Log" size="12%%" {
                     command "%s"
                     args "feed" "--pane"%s
                 }
-                pane name="Evals" size="16%%" {
+                pane name="Evals" size="12%%" {
                     command "%s"
                     args "evals" "--pane"%s
                 }
-                pane name="OB1" size="20%%" {
+                pane name="OB1" size="14%%" {
                     command "%s"
                     args "openbrain" "--pane"%s
                 }
 %s
-                pane size="28%%" {
+                pane size="24%%" {
                     command "bash"
                     args "%s" "%s" "%s"
                 }
