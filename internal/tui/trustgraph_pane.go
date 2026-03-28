@@ -1,8 +1,13 @@
 package tui
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net"
+	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -37,6 +42,30 @@ func (s TGStatus) String() string {
 	}
 }
 
+// TGViewMode represents which view the pane is currently displaying.
+type TGViewMode int
+
+const (
+	// TGViewSummary shows node/edge counts and top entities.
+	TGViewSummary TGViewMode = iota
+	// TGViewGraph shows the ego-graph for a selected entity.
+	TGViewGraph
+	// TGViewTriples shows raw triple listing with scroll/search.
+	TGViewTriples
+)
+
+// String returns a human-readable mode label.
+func (m TGViewMode) String() string {
+	switch m {
+	case TGViewGraph:
+		return "Graph"
+	case TGViewTriples:
+		return "Triples"
+	default:
+		return "Summary"
+	}
+}
+
 // nodeInfo holds aggregated information about a graph entity for the summary view.
 type nodeInfo struct {
 	ID     string // display label (short IRI)
@@ -45,14 +74,21 @@ type nodeInfo struct {
 }
 
 // TrustGraphPane displays TrustGraph knowledge graph data.
-// Phase 1 (MVP): Summary View only, showing node/edge counts and top entities.
+// Supports three view modes: Summary, Graph (ego-graph), and Triples.
 // Renders as a full-screen overlay when focused (same pattern as JiraPane).
+// Subscribes to ob-mcp SSE for realtime refresh triggers.
 type TrustGraphPane struct {
-	theme  *Theme
-	cfg    config.TrustGraphConfig
-	client *trustgraph.Client
-	width  int
-	height int
+	theme    *Theme
+	cfg      config.TrustGraphConfig
+	client   *trustgraph.Client
+	renderer *GraphRenderer
+	width    int
+	height   int
+
+	// View mode state.
+	viewMode   TGViewMode
+	focusNode  string   // current focus entity for Graph View
+	breadcrumb []string // navigation history for Graph View
 
 	// Cached graph data (protected by mu).
 	mu          sync.Mutex
@@ -64,21 +100,35 @@ type TrustGraphPane struct {
 	lastRefresh time.Time
 	lastError   string
 
-	// Scroll state for summary view.
+	// Scroll state (shared across views).
 	scrollOffset int
 	cursor       int
+
+	// SSE connection state.
+	sseCancel context.CancelFunc
+	sseActive bool
 }
 
 // NewTrustGraphPane constructs a TrustGraphPane with the given config.
 // If TrustGraph is disabled or GatewayURL is empty, the pane shows "disconnected".
+// Starts SSE subscription if ob-mcp URL is configured.
 func NewTrustGraphPane(theme *Theme, cfg config.TrustGraphConfig) *TrustGraphPane {
 	p := &TrustGraphPane{
-		theme: theme,
-		cfg:   cfg,
+		theme:    theme,
+		cfg:      cfg,
+		renderer: NewGraphRenderer(theme),
+		viewMode: TGViewSummary,
 	}
 
 	if cfg.Enabled && cfg.GatewayURL != "" {
 		p.client = trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
+	}
+
+	// Start SSE subscription for live refresh triggers.
+	if cfg.Enabled {
+		ctx, cancel := context.WithCancel(context.Background())
+		p.sseCancel = cancel
+		go p.subscribeSSE(ctx)
 	}
 
 	return p
@@ -90,10 +140,82 @@ func (tg *TrustGraphPane) SetSize(w, h int) {
 	tg.height = h
 }
 
-// Close stops the TrustGraph client's background health probe.
+// Close stops the TrustGraph client's background health probe and SSE subscription.
 func (tg *TrustGraphPane) Close() {
+	if tg.sseCancel != nil {
+		tg.sseCancel()
+	}
 	if tg.client != nil {
 		tg.client.Close()
+	}
+}
+
+// CycleViewMode advances to the next view mode: Summary -> Graph -> Triples -> Summary.
+func (tg *TrustGraphPane) CycleViewMode() {
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+	switch tg.viewMode {
+	case TGViewSummary:
+		// If a cursor is on an entity, switch to Graph View focused on it.
+		if tg.cursor < len(tg.topEntities) {
+			tg.focusNode = tg.topEntities[tg.cursor].FullID
+			tg.viewMode = TGViewGraph
+		} else {
+			tg.viewMode = TGViewTriples
+		}
+	case TGViewGraph:
+		tg.viewMode = TGViewTriples
+	case TGViewTriples:
+		tg.viewMode = TGViewSummary
+	}
+	tg.scrollOffset = 0
+}
+
+// ExpandNode switches to Graph View centered on the currently selected entity.
+func (tg *TrustGraphPane) ExpandNode() {
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+
+	var targetID string
+	switch tg.viewMode {
+	case TGViewSummary:
+		if tg.cursor < len(tg.topEntities) {
+			targetID = tg.topEntities[tg.cursor].FullID
+		}
+	case TGViewTriples:
+		if tg.cursor < len(tg.triples) {
+			targetID = tg.triples[tg.cursor].Subject.DisplayValue()
+		}
+	case TGViewGraph:
+		// In graph view, expand is a no-op unless we implement node selection.
+		return
+	}
+
+	if targetID == "" {
+		return
+	}
+
+	// Push current focus onto breadcrumb before navigating.
+	if tg.focusNode != "" {
+		tg.breadcrumb = append(tg.breadcrumb, tg.focusNode)
+	}
+	tg.focusNode = targetID
+	tg.viewMode = TGViewGraph
+	tg.scrollOffset = 0
+}
+
+// GoBack navigates to the previous focus node in Graph View,
+// or returns to Summary View if no history.
+func (tg *TrustGraphPane) GoBack() {
+	tg.mu.Lock()
+	defer tg.mu.Unlock()
+
+	if tg.viewMode == TGViewGraph && len(tg.breadcrumb) > 0 {
+		tg.focusNode = tg.breadcrumb[len(tg.breadcrumb)-1]
+		tg.breadcrumb = tg.breadcrumb[:len(tg.breadcrumb)-1]
+	} else {
+		tg.viewMode = TGViewSummary
+		tg.scrollOffset = 0
 	}
 }
 
@@ -226,10 +348,81 @@ func (tg *TrustGraphPane) Refresh() error {
 	return nil
 }
 
-// View renders the TrustGraph Summary View content.
+// View renders the current TrustGraph view based on the active mode.
 func (tg *TrustGraphPane) View() string {
 	tg.mu.Lock()
 	defer tg.mu.Unlock()
+
+	switch tg.viewMode {
+	case TGViewGraph:
+		return tg.viewGraph()
+	case TGViewTriples:
+		return tg.viewTriples()
+	default:
+		return tg.viewSummary()
+	}
+}
+
+// viewGraph renders the ego-graph for the current focus node.
+func (tg *TrustGraphPane) viewGraph() string {
+	w := tg.width
+	h := tg.height
+	if w <= 0 {
+		w = 60
+	}
+	if h <= 0 {
+		h = 20
+	}
+
+	if tg.status != TGConnected || tg.focusNode == "" {
+		return tg.viewSummary()
+	}
+
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#5DADE2"))
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+
+	var lines []string
+	// Find focus label.
+	focusLabel := tg.focusNode
+	for _, e := range tg.topEntities {
+		if e.FullID == tg.focusNode {
+			focusLabel = e.ID
+			break
+		}
+	}
+	lines = append(lines, headerStyle.Render(" TG")+"  "+headerStyle.Render("Graph: "+focusLabel))
+	lines = append(lines, dimStyle.Render(strings.Repeat("─", w)))
+
+	// Render the ego-graph using the graph renderer.
+	graphContent := tg.renderer.Render(tg.triples, tg.focusNode, w, h-4)
+	lines = append(lines, graphContent)
+
+	lines = append(lines, dimStyle.Render(strings.Repeat("─", w)))
+	lines = append(lines, dimStyle.Render(" j/k:nav  Enter:expand  h:back  m:mode  /:search"))
+
+	return strings.Join(lines, "\n")
+}
+
+// viewTriples renders the scrollable triples table.
+func (tg *TrustGraphPane) viewTriples() string {
+	w := tg.width
+	h := tg.height
+	if w <= 0 {
+		w = 60
+	}
+	if h <= 0 {
+		h = 20
+	}
+
+	if tg.status != TGConnected || len(tg.triples) == 0 {
+		return tg.viewSummary()
+	}
+
+	return tg.renderer.RenderTriplesView(tg.triples, tg.scrollOffset, tg.cursor, w, h)
+}
+
+// viewSummary renders the Summary View content.
+func (tg *TrustGraphPane) viewSummary() string {
 
 	w := tg.width
 	if w <= 0 {
@@ -405,10 +598,125 @@ func (tg *TrustGraphPane) View() string {
 	statusLine := " " + dimStyle.Render("Status") + "  " + strings.Join(statusParts, dimStyle.Render(" | "))
 	lines = append(lines, statusLine)
 
+	// SSE status.
+	if tg.sseActive {
+		statusParts = append(statusParts, greenStyle.Render("SSE live"))
+	}
+
 	// Help bar for full-screen overlay.
 	lines = append(lines, "")
 	helpStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
-	lines = append(lines, helpStyle.Render(" j/k:scroll  r:refresh  Tab:back  q:quit"))
+	lines = append(lines, helpStyle.Render(" j/k:scroll  Enter:expand  m:mode  r:refresh  Tab:back"))
 
 	return strings.Join(lines, "\n")
+}
+
+// ── SSE Subscription ──────────────────────────────────────────────────────
+
+// subscribeSSE connects to the ob-mcp SSE stream and triggers Refresh()
+// on each memory event. Auto-reconnects on failure.
+func (tg *TrustGraphPane) subscribeSSE(ctx context.Context) {
+	// Determine ob-mcp SSE URL.
+	// Try Unix socket first, then HTTP.
+	uid := os.Getuid()
+	sockPath := fmt.Sprintf("/run/user/%d/ob-mcp.sock", uid)
+	httpURL := "http://localhost:8200"
+
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+
+		_ = tg.runSSEStream(ctx, sockPath, httpURL)
+		if ctx.Err() != nil {
+			return
+		}
+
+		tg.mu.Lock()
+		tg.sseActive = false
+		tg.mu.Unlock()
+
+		// Backoff before reconnect.
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+// runSSEStream connects to the SSE endpoint and processes events until error.
+func (tg *TrustGraphPane) runSSEStream(ctx context.Context, sockPath, httpURL string) error {
+	var client *http.Client
+	var url string
+
+	// Try Unix socket.
+	if _, err := os.Stat(sockPath); err == nil {
+		client = &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					return net.Dial("unix", sockPath)
+				},
+			},
+		}
+		url = "http://unix/events/memories?agent=tg-pane"
+	} else {
+		client = &http.Client{}
+		url = httpURL + "/events/memories?agent=tg-pane"
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Cache-Control", "no-cache")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("SSE status %d", resp.StatusCode)
+	}
+
+	tg.mu.Lock()
+	tg.sseActive = true
+	tg.mu.Unlock()
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+
+	var eventType string
+	for scanner.Scan() {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		line := scanner.Text()
+
+		switch {
+		case strings.HasPrefix(line, "event: "):
+			eventType = strings.TrimPrefix(line, "event: ")
+		case strings.HasPrefix(line, "data: "):
+			// We only care that an event happened, not the payload.
+			_ = json.RawMessage(strings.TrimPrefix(line, "data: "))
+		case line == "":
+			if eventType == "memory" {
+				// Trigger a refresh (async, respect debounce in Refresh()).
+				go func() {
+					// Reset the refresh timer so Refresh() will actually re-query.
+					tg.mu.Lock()
+					tg.lastRefresh = time.Time{}
+					tg.mu.Unlock()
+					_ = tg.Refresh()
+				}()
+			}
+			eventType = ""
+		}
+	}
+
+	return scanner.Err()
 }
