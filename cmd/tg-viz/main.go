@@ -37,7 +37,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 )
@@ -200,14 +199,20 @@ func runCDPScreencast(ctx context.Context, chromeBin string, display displayMeth
 	}
 
 	// Start screencast.
-	screencastParams := map[string]any{
-		"format":        "jpeg",
-		"quality":       quality,
-		"maxWidth":      1920,
-		"maxHeight":     1080,
-		"everyNthFrame": 1,
+	type screencastConfig struct {
+		Format        string `json:"format"`
+		Quality       int    `json:"quality"`
+		MaxWidth      int    `json:"maxWidth"`
+		MaxHeight     int    `json:"maxHeight"`
+		EveryNthFrame int    `json:"everyNthFrame"`
 	}
-	paramsJSON, _ := json.Marshal(screencastParams)
+	paramsJSON, _ := json.Marshal(screencastConfig{
+		Format:        "jpeg",
+		Quality:       quality,
+		MaxWidth:      1920,
+		MaxHeight:     1080,
+		EveryNthFrame: 1,
+	})
 	if err := cdpSend(conn, 2, "Page.startScreencast", paramsJSON); err != nil {
 		return fmt.Errorf("Page.startScreencast: %w", err)
 	}
@@ -220,9 +225,12 @@ func runCDPScreencast(ctx context.Context, chromeBin string, display displayMeth
 	// Frame display loop.
 	var (
 		frameBuf bytes.Buffer
-		mu       sync.Mutex
 		frameNum int64
 	)
+
+	// Clean up CDP frame file on exit.
+	frameFile := fmt.Sprintf("/tmp/tg-viz-cdp-%d.png", os.Getpid())
+	defer os.Remove(frameFile)
 
 	// Rate limiter: enforce target FPS.
 	minFrameInterval := time.Second / time.Duration(fps)
@@ -249,7 +257,10 @@ func runCDPScreencast(ctx context.Context, chromeBin string, display displayMeth
 		}
 
 		// Acknowledge the frame immediately so Chrome keeps sending.
-		ackParams, _ := json.Marshal(map[string]int{"sessionId": frame.SessionID})
+		type frameAck struct {
+			SessionID int `json:"sessionId"`
+		}
+		ackParams, _ := json.Marshal(frameAck{SessionID: frame.SessionID})
 		_ = cdpSend(conn, 3, "Page.screencastFrameAck", ackParams)
 
 		// Rate limit display.
@@ -271,20 +282,15 @@ func runCDPScreencast(ctx context.Context, chromeBin string, display displayMeth
 			continue
 		}
 
-		mu.Lock()
 		frameBuf.Reset()
 		if err := png.Encode(&frameBuf, img); err != nil {
-			mu.Unlock()
 			continue
 		}
 
 		// Write frame to temp file and display.
-		frameFile := fmt.Sprintf("/tmp/tg-viz-cdp-%d.png", os.Getpid())
 		if err := os.WriteFile(frameFile, frameBuf.Bytes(), 0o644); err != nil {
-			mu.Unlock()
 			continue
 		}
-		mu.Unlock()
 
 		if err := displayFrame(display, frameFile); err != nil {
 			fmt.Fprintf(os.Stderr, "[tg-viz] display error: %v\n", err)
@@ -319,7 +325,12 @@ func waitForDevTools(ctx context.Context, port int, timeout time.Duration) (stri
 			return "", ctx.Err()
 		}
 
-		resp, err := http.Get(url)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return "", fmt.Errorf("create devtools request: %w", err)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			time.Sleep(200 * time.Millisecond)
 			continue

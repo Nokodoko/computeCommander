@@ -188,7 +188,7 @@ function nodeRadius(d) {
 }
 
 function edgeColor(label) {
-  const map = {
+  const colorLookup = {
     'type': '#333',
     'label': '#333',
     'description': '#333',
@@ -199,7 +199,7 @@ function edgeColor(label) {
     'integrates_with': '#aa66ff66',
     'monitors': '#ff884466',
   };
-  return map[label] || '#2a2a4e';
+  return colorLookup[label] || '#2a2a4e';
 }
 
 /** Update the D3 visualization with new graph data using enter/update/exit. */
@@ -254,8 +254,12 @@ function updateGraph(newData, animate) {
       .on('end', dragended));
 
   nodeEnter.on('mouseover', (e, d) => {
-    tooltip.style('display', 'block')
-      .html('<div class="type">' + d.type + '</div><div class="iri">' + (d.fullIRI || d.id) + '</div><div>' + d.label + '</div>');
+    // Use textContent to avoid XSS from IRI/label values.
+    const tip = tooltip.style('display', 'block');
+    tip.selectAll('*').remove();
+    tip.append('div').attr('class', 'type').text(d.type);
+    tip.append('div').attr('class', 'iri').text(d.fullIRI || d.id);
+    tip.append('div').text(d.label);
   }).on('mousemove', (e) => {
     tooltip.style('left', (e.clientX + 15) + 'px').style('top', (e.clientY - 10) + 'px');
   }).on('mouseout', () => tooltip.style('display', 'none'));

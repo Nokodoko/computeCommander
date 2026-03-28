@@ -105,8 +105,9 @@ type TrustGraphPane struct {
 	cursor       int
 
 	// SSE connection state.
-	sseCancel context.CancelFunc
-	sseActive bool
+	sseCancel   context.CancelFunc
+	sseActive   bool
+	sseRefreshC chan struct{} // single-slot channel to debounce SSE-triggered refreshes
 }
 
 // NewTrustGraphPane constructs a TrustGraphPane with the given config.
@@ -128,6 +129,8 @@ func NewTrustGraphPane(theme *Theme, cfg config.TrustGraphConfig) *TrustGraphPan
 	if cfg.Enabled {
 		ctx, cancel := context.WithCancel(context.Background())
 		p.sseCancel = cancel
+		p.sseRefreshC = make(chan struct{}, 1) // single-slot: coalesces bursts
+		go p.sseRefreshLoop(ctx)
 		go p.subscribeSSE(ctx)
 	}
 
@@ -219,11 +222,16 @@ func (tg *TrustGraphPane) GoBack() {
 	}
 }
 
-// ScrollDown moves the cursor down in the entity list.
+// ScrollDown moves the cursor down in the current view's item list.
 func (tg *TrustGraphPane) ScrollDown() {
 	tg.mu.Lock()
 	defer tg.mu.Unlock()
-	if tg.cursor < len(tg.topEntities)-1 {
+
+	maxIdx := tg.currentListLen() - 1
+	if maxIdx < 0 {
+		return
+	}
+	if tg.cursor < maxIdx {
 		tg.cursor++
 	}
 	// Adjust scroll offset to keep cursor visible.
@@ -233,6 +241,17 @@ func (tg *TrustGraphPane) ScrollDown() {
 	}
 	if tg.cursor >= tg.scrollOffset+visibleRows {
 		tg.scrollOffset = tg.cursor - visibleRows + 1
+	}
+}
+
+// currentListLen returns the length of the list for the active view mode.
+// Must be called with tg.mu held.
+func (tg *TrustGraphPane) currentListLen() int {
+	switch tg.viewMode {
+	case TGViewTriples:
+		return len(tg.triples)
+	default:
+		return len(tg.topEntities)
 	}
 }
 
@@ -595,13 +614,13 @@ func (tg *TrustGraphPane) viewSummary() string {
 		statusParts = append(statusParts, dimStyle.Render(agoStr))
 	}
 
-	statusLine := " " + dimStyle.Render("Status") + "  " + strings.Join(statusParts, dimStyle.Render(" | "))
-	lines = append(lines, statusLine)
-
-	// SSE status.
+	// SSE status (must be appended BEFORE building statusLine).
 	if tg.sseActive {
 		statusParts = append(statusParts, greenStyle.Render("SSE live"))
 	}
+
+	statusLine := " " + dimStyle.Render("Status") + "  " + strings.Join(statusParts, dimStyle.Render(" | "))
+	lines = append(lines, statusLine)
 
 	// Help bar for full-screen overlay.
 	lines = append(lines, "")
@@ -612,6 +631,22 @@ func (tg *TrustGraphPane) viewSummary() string {
 }
 
 // ── SSE Subscription ──────────────────────────────────────────────────────
+
+// sseRefreshLoop drains the refresh signal channel and calls Refresh().
+// This ensures at most one concurrent refresh goroutine.
+func (tg *TrustGraphPane) sseRefreshLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-tg.sseRefreshC:
+			tg.mu.Lock()
+			tg.lastRefresh = time.Time{}
+			tg.mu.Unlock()
+			_ = tg.Refresh()
+		}
+	}
+}
 
 // subscribeSSE connects to the ob-mcp SSE stream and triggers Refresh()
 // on each memory event. Auto-reconnects on failure.
@@ -655,7 +690,8 @@ func (tg *TrustGraphPane) runSSEStream(ctx context.Context, sockPath, httpURL st
 		client = &http.Client{
 			Transport: &http.Transport{
 				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					return net.Dial("unix", sockPath)
+					var d net.Dialer
+					return d.DialContext(ctx, "unix", sockPath)
 				},
 			},
 		}
@@ -705,14 +741,11 @@ func (tg *TrustGraphPane) runSSEStream(ctx context.Context, sockPath, httpURL st
 			_ = json.RawMessage(strings.TrimPrefix(line, "data: "))
 		case line == "":
 			if eventType == "memory" {
-				// Trigger a refresh (async, respect debounce in Refresh()).
-				go func() {
-					// Reset the refresh timer so Refresh() will actually re-query.
-					tg.mu.Lock()
-					tg.lastRefresh = time.Time{}
-					tg.mu.Unlock()
-					_ = tg.Refresh()
-				}()
+				// Signal the refresh loop (non-blocking: coalesces bursts).
+				select {
+				case tg.sseRefreshC <- struct{}{}:
+				default:
+				}
 			}
 			eventType = ""
 		}

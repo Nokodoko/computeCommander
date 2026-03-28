@@ -252,11 +252,15 @@ func (gr *GraphRenderer) Render(triples []trustgraph.Triple, focusNodeID string,
 	}
 
 	// ── Render with lipgloss styling ──
+	// Order matters: style nodes/focus first (on raw ASCII where bracket
+	// patterns are clean), then style edge characters. The edge styler
+	// skips bracket-delimited content so it won't corrupt node labels,
+	// but ANSI escape codes from lipgloss contain '[' which would confuse
+	// the bracket-search in styleNodes/styleFocusNode.
 	focusStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#50fa7b"))
 	nodeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#5DADE2"))
-	literalStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#FFB347"))
-	edgeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
 	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
+	edgeStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
 
 	var lines []string
 	for y := 0; y < height; y++ {
@@ -264,16 +268,20 @@ func (gr *GraphRenderer) Render(triples []trustgraph.Triple, focusNodeID string,
 		// Trim trailing whitespace for cleaner output.
 		line = strings.TrimRight(line, " ")
 
-		// Apply styling based on content patterns.
+		// Apply node/focus styling first (on clean ASCII).
 		// Focus node: [*...*]
 		if strings.Contains(line, "[*") {
 			line = styleFocusNode(line, focusStyle)
 		}
 		// Regular nodes: [...] but not focus
 		if strings.Contains(line, "[") && !strings.Contains(line, "[*") {
-			line = styleNodes(line, nodeStyle, literalStyle, dimStyle)
+			line = styleNodes(line, nodeStyle, dimStyle)
 		}
-		// Edge characters.
+		// Style edge characters last. The edge styler is bracket-aware
+		// and skips content inside [...] on the raw grid. After ANSI
+		// injection by node styling, the simple bracket tracking won't
+		// match ANSI escape brackets (\033[) because those use the ESC
+		// prefix which is not '['.
 		line = styleEdgeChars(line, edgeStyle)
 
 		lines = append(lines, line)
@@ -302,7 +310,7 @@ func styleFocusNode(line string, style lipgloss.Style) string {
 }
 
 // styleNodes applies node styling to [...] patterns.
-func styleNodes(line string, entityStyle, literalStyle, dimStyle lipgloss.Style) string {
+func styleNodes(line string, entityStyle, dimStyle lipgloss.Style) string {
 	result := line
 	for strings.Contains(result, "[") {
 		start := strings.Index(result, "[")
@@ -329,15 +337,31 @@ func styleNodes(line string, entityStyle, literalStyle, dimStyle lipgloss.Style)
 }
 
 // styleEdgeChars applies dim styling to edge drawing characters (|, -, .).
+// It skips characters inside ANSI escape sequences to avoid corrupting
+// styled node labels. ANSI sequences start with ESC[ and end with a letter.
 func styleEdgeChars(line string, style lipgloss.Style) string {
-	// Simple character-level replacement for edge characters.
-	// Only style standalone edge chars (not inside styled nodes).
 	var result strings.Builder
-	for _, ch := range line {
+	runes := []rune(line)
+	for i := 0; i < len(runes); i++ {
+		ch := runes[i]
+		// Skip ANSI escape sequences: ESC [ ... <letter>
+		if ch == '\033' && i+1 < len(runes) && runes[i+1] == '[' {
+			result.WriteRune(ch)
+			i++
+			result.WriteRune(runes[i]) // '['
+			i++
+			// Consume until terminating letter (@ through ~).
+			for i < len(runes) {
+				result.WriteRune(runes[i])
+				if runes[i] >= '@' && runes[i] <= '~' {
+					break
+				}
+				i++
+			}
+			continue
+		}
 		switch ch {
-		case '|', '.':
-			result.WriteString(style.Render(string(ch)))
-		case '-':
+		case '|', '-', '.':
 			result.WriteString(style.Render(string(ch)))
 		default:
 			result.WriteRune(ch)
