@@ -9,6 +9,10 @@
   #header { position: fixed; top: 0; left: 0; right: 0; z-index: 10; padding: 12px 20px; background: rgba(10,10,15,0.9); border-bottom: 1px solid #1a1a2e; display: flex; align-items: center; gap: 16px; }
   #header h1 { font-size: 14px; color: #00ff88; font-weight: 600; }
   #header .stats { font-size: 11px; color: #666; }
+  #header .live-indicator { font-size: 10px; padding: 2px 8px; border-radius: 3px; font-weight: 600; }
+  #header .live-indicator.connected { background: #00ff8820; color: #00ff88; border: 1px solid #00ff8840; }
+  #header .live-indicator.disconnected { background: #ff555520; color: #ff5555; border: 1px solid #ff555540; }
+  #header .live-indicator.loading { background: #ffaa0020; color: #ffaa00; border: 1px solid #ffaa0040; }
   #controls { position: fixed; top: 50px; left: 20px; z-index: 10; display: flex; flex-direction: column; gap: 6px; }
   #controls button { background: #1a1a2e; border: 1px solid #2a2a4e; color: #888; padding: 6px 12px; font-size: 11px; font-family: inherit; cursor: pointer; border-radius: 3px; }
   #controls button:hover { border-color: #00ff88; color: #00ff88; }
@@ -25,43 +29,35 @@
 <body>
 <div id="header">
   <h1>TrustGraph</h1>
-  <span class="stats" id="stats"></span>
+  <span class="live-indicator loading" id="live-status">LOADING</span>
+  <span class="stats" id="stats">connecting...</span>
 </div>
 <div id="controls">
   <button id="btn-labels" class="active" onclick="toggleLabels()">Labels</button>
   <button id="btn-edge-labels" onclick="toggleEdgeLabels()">Edge Labels</button>
   <button id="btn-literals" class="active" onclick="toggleLiterals()">Literals</button>
   <button onclick="resetZoom()">Reset Zoom</button>
+  <button onclick="refreshData()">Refresh</button>
 </div>
 <div id="tooltip"></div>
 <svg></svg>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
-const graphData = {"nodes": [{"id": "http://purl.org/dc/elements/1.1/creator", "label": "creator", "type": "entity"}, {"id": "http://purl.org/dc/elements/1.1/date", "label": "date", "type": "entity"}, {"id": "http://purl.org/dc/elements/1.1/source", "label": "source", "type": "entity"}, {"id": "http://purl.org/dc/elements/1.1/title", "label": "title", "type": "entity"}, {"id": "http://www.w3.org/2004/02/skos/core#definition", "label": "definition", "type": "entity"}, {"id": "http://www.w3.org/ns/prov#Activity", "label": "Activity", "type": "entity"}, {"id": "http://www.w3.org/ns/prov#Agent", "label": "Agent", "type": "entity"}, {"id": "http://www.w3.org/ns/prov#Entity", "label": "Entity", "type": "entity"}, {"id": "http://www.w3.org/ns/prov#startedAtTime", "label": "startedAtTime", "type": "entity"}, {"id": "http://www.w3.org/ns/prov#used", "label": "used", "type": "entity"}, {"id": "http://www.w3.org/ns/prov#wasAssociatedWith", "label": "wasAssociatedWith", "type": "entity"}, {"id": "http://www.w3.org/ns/prov#wasDerivedFrom", "label": "wasDerivedFrom", "type": "entity"}, {"id": "http://www.w3.org/ns/prov#wasGeneratedBy", "label": "wasGeneratedBy", "type": "entity"}, {"id": "https://computecommander.dev/entity/BubbleTea", "label": "BubbleTea", "type": "entity"}, {"id": "https://schema.org/SoftwareApplication", "label": "SoftwareApplication", "type": "entity"}, {"id": "https://computecommander.dev/entity/Cassandra", "label": "Cassandra", "type": "entity"}, {"id": "https://computecommander.dev/entity/ClaudeCode", "label": "ClaudeCode", "type": "entity"}, {"id": "https://computecommander.dev/entity/GraphRAG", "label": "GraphRAG", "type": "entity"}, {"id": "https://schema.org/WebAPI", "label": "WebAPI", "type": "entity"}, {"id": "https://computecommander.dev/entity/KnowledgeGraph", "label": "KnowledgeGraph", "type": "entity"}, {"id": "https://schema.org/Dataset", "label": "Dataset", "type": "entity"}, {"id": "https://computecommander.dev/entity/OpenBrain", "label": "OpenBrain", "type": "entity"}, {"id": "https://computecommander.dev/entity/computeCommander", "label": "computeCommander", "type": "entity"}, {"id": "https://computecommander.dev/entity/TrustGraph", "label": "TrustGraph", "type": "entity"}, {"id": "https://computecommander.dev/entity/Pulsar", "label": "Pulsar", "type": "entity"}, {"id": "https://computecommander.dev/entity/Qdrant", "label": "Qdrant", "type": "entity"}, {"id": "https://computecommander.dev/entity/Zellij", "label": "Zellij", "type": "entity"}, {"id": "https://schema.org/DigitalDocument", "label": "DigitalDocument", "type": "entity"}, {"id": "https://schema.org/description", "label": "description", "type": "entity"}, {"id": "https://schema.org/keywords", "label": "keywords", "type": "entity"}, {"id": "https://schema.org/name", "label": "name", "type": "entity"}, {"id": "https://trustgraph.ai/doc/50f703f2-49d6-c381-d3f6-e13abb600c29", "label": "50f703f2-49d6-c381-d3f6-e13abb600c29", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Document", "label": "Document", "type": "entity"}, {"id": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "a1916f71-e5f0-5bce-bf06-c4287e472d22", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Answer", "label": "Answer", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Chunk", "label": "Chunk", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Grounding", "label": "Grounding", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Observation", "label": "Observation", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Page", "label": "Page", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Reflection", "label": "Reflection", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Subgraph", "label": "Subgraph", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Thought", "label": "Thought", "type": "entity"}, {"id": "https://trustgraph.ai/ns/charLength", "label": "charLength", "type": "entity"}, {"id": "https://trustgraph.ai/ns/charOffset", "label": "charOffset", "type": "entity"}, {"id": "https://trustgraph.ai/ns/chunkIndex", "label": "chunkIndex", "type": "entity"}, {"id": "https://trustgraph.ai/ns/chunkOverlap", "label": "chunkOverlap", "type": "entity"}, {"id": "https://trustgraph.ai/ns/chunkSize", "label": "chunkSize", "type": "entity"}, {"id": "https://trustgraph.ai/ns/componentVersion", "label": "componentVersion", "type": "entity"}, {"id": "https://trustgraph.ai/ns/concept", "label": "concept", "type": "entity"}, {"id": "https://trustgraph.ai/ns/contains", "label": "contains", "type": "entity"}, {"id": "https://trustgraph.ai/ns/embeddingModel", "label": "embeddingModel", "type": "entity"}, {"id": "https://trustgraph.ai/ns/entity", "label": "entity", "type": "entity"}, {"id": "https://trustgraph.ai/ns/llmModel", "label": "llmModel", "type": "entity"}, {"id": "https://trustgraph.ai/ns/mimeType", "label": "mimeType", "type": "entity"}, {"id": "https://trustgraph.ai/ns/ontology", "label": "ontology", "type": "entity"}, {"id": "https://trustgraph.ai/ns/pageCount", "label": "pageCount", "type": "entity"}, {"id": "https://trustgraph.ai/ns/pageNumber", "label": "pageNumber", "type": "entity"}, {"id": "https://trustgraph.ai/ns/sourceCharLength", "label": "sourceCharLength", "type": "entity"}, {"id": "https://trustgraph.ai/ns/sourceCharOffset", "label": "sourceCharOffset", "type": "entity"}, {"id": "https://trustgraph.ai/ns/sourceText", "label": "sourceText", "type": "entity"}, {"id": "urn:trustgraph:prov:exploration:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "label": "urn:trustgraph:prov:exploration:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Exploration", "label": "Exploration", "type": "entity"}, {"id": "urn:trustgraph:prov:grounding:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "label": "urn:trustgraph:prov:grounding:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "type": "entity"}, {"id": "http://trustgraph.ai/e/openbrain", "label": "openbrain", "type": "entity"}, {"id": "http://trustgraph.ai/e/pgvector", "label": "pgvector", "type": "entity"}, {"id": "http://trustgraph.ai/e/trustgraph", "label": "trustgraph", "type": "entity"}, {"id": "urn:trustgraph:prov:exploration:451cb965-4335-4f5b-809c-cb37fbd276d2", "label": "urn:trustgraph:prov:exploration:451cb965-4335-4f5b-809c-cb37fbd276d2", "type": "entity"}, {"id": "urn:trustgraph:prov:grounding:451cb965-4335-4f5b-809c-cb37fbd276d2", "label": "urn:trustgraph:prov:grounding:451cb965-4335-4f5b-809c-cb37fbd276d2", "type": "entity"}, {"id": "urn:trustgraph:prov:exploration:56b33903-f50e-4e9e-9bcc-874358c38d8b", "label": "urn:trustgraph:prov:exploration:56b33903-f50e-4e9e-9bcc-874358c38d8b", "type": "entity"}, {"id": "urn:trustgraph:prov:grounding:56b33903-f50e-4e9e-9bcc-874358c38d8b", "label": "urn:trustgraph:prov:grounding:56b33903-f50e-4e9e-9bcc-874358c38d8b", "type": "entity"}, {"id": "urn:trustgraph:prov:exploration:62d0a539-ae7f-4a76-baea-1352237f3414", "label": "urn:trustgraph:prov:exploration:62d0a539-ae7f-4a76-baea-1352237f3414", "type": "entity"}, {"id": "urn:trustgraph:prov:grounding:62d0a539-ae7f-4a76-baea-1352237f3414", "label": "urn:trustgraph:prov:grounding:62d0a539-ae7f-4a76-baea-1352237f3414", "type": "entity"}, {"id": "urn:trustgraph:prov:exploration:93780d44-0f17-4dfa-9609-823ff1213e9f", "label": "urn:trustgraph:prov:exploration:93780d44-0f17-4dfa-9609-823ff1213e9f", "type": "entity"}, {"id": "urn:trustgraph:prov:grounding:93780d44-0f17-4dfa-9609-823ff1213e9f", "label": "urn:trustgraph:prov:grounding:93780d44-0f17-4dfa-9609-823ff1213e9f", "type": "entity"}, {"id": "urn:trustgraph:prov:exploration:bfd67752-6046-4f17-96a7-b14c63dcb422", "label": "urn:trustgraph:prov:exploration:bfd67752-6046-4f17-96a7-b14c63dcb422", "type": "entity"}, {"id": "urn:trustgraph:prov:grounding:bfd67752-6046-4f17-96a7-b14c63dcb422", "label": "urn:trustgraph:prov:grounding:bfd67752-6046-4f17-96a7-b14c63dcb422", "type": "entity"}, {"id": "urn:trustgraph:prov:exploration:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "label": "urn:trustgraph:prov:exploration:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "type": "entity"}, {"id": "urn:trustgraph:prov:grounding:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "label": "urn:trustgraph:prov:grounding:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "type": "entity"}, {"id": "urn:trustgraph:prov:exploration:f695e533-989f-4ca0-a3cb-af21f6572c22", "label": "urn:trustgraph:prov:exploration:f695e533-989f-4ca0-a3cb-af21f6572c22", "type": "entity"}, {"id": "urn:trustgraph:prov:grounding:f695e533-989f-4ca0-a3cb-af21f6572c22", "label": "urn:trustgraph:prov:grounding:f695e533-989f-4ca0-a3cb-af21f6572c22", "type": "entity"}, {"id": "urn:trustgraph:prov:focus:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "label": "urn:trustgraph:prov:focus:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Focus", "label": "Focus", "type": "entity"}, {"id": "urn:trustgraph:prov:focus:451cb965-4335-4f5b-809c-cb37fbd276d2", "label": "urn:trustgraph:prov:focus:451cb965-4335-4f5b-809c-cb37fbd276d2", "type": "entity"}, {"id": "urn:trustgraph:prov:focus:56b33903-f50e-4e9e-9bcc-874358c38d8b", "label": "urn:trustgraph:prov:focus:56b33903-f50e-4e9e-9bcc-874358c38d8b", "type": "entity"}, {"id": "urn:trustgraph:prov:focus:93780d44-0f17-4dfa-9609-823ff1213e9f", "label": "urn:trustgraph:prov:focus:93780d44-0f17-4dfa-9609-823ff1213e9f", "type": "entity"}, {"id": "urn:trustgraph:prov:focus:bfd67752-6046-4f17-96a7-b14c63dcb422", "label": "urn:trustgraph:prov:focus:bfd67752-6046-4f17-96a7-b14c63dcb422", "type": "entity"}, {"id": "urn:trustgraph:prov:focus:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "label": "urn:trustgraph:prov:focus:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "type": "entity"}, {"id": "urn:trustgraph:prov:focus:f695e533-989f-4ca0-a3cb-af21f6572c22", "label": "urn:trustgraph:prov:focus:f695e533-989f-4ca0-a3cb-af21f6572c22", "type": "entity"}, {"id": "urn:trustgraph:question:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "label": "urn:trustgraph:question:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "type": "entity"}, {"id": "urn:trustgraph:question:451cb965-4335-4f5b-809c-cb37fbd276d2", "label": "urn:trustgraph:question:451cb965-4335-4f5b-809c-cb37fbd276d2", "type": "entity"}, {"id": "urn:trustgraph:question:56b33903-f50e-4e9e-9bcc-874358c38d8b", "label": "urn:trustgraph:question:56b33903-f50e-4e9e-9bcc-874358c38d8b", "type": "entity"}, {"id": "urn:trustgraph:question:62d0a539-ae7f-4a76-baea-1352237f3414", "label": "urn:trustgraph:question:62d0a539-ae7f-4a76-baea-1352237f3414", "type": "entity"}, {"id": "urn:trustgraph:question:93780d44-0f17-4dfa-9609-823ff1213e9f", "label": "urn:trustgraph:question:93780d44-0f17-4dfa-9609-823ff1213e9f", "type": "entity"}, {"id": "urn:trustgraph:question:bfd67752-6046-4f17-96a7-b14c63dcb422", "label": "urn:trustgraph:question:bfd67752-6046-4f17-96a7-b14c63dcb422", "type": "entity"}, {"id": "urn:trustgraph:question:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "label": "urn:trustgraph:question:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "type": "entity"}, {"id": "urn:trustgraph:question:f695e533-989f-4ca0-a3cb-af21f6572c22", "label": "urn:trustgraph:question:f695e533-989f-4ca0-a3cb-af21f6572c22", "type": "entity"}, {"id": "urn:trustgraph:prov:synthesis:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "label": "urn:trustgraph:prov:synthesis:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Synthesis", "label": "Synthesis", "type": "entity"}, {"id": "urn:trustgraph:synthesis:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "label": "urn:trustgraph:synthesis:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "type": "entity"}, {"id": "urn:trustgraph:prov:synthesis:451cb965-4335-4f5b-809c-cb37fbd276d2", "label": "urn:trustgraph:prov:synthesis:451cb965-4335-4f5b-809c-cb37fbd276d2", "type": "entity"}, {"id": "urn:trustgraph:synthesis:451cb965-4335-4f5b-809c-cb37fbd276d2", "label": "urn:trustgraph:synthesis:451cb965-4335-4f5b-809c-cb37fbd276d2", "type": "entity"}, {"id": "urn:trustgraph:prov:synthesis:56b33903-f50e-4e9e-9bcc-874358c38d8b", "label": "urn:trustgraph:prov:synthesis:56b33903-f50e-4e9e-9bcc-874358c38d8b", "type": "entity"}, {"id": "urn:trustgraph:synthesis:56b33903-f50e-4e9e-9bcc-874358c38d8b", "label": "urn:trustgraph:synthesis:56b33903-f50e-4e9e-9bcc-874358c38d8b", "type": "entity"}, {"id": "urn:trustgraph:prov:synthesis:93780d44-0f17-4dfa-9609-823ff1213e9f", "label": "urn:trustgraph:prov:synthesis:93780d44-0f17-4dfa-9609-823ff1213e9f", "type": "entity"}, {"id": "urn:trustgraph:synthesis:93780d44-0f17-4dfa-9609-823ff1213e9f", "label": "urn:trustgraph:synthesis:93780d44-0f17-4dfa-9609-823ff1213e9f", "type": "entity"}, {"id": "urn:trustgraph:prov:synthesis:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "label": "urn:trustgraph:prov:synthesis:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "type": "entity"}, {"id": "urn:trustgraph:synthesis:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "label": "urn:trustgraph:synthesis:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "type": "entity"}, {"id": "urn:trustgraph:prov:synthesis:f695e533-989f-4ca0-a3cb-af21f6572c22", "label": "urn:trustgraph:prov:synthesis:f695e533-989f-4ca0-a3cb-af21f6572c22", "type": "entity"}, {"id": "urn:trustgraph:synthesis:f695e533-989f-4ca0-a3cb-af21f6572c22", "label": "urn:trustgraph:synthesis:f695e533-989f-4ca0-a3cb-af21f6572c22", "type": "entity"}, {"id": "urn:trustgraph:question:093b2874-7f3f-4da3-b7fa-ba16367f7d8c", "label": "urn:trustgraph:question:093b2874-7f3f-4da3-b7fa-ba16367f7d8c", "type": "entity"}, {"id": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "GraphRagQuestion", "type": "entity"}, {"id": "https://trustgraph.ai/ns/Question", "label": "Question", "type": "entity"}, {"id": "urn:trustgraph:question:0fae6df5-0b4d-4d72-ac41-418b82bf966d", "label": "urn:trustgraph:question:0fae6df5-0b4d-4d72-ac41-418b82bf966d", "type": "entity"}, {"id": "urn:trustgraph:question:3ca646c4-4024-4de0-91fe-3cf1219dfe42", "label": "urn:trustgraph:question:3ca646c4-4024-4de0-91fe-3cf1219dfe42", "type": "entity"}, {"id": "urn:trustgraph:question:42159194-f650-4d62-9cd0-7ff38c08e375", "label": "urn:trustgraph:question:42159194-f650-4d62-9cd0-7ff38c08e375", "type": "entity"}, {"id": "urn:trustgraph:question:4d59302c-93c6-4afb-b3a0-e9fa9ba49809", "label": "urn:trustgraph:question:4d59302c-93c6-4afb-b3a0-e9fa9ba49809", "type": "entity"}, {"id": "urn:trustgraph:question:4f3a45e6-a527-4304-9ad1-712dd0048eac", "label": "urn:trustgraph:question:4f3a45e6-a527-4304-9ad1-712dd0048eac", "type": "entity"}, {"id": "urn:trustgraph:question:5a8575b5-c477-45f6-ab70-066214ff581c", "label": "urn:trustgraph:question:5a8575b5-c477-45f6-ab70-066214ff581c", "type": "entity"}, {"id": "urn:trustgraph:question:6a56854a-106a-47b3-ba96-2432e86bccf1", "label": "urn:trustgraph:question:6a56854a-106a-47b3-ba96-2432e86bccf1", "type": "entity"}, {"id": "urn:trustgraph:question:704c04bf-5158-46ef-90f2-2e67f3690336", "label": "urn:trustgraph:question:704c04bf-5158-46ef-90f2-2e67f3690336", "type": "entity"}, {"id": "urn:trustgraph:question:8636ccf4-9257-4050-8c69-982d22621867", "label": "urn:trustgraph:question:8636ccf4-9257-4050-8c69-982d22621867", "type": "entity"}, {"id": "urn:trustgraph:question:d96adbb2-9ffc-4aba-ab58-982f6bcbd866", "label": "urn:trustgraph:question:d96adbb2-9ffc-4aba-ab58-982f6bcbd866", "type": "entity"}, {"id": "urn:trustgraph:question:ebe18127-da0e-4af2-a186-3dc2ac3b94db", "label": "urn:trustgraph:question:ebe18127-da0e-4af2-a186-3dc2ac3b94db", "type": "entity"}, {"id": "urn:trustgraph:question:fe3362db-d3ca-45a4-b9d8-5b6cfb3083fd", "label": "urn:trustgraph:question:fe3362db-d3ca-45a4-b9d8-5b6cfb3083fd", "type": "entity"}, {"id": "https://trustgraph.ai/activity/00f88491-d3f9-462b-b806-117638ee71bd", "label": "00f88491-d3f9-462b-b806-117638ee71bd", "type": "entity"}, {"id": "https://trustgraph.ai/agent/chunker", "label": "chunker", "type": "entity"}, {"id": "https://trustgraph.ai/activity/6dabb264-4adf-444b-ae4c-a051b455f1a3", "label": "6dabb264-4adf-444b-ae4c-a051b455f1a3", "type": "entity"}, {"id": "https://trustgraph.ai/activity/76c171ed-1e14-4ad0-a35a-b81bf888e5cf", "label": "76c171ed-1e14-4ad0-a35a-b81bf888e5cf", "type": "entity"}, {"id": "https://trustgraph.ai/activity/7707ea74-0235-482c-a445-23d167029a9d", "label": "7707ea74-0235-482c-a445-23d167029a9d", "type": "entity"}, {"id": "https://trustgraph.ai/activity/9a0f58ed-efe4-4658-826e-cd923c9b9f97", "label": "9a0f58ed-efe4-4658-826e-cd923c9b9f97", "type": "entity"}, {"id": "https://trustgraph.ai/activity/c7a71147-aa4c-4f5b-9804-fe18d6a1f403", "label": "c7a71147-aa4c-4f5b-9804-fe18d6a1f403", "type": "entity"}, {"id": "https://trustgraph.ai/activity/f318ceae-667f-4475-96d6-57f875d82dd0", "label": "f318ceae-667f-4475-96d6-57f875d82dd0", "type": "entity"}, {"id": "urn:chunk:439938af-3e4a-4ab7-87d5-1d5db3e98714", "label": "urn:chunk:439938af-3e4a-4ab7-87d5-1d5db3e98714", "type": "entity"}, {"id": "urn:chunk:4ecd7de6-6dd9-47d3-b3c0-5038dd4edf18", "label": "urn:chunk:4ecd7de6-6dd9-47d3-b3c0-5038dd4edf18", "type": "entity"}, {"id": "urn:chunk:51082702-2cb1-4a0a-886d-78055c4d2ba7", "label": "urn:chunk:51082702-2cb1-4a0a-886d-78055c4d2ba7", "type": "entity"}, {"id": "urn:chunk:56192753-1cfd-4492-9bc2-63f485668ab5", "label": "urn:chunk:56192753-1cfd-4492-9bc2-63f485668ab5", "type": "entity"}, {"id": "urn:chunk:7979d26c-8764-439c-bf34-3951c5a7d758", "label": "urn:chunk:7979d26c-8764-439c-bf34-3951c5a7d758", "type": "entity"}, {"id": "urn:chunk:7b611180-f93f-44a7-8b5c-e200ac771e8a", "label": "urn:chunk:7b611180-f93f-44a7-8b5c-e200ac771e8a", "type": "entity"}, {"id": "urn:chunk:bb58a71b-71af-40b3-bdb8-a3821491d5b2", "label": "urn:chunk:bb58a71b-71af-40b3-bdb8-a3821491d5b2", "type": "entity"}], "links": [{"source": "https://computecommander.dev/entity/BubbleTea", "target": "https://schema.org/SoftwareApplication", "label": "type"}, {"source": "https://computecommander.dev/entity/Cassandra", "target": "https://schema.org/SoftwareApplication", "label": "type"}, {"source": "https://computecommander.dev/entity/ClaudeCode", "target": "https://schema.org/SoftwareApplication", "label": "type"}, {"source": "https://computecommander.dev/entity/GraphRAG", "target": "https://schema.org/WebAPI", "label": "type"}, {"source": "https://computecommander.dev/entity/KnowledgeGraph", "target": "https://schema.org/Dataset", "label": "type"}, {"source": "https://computecommander.dev/entity/OpenBrain", "target": "https://schema.org/SoftwareApplication", "label": "type"}, {"source": "https://computecommander.dev/entity/OpenBrain", "target": "https://computecommander.dev/entity/computeCommander", "label": "integrates_with"}, {"source": "https://computecommander.dev/entity/OpenBrain", "target": "https://computecommander.dev/entity/ClaudeCode", "label": "uses"}, {"source": "https://computecommander.dev/entity/OpenBrain", "target": "https://computecommander.dev/entity/TrustGraph", "label": "uses"}, {"source": "https://computecommander.dev/entity/Pulsar", "target": "https://schema.org/SoftwareApplication", "label": "type"}, {"source": "https://computecommander.dev/entity/Pulsar", "target": "https://computecommander.dev/entity/Cassandra", "label": "connects"}, {"source": "https://computecommander.dev/entity/Pulsar", "target": "https://computecommander.dev/entity/TrustGraph", "label": "connects"}, {"source": "https://computecommander.dev/entity/Qdrant", "target": "https://schema.org/SoftwareApplication", "label": "type"}, {"source": "https://computecommander.dev/entity/TrustGraph", "target": "https://schema.org/SoftwareApplication", "label": "type"}, {"source": "https://computecommander.dev/entity/TrustGraph", "target": "https://computecommander.dev/entity/GraphRAG", "label": "provides"}, {"source": "https://computecommander.dev/entity/TrustGraph", "target": "https://computecommander.dev/entity/KnowledgeGraph", "label": "provides"}, {"source": "https://computecommander.dev/entity/TrustGraph", "target": "https://computecommander.dev/entity/Cassandra", "label": "stores_in"}, {"source": "https://computecommander.dev/entity/TrustGraph", "target": "https://computecommander.dev/entity/Qdrant", "label": "stores_in"}, {"source": "https://computecommander.dev/entity/TrustGraph", "target": "https://computecommander.dev/entity/Pulsar", "label": "uses"}, {"source": "https://computecommander.dev/entity/Zellij", "target": "https://schema.org/SoftwareApplication", "label": "type"}, {"source": "https://computecommander.dev/entity/computeCommander", "target": "https://schema.org/SoftwareApplication", "label": "type"}, {"source": "https://computecommander.dev/entity/computeCommander", "target": "https://computecommander.dev/entity/ClaudeCode", "label": "integrates_with"}, {"source": "https://computecommander.dev/entity/computeCommander", "target": "https://computecommander.dev/entity/Pulsar", "label": "monitors"}, {"source": "https://computecommander.dev/entity/computeCommander", "target": "https://computecommander.dev/entity/TrustGraph", "label": "monitors"}, {"source": "https://computecommander.dev/entity/computeCommander", "target": "https://computecommander.dev/entity/BubbleTea", "label": "uses"}, {"source": "https://computecommander.dev/entity/computeCommander", "target": "https://computecommander.dev/entity/TrustGraph", "label": "uses"}, {"source": "https://computecommander.dev/entity/computeCommander", "target": "https://computecommander.dev/entity/Zellij", "label": "uses"}, {"source": "https://trustgraph.ai/doc/50f703f2-49d6-c381-d3f6-e13abb600c29", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "https://trustgraph.ai/doc/50f703f2-49d6-c381-d3f6-e13abb600c29", "target": "https://schema.org/DigitalDocument", "label": "type"}, {"source": "https://trustgraph.ai/doc/50f703f2-49d6-c381-d3f6-e13abb600c29", "target": "https://trustgraph.ai/ns/Document", "label": "type"}, {"source": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "target": "https://schema.org/DigitalDocument", "label": "type"}, {"source": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "target": "https://trustgraph.ai/ns/Document", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "https://trustgraph.ai/ns/Exploration", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "urn:trustgraph:prov:grounding:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:exploration:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "http://trustgraph.ai/e/openbrain", "label": "entity"}, {"source": "urn:trustgraph:prov:exploration:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "http://trustgraph.ai/e/pgvector", "label": "entity"}, {"source": "urn:trustgraph:prov:exploration:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "http://trustgraph.ai/e/trustgraph", "label": "entity"}, {"source": "urn:trustgraph:prov:exploration:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "https://trustgraph.ai/ns/Exploration", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "urn:trustgraph:prov:grounding:451cb965-4335-4f5b-809c-cb37fbd276d2", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:exploration:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "https://trustgraph.ai/ns/Exploration", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "urn:trustgraph:prov:grounding:56b33903-f50e-4e9e-9bcc-874358c38d8b", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:exploration:62d0a539-ae7f-4a76-baea-1352237f3414", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:62d0a539-ae7f-4a76-baea-1352237f3414", "target": "https://trustgraph.ai/ns/Exploration", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:62d0a539-ae7f-4a76-baea-1352237f3414", "target": "urn:trustgraph:prov:grounding:62d0a539-ae7f-4a76-baea-1352237f3414", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:exploration:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "https://trustgraph.ai/ns/Exploration", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "urn:trustgraph:prov:grounding:93780d44-0f17-4dfa-9609-823ff1213e9f", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:exploration:bfd67752-6046-4f17-96a7-b14c63dcb422", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:bfd67752-6046-4f17-96a7-b14c63dcb422", "target": "https://trustgraph.ai/ns/Exploration", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:bfd67752-6046-4f17-96a7-b14c63dcb422", "target": "urn:trustgraph:prov:grounding:bfd67752-6046-4f17-96a7-b14c63dcb422", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:exploration:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "https://trustgraph.ai/ns/Exploration", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "urn:trustgraph:prov:grounding:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:exploration:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "https://trustgraph.ai/ns/Exploration", "label": "type"}, {"source": "urn:trustgraph:prov:exploration:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "urn:trustgraph:prov:grounding:f695e533-989f-4ca0-a3cb-af21f6572c22", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:exploration:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "http://trustgraph.ai/e/openbrain", "label": "entity"}, {"source": "urn:trustgraph:prov:exploration:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "http://trustgraph.ai/e/pgvector", "label": "entity"}, {"source": "urn:trustgraph:prov:exploration:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "http://trustgraph.ai/e/trustgraph", "label": "entity"}, {"source": "urn:trustgraph:prov:focus:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:focus:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "https://trustgraph.ai/ns/Focus", "label": "type"}, {"source": "urn:trustgraph:prov:focus:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "urn:trustgraph:prov:exploration:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:focus:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:focus:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "https://trustgraph.ai/ns/Focus", "label": "type"}, {"source": "urn:trustgraph:prov:focus:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "urn:trustgraph:prov:exploration:451cb965-4335-4f5b-809c-cb37fbd276d2", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:focus:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:focus:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "https://trustgraph.ai/ns/Focus", "label": "type"}, {"source": "urn:trustgraph:prov:focus:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "urn:trustgraph:prov:exploration:56b33903-f50e-4e9e-9bcc-874358c38d8b", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:focus:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:focus:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "https://trustgraph.ai/ns/Focus", "label": "type"}, {"source": "urn:trustgraph:prov:focus:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "urn:trustgraph:prov:exploration:93780d44-0f17-4dfa-9609-823ff1213e9f", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:focus:bfd67752-6046-4f17-96a7-b14c63dcb422", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:focus:bfd67752-6046-4f17-96a7-b14c63dcb422", "target": "https://trustgraph.ai/ns/Focus", "label": "type"}, {"source": "urn:trustgraph:prov:focus:bfd67752-6046-4f17-96a7-b14c63dcb422", "target": "urn:trustgraph:prov:exploration:bfd67752-6046-4f17-96a7-b14c63dcb422", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:focus:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:focus:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "https://trustgraph.ai/ns/Focus", "label": "type"}, {"source": "urn:trustgraph:prov:focus:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "urn:trustgraph:prov:exploration:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:focus:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:focus:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "https://trustgraph.ai/ns/Focus", "label": "type"}, {"source": "urn:trustgraph:prov:focus:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "urn:trustgraph:prov:exploration:f695e533-989f-4ca0-a3cb-af21f6572c22", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:grounding:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "https://trustgraph.ai/ns/Grounding", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "urn:trustgraph:question:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "label": "wasGeneratedBy"}, {"source": "urn:trustgraph:prov:grounding:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "https://trustgraph.ai/ns/Grounding", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "urn:trustgraph:question:451cb965-4335-4f5b-809c-cb37fbd276d2", "label": "wasGeneratedBy"}, {"source": "urn:trustgraph:prov:grounding:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "https://trustgraph.ai/ns/Grounding", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "urn:trustgraph:question:56b33903-f50e-4e9e-9bcc-874358c38d8b", "label": "wasGeneratedBy"}, {"source": "urn:trustgraph:prov:grounding:62d0a539-ae7f-4a76-baea-1352237f3414", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:62d0a539-ae7f-4a76-baea-1352237f3414", "target": "https://trustgraph.ai/ns/Grounding", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:62d0a539-ae7f-4a76-baea-1352237f3414", "target": "urn:trustgraph:question:62d0a539-ae7f-4a76-baea-1352237f3414", "label": "wasGeneratedBy"}, {"source": "urn:trustgraph:prov:grounding:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "https://trustgraph.ai/ns/Grounding", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "urn:trustgraph:question:93780d44-0f17-4dfa-9609-823ff1213e9f", "label": "wasGeneratedBy"}, {"source": "urn:trustgraph:prov:grounding:bfd67752-6046-4f17-96a7-b14c63dcb422", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:bfd67752-6046-4f17-96a7-b14c63dcb422", "target": "https://trustgraph.ai/ns/Grounding", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:bfd67752-6046-4f17-96a7-b14c63dcb422", "target": "urn:trustgraph:question:bfd67752-6046-4f17-96a7-b14c63dcb422", "label": "wasGeneratedBy"}, {"source": "urn:trustgraph:prov:grounding:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "https://trustgraph.ai/ns/Grounding", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "urn:trustgraph:question:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "label": "wasGeneratedBy"}, {"source": "urn:trustgraph:prov:grounding:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "https://trustgraph.ai/ns/Grounding", "label": "type"}, {"source": "urn:trustgraph:prov:grounding:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "urn:trustgraph:question:f695e533-989f-4ca0-a3cb-af21f6572c22", "label": "wasGeneratedBy"}, {"source": "urn:trustgraph:prov:synthesis:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "https://trustgraph.ai/ns/Answer", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "https://trustgraph.ai/ns/Synthesis", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "urn:trustgraph:prov:focus:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:synthesis:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "urn:trustgraph:synthesis:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "label": "document"}, {"source": "urn:trustgraph:prov:synthesis:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "https://trustgraph.ai/ns/Answer", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "https://trustgraph.ai/ns/Synthesis", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "urn:trustgraph:prov:focus:451cb965-4335-4f5b-809c-cb37fbd276d2", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:synthesis:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "urn:trustgraph:synthesis:451cb965-4335-4f5b-809c-cb37fbd276d2", "label": "document"}, {"source": "urn:trustgraph:prov:synthesis:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "https://trustgraph.ai/ns/Answer", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "https://trustgraph.ai/ns/Synthesis", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "urn:trustgraph:prov:focus:56b33903-f50e-4e9e-9bcc-874358c38d8b", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:synthesis:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "urn:trustgraph:synthesis:56b33903-f50e-4e9e-9bcc-874358c38d8b", "label": "document"}, {"source": "urn:trustgraph:prov:synthesis:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "https://trustgraph.ai/ns/Answer", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "https://trustgraph.ai/ns/Synthesis", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "urn:trustgraph:prov:focus:93780d44-0f17-4dfa-9609-823ff1213e9f", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:synthesis:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "urn:trustgraph:synthesis:93780d44-0f17-4dfa-9609-823ff1213e9f", "label": "document"}, {"source": "urn:trustgraph:prov:synthesis:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "https://trustgraph.ai/ns/Answer", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "https://trustgraph.ai/ns/Synthesis", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "urn:trustgraph:prov:focus:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:synthesis:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "urn:trustgraph:synthesis:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "label": "document"}, {"source": "urn:trustgraph:prov:synthesis:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "https://trustgraph.ai/ns/Answer", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "https://trustgraph.ai/ns/Synthesis", "label": "type"}, {"source": "urn:trustgraph:prov:synthesis:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "urn:trustgraph:prov:focus:f695e533-989f-4ca0-a3cb-af21f6572c22", "label": "wasDerivedFrom"}, {"source": "urn:trustgraph:prov:synthesis:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "urn:trustgraph:synthesis:f695e533-989f-4ca0-a3cb-af21f6572c22", "label": "document"}, {"source": "urn:trustgraph:question:093b2874-7f3f-4da3-b7fa-ba16367f7d8c", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:093b2874-7f3f-4da3-b7fa-ba16367f7d8c", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:093b2874-7f3f-4da3-b7fa-ba16367f7d8c", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:0fae6df5-0b4d-4d72-ac41-418b82bf966d", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:0fae6df5-0b4d-4d72-ac41-418b82bf966d", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:0fae6df5-0b4d-4d72-ac41-418b82bf966d", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:2f924ac0-b7f8-410a-a9d9-9388a68a8dc2", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:3ca646c4-4024-4de0-91fe-3cf1219dfe42", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:3ca646c4-4024-4de0-91fe-3cf1219dfe42", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:3ca646c4-4024-4de0-91fe-3cf1219dfe42", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:42159194-f650-4d62-9cd0-7ff38c08e375", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:42159194-f650-4d62-9cd0-7ff38c08e375", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:42159194-f650-4d62-9cd0-7ff38c08e375", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:451cb965-4335-4f5b-809c-cb37fbd276d2", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:4d59302c-93c6-4afb-b3a0-e9fa9ba49809", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:4d59302c-93c6-4afb-b3a0-e9fa9ba49809", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:4d59302c-93c6-4afb-b3a0-e9fa9ba49809", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:4f3a45e6-a527-4304-9ad1-712dd0048eac", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:4f3a45e6-a527-4304-9ad1-712dd0048eac", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:4f3a45e6-a527-4304-9ad1-712dd0048eac", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:56b33903-f50e-4e9e-9bcc-874358c38d8b", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:5a8575b5-c477-45f6-ab70-066214ff581c", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:5a8575b5-c477-45f6-ab70-066214ff581c", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:5a8575b5-c477-45f6-ab70-066214ff581c", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:62d0a539-ae7f-4a76-baea-1352237f3414", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:62d0a539-ae7f-4a76-baea-1352237f3414", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:62d0a539-ae7f-4a76-baea-1352237f3414", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:6a56854a-106a-47b3-ba96-2432e86bccf1", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:6a56854a-106a-47b3-ba96-2432e86bccf1", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:6a56854a-106a-47b3-ba96-2432e86bccf1", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:704c04bf-5158-46ef-90f2-2e67f3690336", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:704c04bf-5158-46ef-90f2-2e67f3690336", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:704c04bf-5158-46ef-90f2-2e67f3690336", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:8636ccf4-9257-4050-8c69-982d22621867", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:8636ccf4-9257-4050-8c69-982d22621867", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:8636ccf4-9257-4050-8c69-982d22621867", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:93780d44-0f17-4dfa-9609-823ff1213e9f", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:bfd67752-6046-4f17-96a7-b14c63dcb422", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:bfd67752-6046-4f17-96a7-b14c63dcb422", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:bfd67752-6046-4f17-96a7-b14c63dcb422", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:d96adbb2-9ffc-4aba-ab58-982f6bcbd866", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:d96adbb2-9ffc-4aba-ab58-982f6bcbd866", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:d96adbb2-9ffc-4aba-ab58-982f6bcbd866", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:ebe18127-da0e-4af2-a186-3dc2ac3b94db", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:ebe18127-da0e-4af2-a186-3dc2ac3b94db", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:ebe18127-da0e-4af2-a186-3dc2ac3b94db", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:f66144e1-6d3b-492f-a6c8-c64671a2b3c4", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:f695e533-989f-4ca0-a3cb-af21f6572c22", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "urn:trustgraph:question:fe3362db-d3ca-45a4-b9d8-5b6cfb3083fd", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "urn:trustgraph:question:fe3362db-d3ca-45a4-b9d8-5b6cfb3083fd", "target": "https://trustgraph.ai/ns/GraphRagQuestion", "label": "type"}, {"source": "urn:trustgraph:question:fe3362db-d3ca-45a4-b9d8-5b6cfb3083fd", "target": "https://trustgraph.ai/ns/Question", "label": "type"}, {"source": "https://trustgraph.ai/activity/00f88491-d3f9-462b-b806-117638ee71bd", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "https://trustgraph.ai/activity/00f88491-d3f9-462b-b806-117638ee71bd", "target": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "used"}, {"source": "https://trustgraph.ai/activity/00f88491-d3f9-462b-b806-117638ee71bd", "target": "https://trustgraph.ai/agent/chunker", "label": "wasAssociatedWith"}, {"source": "https://trustgraph.ai/activity/6dabb264-4adf-444b-ae4c-a051b455f1a3", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "https://trustgraph.ai/activity/6dabb264-4adf-444b-ae4c-a051b455f1a3", "target": "https://trustgraph.ai/doc/50f703f2-49d6-c381-d3f6-e13abb600c29", "label": "used"}, {"source": "https://trustgraph.ai/activity/6dabb264-4adf-444b-ae4c-a051b455f1a3", "target": "https://trustgraph.ai/agent/chunker", "label": "wasAssociatedWith"}, {"source": "https://trustgraph.ai/activity/76c171ed-1e14-4ad0-a35a-b81bf888e5cf", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "https://trustgraph.ai/activity/76c171ed-1e14-4ad0-a35a-b81bf888e5cf", "target": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "used"}, {"source": "https://trustgraph.ai/activity/76c171ed-1e14-4ad0-a35a-b81bf888e5cf", "target": "https://trustgraph.ai/agent/chunker", "label": "wasAssociatedWith"}, {"source": "https://trustgraph.ai/activity/7707ea74-0235-482c-a445-23d167029a9d", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "https://trustgraph.ai/activity/7707ea74-0235-482c-a445-23d167029a9d", "target": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "used"}, {"source": "https://trustgraph.ai/activity/7707ea74-0235-482c-a445-23d167029a9d", "target": "https://trustgraph.ai/agent/chunker", "label": "wasAssociatedWith"}, {"source": "https://trustgraph.ai/activity/9a0f58ed-efe4-4658-826e-cd923c9b9f97", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "https://trustgraph.ai/activity/9a0f58ed-efe4-4658-826e-cd923c9b9f97", "target": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "used"}, {"source": "https://trustgraph.ai/activity/9a0f58ed-efe4-4658-826e-cd923c9b9f97", "target": "https://trustgraph.ai/agent/chunker", "label": "wasAssociatedWith"}, {"source": "https://trustgraph.ai/activity/c7a71147-aa4c-4f5b-9804-fe18d6a1f403", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "https://trustgraph.ai/activity/c7a71147-aa4c-4f5b-9804-fe18d6a1f403", "target": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "used"}, {"source": "https://trustgraph.ai/activity/c7a71147-aa4c-4f5b-9804-fe18d6a1f403", "target": "https://trustgraph.ai/agent/chunker", "label": "wasAssociatedWith"}, {"source": "https://trustgraph.ai/activity/f318ceae-667f-4475-96d6-57f875d82dd0", "target": "http://www.w3.org/ns/prov#Activity", "label": "type"}, {"source": "https://trustgraph.ai/activity/f318ceae-667f-4475-96d6-57f875d82dd0", "target": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "used"}, {"source": "https://trustgraph.ai/activity/f318ceae-667f-4475-96d6-57f875d82dd0", "target": "https://trustgraph.ai/agent/chunker", "label": "wasAssociatedWith"}, {"source": "https://trustgraph.ai/agent/chunker", "target": "http://www.w3.org/ns/prov#Agent", "label": "type"}, {"source": "urn:chunk:439938af-3e4a-4ab7-87d5-1d5db3e98714", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:chunk:439938af-3e4a-4ab7-87d5-1d5db3e98714", "target": "https://trustgraph.ai/ns/Chunk", "label": "type"}, {"source": "urn:chunk:439938af-3e4a-4ab7-87d5-1d5db3e98714", "target": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "wasDerivedFrom"}, {"source": "urn:chunk:439938af-3e4a-4ab7-87d5-1d5db3e98714", "target": "https://trustgraph.ai/activity/7707ea74-0235-482c-a445-23d167029a9d", "label": "wasGeneratedBy"}, {"source": "urn:chunk:4ecd7de6-6dd9-47d3-b3c0-5038dd4edf18", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:chunk:4ecd7de6-6dd9-47d3-b3c0-5038dd4edf18", "target": "https://trustgraph.ai/ns/Chunk", "label": "type"}, {"source": "urn:chunk:4ecd7de6-6dd9-47d3-b3c0-5038dd4edf18", "target": "https://trustgraph.ai/doc/50f703f2-49d6-c381-d3f6-e13abb600c29", "label": "wasDerivedFrom"}, {"source": "urn:chunk:4ecd7de6-6dd9-47d3-b3c0-5038dd4edf18", "target": "https://trustgraph.ai/activity/6dabb264-4adf-444b-ae4c-a051b455f1a3", "label": "wasGeneratedBy"}, {"source": "urn:chunk:51082702-2cb1-4a0a-886d-78055c4d2ba7", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:chunk:51082702-2cb1-4a0a-886d-78055c4d2ba7", "target": "https://trustgraph.ai/ns/Chunk", "label": "type"}, {"source": "urn:chunk:51082702-2cb1-4a0a-886d-78055c4d2ba7", "target": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "wasDerivedFrom"}, {"source": "urn:chunk:51082702-2cb1-4a0a-886d-78055c4d2ba7", "target": "https://trustgraph.ai/activity/c7a71147-aa4c-4f5b-9804-fe18d6a1f403", "label": "wasGeneratedBy"}, {"source": "urn:chunk:56192753-1cfd-4492-9bc2-63f485668ab5", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:chunk:56192753-1cfd-4492-9bc2-63f485668ab5", "target": "https://trustgraph.ai/ns/Chunk", "label": "type"}, {"source": "urn:chunk:56192753-1cfd-4492-9bc2-63f485668ab5", "target": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "wasDerivedFrom"}, {"source": "urn:chunk:56192753-1cfd-4492-9bc2-63f485668ab5", "target": "https://trustgraph.ai/activity/f318ceae-667f-4475-96d6-57f875d82dd0", "label": "wasGeneratedBy"}, {"source": "urn:chunk:7979d26c-8764-439c-bf34-3951c5a7d758", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:chunk:7979d26c-8764-439c-bf34-3951c5a7d758", "target": "https://trustgraph.ai/ns/Chunk", "label": "type"}, {"source": "urn:chunk:7979d26c-8764-439c-bf34-3951c5a7d758", "target": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "wasDerivedFrom"}, {"source": "urn:chunk:7979d26c-8764-439c-bf34-3951c5a7d758", "target": "https://trustgraph.ai/activity/9a0f58ed-efe4-4658-826e-cd923c9b9f97", "label": "wasGeneratedBy"}, {"source": "urn:chunk:7b611180-f93f-44a7-8b5c-e200ac771e8a", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:chunk:7b611180-f93f-44a7-8b5c-e200ac771e8a", "target": "https://trustgraph.ai/ns/Chunk", "label": "type"}, {"source": "urn:chunk:7b611180-f93f-44a7-8b5c-e200ac771e8a", "target": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "wasDerivedFrom"}, {"source": "urn:chunk:7b611180-f93f-44a7-8b5c-e200ac771e8a", "target": "https://trustgraph.ai/activity/76c171ed-1e14-4ad0-a35a-b81bf888e5cf", "label": "wasGeneratedBy"}, {"source": "urn:chunk:bb58a71b-71af-40b3-bdb8-a3821491d5b2", "target": "http://www.w3.org/ns/prov#Entity", "label": "type"}, {"source": "urn:chunk:bb58a71b-71af-40b3-bdb8-a3821491d5b2", "target": "https://trustgraph.ai/ns/Chunk", "label": "type"}, {"source": "urn:chunk:bb58a71b-71af-40b3-bdb8-a3821491d5b2", "target": "https://trustgraph.ai/doc/a1916f71-e5f0-5bce-bf06-c4287e472d22", "label": "wasDerivedFrom"}, {"source": "urn:chunk:bb58a71b-71af-40b3-bdb8-a3821491d5b2", "target": "https://trustgraph.ai/activity/00f88491-d3f9-462b-b806-117638ee71bd", "label": "wasGeneratedBy"}]};
+// ── Configuration ─────────────────────────────────────────────────────────
+// n0kos serves the page and proxies TG API calls to avoid CORS issues.
+// ob-mcp SSE provides realtime event notifications.
+const TG_PROXY_URL = '/api/tg/triples';
+const OB_MCP_SSE_URL = 'http://localhost:8200/events/memories';
+const TRIPLES_LIMIT = 500;
+const REFRESH_DEBOUNCE_MS = 2000;
 
-const colorMap = {
-  'SoftwareApplication': '#00ff88',
-  'WebAPI': '#ff6688',
-  'Dataset': '#ffaa00',
-  'literal': '#4488cc',
-};
-
-function nodeColor(d) {
-  if (d.type === 'literal') return '#4488cc';
-  // Check if it's a schema type node
-  if (d.id.startsWith('https://schema.org/')) return '#ff6688';
-  return '#00ff88';
-}
-
-function nodeRadius(d) {
-  if (d.type === 'literal') return 10;
-  if (d.id.startsWith('https://schema.org/')) return 14;
-  return 18;
-}
-
+// ── State ─────────────────────────────────────────────────────────────────
+let graphData = { nodes: [], links: [] };
 let showLabels = true;
 let showEdgeLabels = false;
 let showLiterals = true;
+let sseConnected = false;
+let refreshTimer = null;
 
 const width = window.innerWidth;
 const height = window.innerHeight;
@@ -74,22 +70,123 @@ const zoom = d3.zoom()
   .on('zoom', (e) => g.attr('transform', e.transform));
 svg.call(zoom);
 
-function getFilteredData() {
-  if (showLiterals) return graphData;
-  const filteredNodes = graphData.nodes.filter(n => n.type !== 'literal');
-  const nodeIds = new Set(filteredNodes.map(n => n.id));
-  const filteredLinks = graphData.links.filter(l => nodeIds.has(l.source.id || l.source) && nodeIds.has(l.target.id || l.target));
-  return { nodes: filteredNodes, links: filteredLinks };
-}
-
-// Build simulation
-const simulation = d3.forceSimulation(graphData.nodes)
-  .force('link', d3.forceLink(graphData.links).id(d => d.id).distance(200))
+// ── D3 Force Simulation ──────────────────────────────────────────────────
+const simulation = d3.forceSimulation([])
+  .force('link', d3.forceLink([]).id(d => d.id).distance(200))
   .force('charge', d3.forceManyBody().strength(-800))
   .force('center', d3.forceCenter(width / 2, height / 2))
-  .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 30));
+  .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 30))
+  .on('tick', ticked);
 
-// Edge colors
+// SVG groups for layered rendering.
+const linkGroup = g.append('g').attr('class', 'links');
+const edgeLabelGroupEl = g.append('g').attr('class', 'edge-labels');
+const nodeGroup = g.append('g').attr('class', 'nodes');
+const labelGroup = g.append('g').attr('class', 'labels');
+
+const tooltip = d3.select('#tooltip');
+
+// ── Data Fetching ─────────────────────────────────────────────────────────
+
+/** Fetch all triples from TrustGraph via the n0kos proxy. */
+async function fetchTriples() {
+  try {
+    const resp = await fetch(TG_PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ limit: TRIPLES_LIMIT }),
+    });
+
+    if (!resp.ok) {
+      console.error('[tg-viz] TG proxy error:', resp.status);
+      return null;
+    }
+
+    const data = await resp.json();
+    const triples = data.response || [];
+    return triplesToGraph(triples);
+  } catch (err) {
+    console.error('[tg-viz] Failed to fetch triples:', err);
+    return null;
+  }
+}
+
+/** Convert TG triples to D3 graph format { nodes, links }. */
+function triplesToGraph(triples) {
+  const nodeMap = new Map();
+  const links = [];
+
+  function ensureNode(term) {
+    const id = termId(term);
+    if (!nodeMap.has(id)) {
+      nodeMap.set(id, {
+        id: id,
+        label: termLabel(term),
+        type: term.t === 'l' ? 'literal' : 'entity',
+        fullIRI: term.i || term.v || term.d || '',
+      });
+    }
+    return id;
+  }
+
+  for (const triple of triples) {
+    const sourceId = ensureNode(triple.s);
+    const targetId = ensureNode(triple.o);
+    const predLabel = termLabel(triple.p);
+
+    links.push({
+      source: sourceId,
+      target: targetId,
+      label: predLabel,
+    });
+  }
+
+  return {
+    nodes: Array.from(nodeMap.values()),
+    links: links,
+  };
+}
+
+/** Extract a stable ID from a TG Term. */
+function termId(term) {
+  switch (term.t) {
+    case 'i': return term.i;
+    case 'l': return 'lit:' + (term.v || '').slice(0, 80);
+    case 'b': return 'blank:' + term.d;
+    default: return 'unknown:' + JSON.stringify(term);
+  }
+}
+
+/** Extract a human-readable label from a TG Term. */
+function termLabel(term) {
+  switch (term.t) {
+    case 'i': {
+      const iri = term.i || '';
+      const hashIdx = iri.lastIndexOf('#');
+      const slashIdx = iri.lastIndexOf('/');
+      const idx = Math.max(hashIdx, slashIdx);
+      return idx >= 0 ? iri.slice(idx + 1) : iri;
+    }
+    case 'l': return (term.v || '').slice(0, 40);
+    case 'b': return term.d || 'blank';
+    default: return '?';
+  }
+}
+
+// ── Graph Rendering ───────────────────────────────────────────────────────
+
+function nodeColor(d) {
+  if (d.type === 'literal') return '#4488cc';
+  if (d.fullIRI && d.fullIRI.startsWith('https://schema.org/')) return '#ff6688';
+  return '#00ff88';
+}
+
+function nodeRadius(d) {
+  if (d.type === 'literal') return 10;
+  if (d.fullIRI && d.fullIRI.startsWith('https://schema.org/')) return 14;
+  return 18;
+}
+
 function edgeColor(label) {
   const map = {
     'type': '#333',
@@ -105,98 +202,194 @@ function edgeColor(label) {
   return map[label] || '#2a2a4e';
 }
 
-// Draw
-const link = g.append('g')
-  .selectAll('line')
-  .data(graphData.links)
-  .join('line')
-  .attr('class', 'link')
-  .attr('stroke', d => edgeColor(d.label))
-  .attr('stroke-width', d => ['type','label','description'].includes(d.label) ? 0.5 : 1.5);
+/** Update the D3 visualization with new graph data using enter/update/exit. */
+function updateGraph(newData, animate) {
+  const prevNodeIds = new Set(graphData.nodes.map(n => n.id));
+  graphData = newData;
 
-const edgeLabelGroup = g.append('g')
-  .selectAll('text')
-  .data(graphData.links)
-  .join('text')
-  .attr('class', 'link-label')
-  .text(d => d.label)
-  .style('display', 'none');
+  // ── Links ──
+  const linkSel = linkGroup.selectAll('line')
+    .data(graphData.links, d => (d.source.id || d.source) + '-' + (d.target.id || d.target) + '-' + d.label);
 
-const node = g.append('g')
-  .selectAll('circle')
-  .data(graphData.nodes)
-  .join('circle')
-  .attr('r', d => nodeRadius(d))
-  .attr('fill', d => nodeColor(d))
-  .attr('stroke', d => d3.color(nodeColor(d)).darker(0.5))
-  .attr('stroke-width', 1)
-  .attr('opacity', d => d.type === 'literal' ? 0.6 : 0.9)
-  .call(d3.drag()
-    .on('start', dragstarted)
-    .on('drag', dragged)
-    .on('end', dragended));
+  linkSel.exit().transition().duration(300).attr('stroke-opacity', 0).remove();
 
-const label = g.append('g')
-  .selectAll('text')
-  .data(graphData.nodes)
-  .join('text')
-  .attr('class', 'node-label')
-  .attr('dy', d => nodeRadius(d) + 24)
-  .attr('fill', d => d.type === 'literal' ? '#4488cc88' : '#aaa')
-  .text(d => d.label.length > 25 ? d.label.slice(0, 22) + '...' : d.label);
+  const linkEnter = linkSel.enter().append('line')
+    .attr('class', 'link')
+    .attr('stroke', d => edgeColor(d.label))
+    .attr('stroke-width', d => ['type','label','description'].includes(d.label) ? 0.5 : 1.5)
+    .attr('stroke-opacity', 0);
 
-const tooltip = d3.select('#tooltip');
+  linkEnter.transition().duration(500).attr('stroke-opacity', 0.4);
 
-node.on('mouseover', (e, d) => {
-  tooltip.style('display', 'block')
-    .html(`<div class="type">${d.type}</div><div class="iri">${d.id}</div><div>${d.label}</div>`);
-}).on('mousemove', (e) => {
-  tooltip.style('left', (e.clientX + 15) + 'px').style('top', (e.clientY - 10) + 'px');
-}).on('mouseout', () => tooltip.style('display', 'none'));
+  const linkMerge = linkEnter.merge(linkSel);
 
-simulation.on('tick', () => {
-  link
-    .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
-    .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
-  edgeLabelGroup
-    .attr('x', d => (d.source.x + d.target.x) / 2)
-    .attr('y', d => (d.source.y + d.target.y) / 2);
-  node.attr('cx', d => d.x).attr('cy', d => d.y);
-  label.attr('x', d => d.x).attr('y', d => d.y);
-});
+  // ── Edge Labels ──
+  const edgeSel = edgeLabelGroupEl.selectAll('text')
+    .data(graphData.links, d => (d.source.id || d.source) + '-' + (d.target.id || d.target) + '-' + d.label);
 
+  edgeSel.exit().remove();
+
+  const edgeEnter = edgeSel.enter().append('text')
+    .attr('class', 'link-label')
+    .text(d => d.label)
+    .style('display', showEdgeLabels ? null : 'none');
+
+  const edgeMerge = edgeEnter.merge(edgeSel);
+
+  // ── Nodes ──
+  const nodeSel = nodeGroup.selectAll('circle')
+    .data(graphData.nodes, d => d.id);
+
+  nodeSel.exit().transition().duration(300).attr('r', 0).remove();
+
+  const nodeEnter = nodeSel.enter().append('circle')
+    .attr('r', 0)
+    .attr('fill', d => nodeColor(d))
+    .attr('stroke', d => d3.color(nodeColor(d)).darker(0.5))
+    .attr('stroke-width', d => (!prevNodeIds.has(d.id) && animate) ? 4 : 1)
+    .attr('opacity', d => d.type === 'literal' ? 0.6 : 0.9)
+    .call(d3.drag()
+      .on('start', dragstarted)
+      .on('drag', dragged)
+      .on('end', dragended));
+
+  nodeEnter.on('mouseover', (e, d) => {
+    tooltip.style('display', 'block')
+      .html('<div class="type">' + d.type + '</div><div class="iri">' + (d.fullIRI || d.id) + '</div><div>' + d.label + '</div>');
+  }).on('mousemove', (e) => {
+    tooltip.style('left', (e.clientX + 15) + 'px').style('top', (e.clientY - 10) + 'px');
+  }).on('mouseout', () => tooltip.style('display', 'none'));
+
+  nodeEnter.transition().duration(500).attr('r', d => nodeRadius(d));
+
+  if (animate) {
+    nodeEnter.transition().delay(500).duration(1000).attr('stroke-width', 1);
+  }
+
+  const nodeMerge = nodeEnter.merge(nodeSel);
+
+  // ── Node Labels ──
+  const labelSel = labelGroup.selectAll('text')
+    .data(graphData.nodes, d => d.id);
+
+  labelSel.exit().transition().duration(300).attr('fill-opacity', 0).remove();
+
+  const labelEnter = labelSel.enter().append('text')
+    .attr('class', 'node-label')
+    .attr('dy', d => nodeRadius(d) + 24)
+    .attr('fill', d => d.type === 'literal' ? '#4488cc88' : '#aaa')
+    .attr('fill-opacity', 0)
+    .text(d => d.label.length > 25 ? d.label.slice(0, 22) + '...' : d.label)
+    .style('display', showLabels ? null : 'none');
+
+  labelEnter.transition().duration(500).attr('fill-opacity', 1);
+
+  const labelMerge = labelEnter.merge(labelSel);
+
+  // ── Update simulation ──
+  simulation.nodes(graphData.nodes);
+  simulation.force('link').links(graphData.links);
+  simulation.alpha(animate ? 0.5 : 1).restart();
+
+  // Store merged selections for tick updates.
+  window._linkSel = linkMerge;
+  window._edgeSel = edgeMerge;
+  window._nodeSel = nodeMerge;
+  window._labelSel = labelMerge;
+
+  d3.select('#stats').text(graphData.nodes.length + ' nodes, ' + graphData.links.length + ' edges');
+}
+
+function ticked() {
+  if (window._linkSel) {
+    window._linkSel
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+  }
+  if (window._edgeSel) {
+    window._edgeSel
+      .attr('x', d => (d.source.x + d.target.x) / 2)
+      .attr('y', d => (d.source.y + d.target.y) / 2);
+  }
+  if (window._nodeSel) {
+    window._nodeSel.attr('cx', d => d.x).attr('cy', d => d.y);
+  }
+  if (window._labelSel) {
+    window._labelSel.attr('x', d => d.x).attr('y', d => d.y);
+  }
+}
+
+// ── SSE Subscription ──────────────────────────────────────────────────────
+
+function connectSSE() {
+  const statusEl = d3.select('#live-status');
+  statusEl.attr('class', 'live-indicator loading').text('CONNECTING');
+
+  const source = new EventSource(OB_MCP_SSE_URL);
+
+  source.addEventListener('memory', function(e) {
+    // Any memory event means new data was written to ob-mcp.
+    // Debounce: wait for burst to finish before re-querying TG.
+    scheduleRefresh();
+  });
+
+  source.addEventListener('open', function() {
+    sseConnected = true;
+    statusEl.attr('class', 'live-indicator connected').text('LIVE');
+    console.log('[tg-viz] SSE connected');
+  });
+
+  source.addEventListener('error', function(e) {
+    sseConnected = false;
+    statusEl.attr('class', 'live-indicator disconnected').text('DISCONNECTED');
+    console.warn('[tg-viz] SSE error, will auto-reconnect');
+  });
+}
+
+/** Debounced refresh: wait for SSE event burst to settle before re-querying. */
+function scheduleRefresh() {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(async function() {
+    refreshTimer = null;
+    await refreshData();
+  }, REFRESH_DEBOUNCE_MS);
+}
+
+/** Manually trigger a data refresh from TrustGraph. */
+async function refreshData() {
+  const newData = await fetchTriples();
+  if (newData) {
+    updateGraph(newData, true);
+  }
+}
+
+// ── Drag Handlers ─────────────────────────────────────────────────────────
 function dragstarted(e) { if (!e.active) simulation.alphaTarget(0.3).restart(); e.subject.fx = e.subject.x; e.subject.fy = e.subject.y; }
 function dragged(e) { e.subject.fx = e.x; e.subject.fy = e.y; }
 function dragended(e) { if (!e.active) simulation.alphaTarget(0); e.subject.fx = null; e.subject.fy = null; }
 
+// ── UI Toggle Functions ───────────────────────────────────────────────────
 function toggleLabels() {
   showLabels = !showLabels;
-  label.style('display', showLabels ? null : 'none');
+  labelGroup.selectAll('text').style('display', showLabels ? null : 'none');
   d3.select('#btn-labels').classed('active', showLabels);
 }
+
 function toggleEdgeLabels() {
   showEdgeLabels = !showEdgeLabels;
-  edgeLabelGroup.style('display', showEdgeLabels ? null : 'none');
+  edgeLabelGroupEl.selectAll('text').style('display', showEdgeLabels ? null : 'none');
   d3.select('#btn-edge-labels').classed('active', showEdgeLabels);
 }
+
 function toggleLiterals() {
   showLiterals = !showLiterals;
-  node.style('display', d => (!showLiterals && d.type === 'literal') ? 'none' : null);
-  label.style('display', d => {
+  nodeGroup.selectAll('circle').style('display', d => (!showLiterals && d.type === 'literal') ? 'none' : null);
+  labelGroup.selectAll('text').style('display', d => {
     if (!showLabels) return 'none';
     if (!showLiterals && d.type === 'literal') return 'none';
     return null;
   });
-  link.style('display', d => {
-    if (!showLiterals) {
-      const s = typeof d.source === 'object' ? d.source : graphData.nodes.find(n => n.id === d.source);
-      const t = typeof d.target === 'object' ? d.target : graphData.nodes.find(n => n.id === d.target);
-      if ((s && s.type === 'literal') || (t && t.type === 'literal')) return 'none';
-    }
-    return null;
-  });
-  edgeLabelGroup.style('display', d => {
-    if (!showEdgeLabels) return 'none';
+  linkGroup.selectAll('line').style('display', d => {
     if (!showLiterals) {
       const s = typeof d.source === 'object' ? d.source : graphData.nodes.find(n => n.id === d.source);
       const t = typeof d.target === 'object' ? d.target : graphData.nodes.find(n => n.id === d.target);
@@ -206,20 +399,34 @@ function toggleLiterals() {
   });
   d3.select('#btn-literals').classed('active', showLiterals);
 }
+
 function resetZoom() { svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity); }
 
-// Auto-zoom to fit after simulation settles
-simulation.on('end', () => {
+// ── Auto-Zoom on Simulation Settle ────────────────────────────────────────
+simulation.on('end', function() {
+  if (graphData.nodes.length === 0) return;
   const bounds = g.node().getBBox();
   const fullWidth = width, fullHeight = height;
   const bw = bounds.width, bh = bounds.height;
+  if (bw === 0 || bh === 0) return;
   const midX = bounds.x + bw / 2, midY = bounds.y + bh / 2;
   const scale = 0.85 / Math.max(bw / fullWidth, bh / fullHeight);
   const tx = fullWidth / 2 - scale * midX, ty = fullHeight / 2 - scale * midY;
   svg.transition().duration(750).call(zoom.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
 });
 
-d3.select('#stats').text(`${graphData.nodes.length} nodes, ${graphData.links.length} edges`);
+// ── Initialize ────────────────────────────────────────────────────────────
+(async function init() {
+  const data = await fetchTriples();
+  if (data) {
+    updateGraph(data, false);
+  } else {
+    d3.select('#stats').text('Failed to load graph data');
+    d3.select('#live-status').attr('class', 'live-indicator disconnected').text('TG OFFLINE');
+  }
+
+  connectSSE();
+})();
 </script>
 </body>
 </html>
