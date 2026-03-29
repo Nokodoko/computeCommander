@@ -40,21 +40,22 @@ type LayoutOpts struct {
 //
 // Each panel is a real zellij pane. The layout produces:
 //
-//	+----------+------------------------------------------+-----------+
-//	| prompt   |                                          |           |
-//	| (1 row)  |                                          |  Agents   |
-//	+----------+     Agent Session (borderless)           |  (65%)    |
-//	|          |          67% width                        |           |
-//	|  fp      |          (focused)                        +-----------+
-//	|  (10%)   |                                          |  Jira     |
-//	|          |                                          |  (35%)    |
-//	+----------+------------------------------------------+-----------+
-//	| Event Log | Evals |  OpenBrain  |    TG    |     LazyGit       |
-//	|  (16%)    | (16%) |   (20%)     |  (20%)   |      (28%)        |
-//	+----------+-------+-------------+----------+-------------------+
+//	+-------+------------------------------------------------+----------+
+//	|prompt |                                                |          |
+//	|(1 row)|                                                | Agents   |
+//	+-------+       Agent Session (borderless)               | (64%)    |
+//	|Cal25% |            80% width                           |          |
+//	+-------+            (focused)                           +----------+
+//	|       |                                                | Jira     |
+//	|  fp   |                                                | (36%)    |
+//	|(rest) |                                                |          |
+//	+-------+------------------------------------------------+----------+
+//	| EvLog |  Evals  |  OB1   |  TG Viz  |     LazyGit     |
+//	| (20%) |  (20%)  | (16%)  |  (20%)   |     (rest)      |
+//	+-------+---------+--------+----------+-----------------+
 //
-// Top row: 67% height — left column (prompt+fp, 10%) | agent (67%, borderless) | right column (Agents+Jira, 23%)
-// Bottom row: 33% height — Event Log | Evals | OpenBrain | TrustGraph | LazyGit
+// Top row: 75% height — left column (prompt+cal+fp, 7%) | agent (80%, borderless) | right column (Agents+Jira, 13%)
+// Bottom row: 25% height — Event Log | Evals | OpenBrain | TrustGraph | LazyGit
 //
 // The fp pane uses fp-wrapper.sh which watches the per-tab CWD file
 // so the file picker updates when the agent switches sessions.
@@ -67,6 +68,8 @@ type LayoutOpts struct {
 // Note: pane_frames cannot be set per-layout in zellij. The dashboard
 // command toggles frames on after loading the tab via `zellij action toggle-pane-frames`.
 func GenerateLayout(opts LayoutOpts) string {
+	home, _ := os.UserHomeDir()
+
 	cmdrBin := opts.CmdrBinary
 	if cmdrBin == "" {
 		cmdrBin = "cmdr"
@@ -84,21 +87,8 @@ func GenerateLayout(opts LayoutOpts) string {
 	fpWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "fp-wrapper.sh")
 	lazygitWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "lazygit-wrapper.sh")
 	if opts.SystemWide {
-		home, _ := os.UserHomeDir()
 		fpWrapperPath = filepath.Join(home, ".computecommander", "scripts", "fp-wrapper.sh")
 		lazygitWrapperPath = filepath.Join(home, ".computecommander", "scripts", "lazygit-wrapper.sh")
-	}
-
-	// Resolve the tg-viz binary (Go binary or bash fallback).
-	tgVizBinPath := findTGVizBinary()
-	tgVizIsBinary := tgVizBinPath != ""
-	if !tgVizIsBinary {
-		// Fall back to bash script.
-		tgVizBinPath = filepath.Join(projectDir, ".computecommander", "scripts", "tg-viz-wrapper.sh")
-		if opts.SystemWide {
-			home, _ := os.UserHomeDir()
-			tgVizBinPath = filepath.Join(home, ".computecommander", "scripts", "tg-viz-wrapper.sh")
-		}
 	}
 
 	// Build optional --project flag for pane commands.
@@ -115,7 +105,6 @@ func GenerateLayout(opts LayoutOpts) string {
 	// Resolve the focus-watcher path (Rust binary or bash script fallback).
 	scriptDir := projectDir
 	if opts.SystemWide {
-		home, _ := os.UserHomeDir()
 		scriptDir = home
 	}
 	focusWatcherPath, _ := WriteFocusWatcher(scriptDir, projectDir, opts.TabHash)
@@ -151,21 +140,12 @@ func GenerateLayout(opts LayoutOpts) string {
         }`, focusWatcherPath, opts.TabHash)
 	}
 
-	// Build the TG Viz pane KDL. Use the Go binary directly if available,
-	// otherwise fall back to running the bash script via bash.
-	// Note: use %% here (not %%%%) because the result is injected via %s
-	// into the outer Sprintf, which does NOT re-process substituted text.
-	var tgVizPane string
-	if tgVizIsBinary {
-		tgVizPane = fmt.Sprintf(`                pane name="TG Viz" size="38%%" {
-                    command "%s"
-                }`, tgVizBinPath)
-	} else {
-		tgVizPane = fmt.Sprintf(`                pane name="TG Viz" size="38%%" {
-                    command "bash"
-                    args "%s"
-                }`, tgVizBinPath)
-	}
+	// Build the TG Viz pane KDL. Uses cmdr tg --pane for ASCII bar/sparkline
+	// charts with SSE-driven real-time updates. The env sourcing loads API keys.
+	tgVizPane := fmt.Sprintf(`                pane name="TG Viz" size="15%%" {
+                    command "zsh"
+                    args "-c" "source ~/.zsh/exports/keys.zsh 2>/dev/null; exec %s tg --pane"
+                }`, cmdrBin)
 
 	return fmt.Sprintf(`layout {
     cwd "%s"
@@ -178,11 +158,15 @@ func GenerateLayout(opts LayoutOpts) string {
     tab name="%s" {
 %s
         pane split_direction="horizontal" {
-            pane split_direction="vertical" size="67%%" {
-                pane split_direction="horizontal" size="10%%" {
+            pane split_direction="vertical" size="75%%" {
+                pane split_direction="horizontal" size="14%%" {
                     pane name="Prompt" size=1 borderless=true {
                         command "%s"
                         args "prompt" "--pane"
+                    }
+                    pane name="Cal" size="25%%" {
+                        command "calcurse"
+                        args "-C" "%s/.calcurse/conf" "-D" "%s/.calcurse"
                     }
                     pane {
                         command "bash"
@@ -190,7 +174,7 @@ func GenerateLayout(opts LayoutOpts) string {
                     }
                 }
 %s
-                pane split_direction="horizontal" size="18%%" {
+                pane split_direction="horizontal" size="19%%" {
                     pane name="Agents" size="64%%" {
                         command "%s"
                         args "status" "--pane"%s
@@ -201,21 +185,21 @@ func GenerateLayout(opts LayoutOpts) string {
                     }
                 }
             }
-            pane split_direction="vertical" size="33%%" {
-                pane name="Event Log" size="12%%" {
+            pane split_direction="vertical" size="25%%" {
+                pane name="Event Log" size="20%%" {
                     command "%s"
                     args "feed" "--pane"%s
                 }
-                pane name="Evals" size="12%%" {
+                pane name="Evals" size="15%%" {
                     command "%s"
                     args "evals" "--pane"%s
                 }
-                pane name="OB1" size="14%%" {
+                pane name="OB1" size="28%%" {
                     command "%s"
                     args "openbrain" "--pane"%s
                 }
 %s
-                pane size="24%%" {
+                pane {
                     command "bash"
                     args "%s" "%s" "%s"
                 }
@@ -223,45 +207,12 @@ func GenerateLayout(opts LayoutOpts) string {
         }
     }
 }
-`, projectDir, tabName, focusWatcherPane, cmdrBin, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, tgVizPane, lazygitWrapperPath, projectDir, opts.TabHash)
+`, projectDir, tabName, focusWatcherPane, cmdrBin, home, home, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, tgVizPane, lazygitWrapperPath, projectDir, opts.TabHash)
 }
 
-
-// findTGVizBinary locates the compiled tg-viz Go binary. It checks:
-//  1. Next to the running cmdr binary (make install copies it there)
-//  2. ~/.local/bin/tg-viz (standard user install location)
-//  3. The PATH via exec.LookPath
-//
-// Returns the absolute path if found, or empty string if not found.
-func findTGVizBinary() string {
-	const binName = "tg-viz"
-
-	var candidates []string
-
-	// Prefer the installed location first (~/.local/bin).
-	if home, err := os.UserHomeDir(); err == nil {
-		candidates = append(candidates, filepath.Join(home, ".local", "bin", binName))
-	}
-
-	// Fall back to next to the running binary (dev builds).
-	if exe, err := os.Executable(); err == nil {
-		exeDir := filepath.Dir(exe)
-		candidates = append(candidates, filepath.Join(exeDir, binName))
-	}
-
-	for _, candidate := range candidates {
-		if info, err := os.Stat(candidate); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
-			return candidate
-		}
-	}
-
-	// Try PATH as a last resort.
-	if p, err := exec.LookPath(binName); err == nil {
-		return p
-	}
-
-	return ""
-}
+// findTGVizBinary is no longer needed. The TG Viz pane now uses
+// cmdr tg --pane for ASCII bar/sparkline charts with SSE-driven updates,
+// replacing the Chrome headless screenshot pipeline.
 
 // WriteFocusWatcher locates the compiled Rust focus-watcher binary and returns
 // its path. The binary is expected at plugins/focus-watcher/target/release/focus-watcher

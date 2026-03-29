@@ -129,10 +129,8 @@ func TestGenerateLayout_ContainsTGPane(t *testing.T) {
 	if !strings.Contains(layout, `name="TG Viz"`) {
 		t.Errorf("layout must contain a TG Viz (TrustGraph visualization) pane")
 	}
-	// Accept either the Go tg-viz binary or the bash fallback script.
-	hasBinary := strings.Contains(layout, `command "`) && strings.Contains(layout, "tg-viz")
-	hasBashFallback := strings.Contains(layout, `tg-viz-wrapper.sh`)
-	if !hasBinary && !hasBashFallback {
-		t.Errorf("layout TG Viz pane must run either the tg-viz binary or tg-viz-wrapper.sh fallback")
+	// TG Viz pane should use cmdr tg --pane for ASCII charts with SSE updates.
+	if !strings.Contains(layout, `tg --pane`) {
+		t.Errorf("layout TG Viz pane must use 'cmdr tg --pane' command")
 	}
 }
