@@ -195,6 +195,12 @@ func (d *Dashboard) Run(ctx context.Context) error {
 
 	p := tea.NewProgram(d, tea.WithAltScreen(), tea.WithMouseCellMotion())
 
+	// Give the TrustGraph pane a reference to the bubbletea program so
+	// SSE-triggered refreshes can send signalRefreshMsg for re-render.
+	if d.trustGraph != nil {
+		d.trustGraph.SetProgram(p)
+	}
+
 	// Watch the SQLite DB file with fsnotify for instant refresh.
 	// When cmdr-bridge.sh writes agent state to the DB, fsnotify fires
 	// and we forward a signalRefreshMsg to bubbletea for immediate re-render.

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/noko/computecommander/internal/config"
 	"github.com/noko/computecommander/internal/trustgraph"
@@ -108,6 +109,14 @@ type TrustGraphPane struct {
 	sseCancel   context.CancelFunc
 	sseActive   bool
 	sseRefreshC chan struct{} // single-slot channel to debounce SSE-triggered refreshes
+
+	// Chart renderers for the Summary view.
+	barChart   *BarChart
+	sparkline  *Sparkline
+	triplesBar *ContextBar
+
+	// bubbletea program reference for SSE-triggered re-renders.
+	program *tea.Program
 }
 
 // NewTrustGraphPane constructs a TrustGraphPane with the given config.
@@ -115,10 +124,13 @@ type TrustGraphPane struct {
 // Starts SSE subscription if ob-mcp URL is configured.
 func NewTrustGraphPane(theme *Theme, cfg config.TrustGraphConfig) *TrustGraphPane {
 	p := &TrustGraphPane{
-		theme:    theme,
-		cfg:      cfg,
-		renderer: NewGraphRenderer(theme),
-		viewMode: TGViewSummary,
+		theme:     theme,
+		cfg:       cfg,
+		renderer:  NewGraphRenderer(theme),
+		viewMode:  TGViewSummary,
+		barChart:   NewBarChart("Entity Degrees", 15),
+		sparkline:  NewSparkline("Triples", 60),
+		triplesBar: NewContextBar("Triples", 2000),
 	}
 
 	if cfg.Enabled && cfg.GatewayURL != "" {
@@ -151,6 +163,12 @@ func (tg *TrustGraphPane) Close() {
 	if tg.client != nil {
 		tg.client.Close()
 	}
+}
+
+// SetProgram stores a reference to the bubbletea program so that SSE-triggered
+// refreshes can send a message to trigger an immediate re-render.
+func (tg *TrustGraphPane) SetProgram(p *tea.Program) {
+	tg.program = p
 }
 
 // CycleViewMode advances to the next view mode: Summary -> Graph -> Triples -> Summary.
@@ -504,92 +522,35 @@ func (tg *TrustGraphPane) viewSummary() string {
 		return strings.Join(lines, "\n")
 	}
 
-	// ── Top Entities ────────────────────────────────────────────────────
+	// ── Bar Chart: Entity Degrees ────────────────────────────────────────
 	entityHeaderStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFFFF"))
-	entityStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#5DADE2"))
-	cursorStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#50fa7b"))
-	countStyle := dimStyle
 
-	lines = append(lines, entityHeaderStyle.Render(" Top Entities (by degree):"))
+	lines = append(lines, entityHeaderStyle.Render(" Entity Degrees:"))
 	lines = append(lines, "")
 
 	if len(tg.topEntities) == 0 {
 		lines = append(lines, dimStyle.Render("  No entities found."))
 	} else {
-		// Calculate visible range.
-		visibleRows := tg.height - 10
-		if visibleRows < 5 {
-			visibleRows = 5
-		}
-		endIdx := tg.scrollOffset + visibleRows
-		if endIdx > len(tg.topEntities) {
-			endIdx = len(tg.topEntities)
-		}
-		startIdx := tg.scrollOffset
-		if startIdx < 0 {
-			startIdx = 0
+		// Convert topEntities to BarEntry slice for the chart renderer.
+		entries := make([]BarEntry, len(tg.topEntities))
+		for i, e := range tg.topEntities {
+			entries[i] = BarEntry{Label: e.ID, Value: e.Degree}
 		}
 
-		// Find max entity name length for alignment.
-		maxNameLen := 0
-		for _, e := range tg.topEntities[startIdx:endIdx] {
-			if len(e.ID) > maxNameLen {
-				maxNameLen = len(e.ID)
-			}
-		}
-		if maxNameLen > 24 {
-			maxNameLen = 24
+		// Calculate available height for the bar chart.
+		chartHeight := tg.height - 12
+		if chartHeight < 5 {
+			chartHeight = 5
 		}
 
-		for i := startIdx; i < endIdx; i++ {
-			e := tg.topEntities[i]
-			name := e.ID
-			if len(name) > 24 {
-				name = name[:22] + ".."
-			}
-
-			prefix := "  "
-			nameStyled := entityStyle.Render(fmt.Sprintf("%-*s", maxNameLen, name))
-			if i == tg.cursor {
-				prefix = "> "
-				nameStyled = cursorStyle.Render(fmt.Sprintf("%-*s", maxNameLen, name))
-			}
-
-			line := prefix + nameStyled + "  " + countStyle.Render(fmt.Sprintf("%3d edges", e.Degree))
-			lines = append(lines, line)
-		}
-
-		if endIdx < len(tg.topEntities) {
-			lines = append(lines, dimStyle.Render(fmt.Sprintf("  ... +%d more entities", len(tg.topEntities)-endIdx)))
-		}
+		chartStr := tg.barChart.Render(entries, w, chartHeight)
+		lines = append(lines, chartStr)
 	}
 
-	// ── Recent Triples ──────────────────────────────────────────────────
+	// ── Triples Context Bar ──────────────────────────────────────────────
 	lines = append(lines, "")
-	lines = append(lines, entityHeaderStyle.Render(" Recent triples:"))
-	lines = append(lines, "")
-
-	recentCount := 5
-	if len(tg.triples) < recentCount {
-		recentCount = len(tg.triples)
-	}
-
-	predStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#888888"))
-	for i := 0; i < recentCount; i++ {
-		t := tg.triples[i]
-		subj := t.Subject.ShortLabel(16)
-		pred := t.Predicate.ShortLabel(16)
-		obj := t.Object.ShortLabel(16)
-
-		line := "  " + entityStyle.Render(subj) + " " +
-			predStyle.Render("--"+pred+"-->") + " " +
-			entityStyle.Render(obj)
-		lines = append(lines, line)
-	}
-
-	if len(tg.triples) == 0 {
-		lines = append(lines, dimStyle.Render("  No triples found."))
-	}
+	tg.triplesBar.Max = max(tg.edgeCount*2, 2000) // scale capacity dynamically
+	lines = append(lines, tg.triplesBar.Render(tg.edgeCount, w))
 
 	// ── Status Bar ──────────────────────────────────────────────────────
 	lines = append(lines, "")
@@ -633,7 +594,8 @@ func (tg *TrustGraphPane) viewSummary() string {
 // ── SSE Subscription ──────────────────────────────────────────────────────
 
 // sseRefreshLoop drains the refresh signal channel and calls Refresh().
-// This ensures at most one concurrent refresh goroutine.
+// This ensures at most one concurrent refresh goroutine. After refresh,
+// sends a signalRefreshMsg to the bubbletea program to trigger re-render.
 func (tg *TrustGraphPane) sseRefreshLoop(ctx context.Context) {
 	for {
 		select {
@@ -644,6 +606,18 @@ func (tg *TrustGraphPane) sseRefreshLoop(ctx context.Context) {
 			tg.lastRefresh = time.Time{}
 			tg.mu.Unlock()
 			_ = tg.Refresh()
+
+			// Update sparkline with current edge count.
+			tg.mu.Lock()
+			if tg.sparkline != nil {
+				tg.sparkline.Push(tg.edgeCount)
+			}
+			tg.mu.Unlock()
+
+			// Signal bubbletea to re-render.
+			if tg.program != nil {
+				tg.program.Send(signalRefreshMsg{})
+			}
 		}
 	}
 }
