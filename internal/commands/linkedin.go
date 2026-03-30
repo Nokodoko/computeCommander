@@ -28,6 +28,9 @@ func LinkedInCmd(app *App) *cobra.Command {
 	cmd.AddCommand(linkedinHistoryCmd(app))
 	cmd.AddCommand(linkedinTopicsCmd(app))
 	cmd.AddCommand(linkedinStatsCmd(app))
+	cmd.AddCommand(linkedinPublishCmd(app))
+	cmd.AddCommand(linkedinSetupCmd())
+	cmd.AddCommand(linkedinStatusCmd())
 
 	return cmd
 }
@@ -38,12 +41,22 @@ func newGenerator(app *App) *linkedin.Generator {
 }
 
 func linkedinGenerateCmd(app *App) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "generate",
 		Short: "Generate a new LinkedIn post",
 		Long:  "Scan projects, select a topic, generate content via Claude, and prepare for review.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			gen := newGenerator(app)
+
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			if dryRun {
+				content, err := gen.GenerateDryRun()
+				if err != nil {
+					return fmt.Errorf("generate dry-run: %w", err)
+				}
+				fmt.Println(content)
+				return nil
+			}
 
 			result, err := gen.Generate()
 			if err != nil {
@@ -79,6 +92,8 @@ func linkedinGenerateCmd(app *App) *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().Bool("dry-run", false, "Generate post without storing to DB or sending email (for evaluation)")
+	return cmd
 }
 
 func linkedinPreviewCmd(app *App) *cobra.Command {

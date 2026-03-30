@@ -122,6 +122,31 @@ func (g *Generator) Generate() (*GenerateResult, error) {
 	return result, nil
 }
 
+// GenerateDryRun runs the generation pipeline but skips DB storage, email, and notifications.
+// It returns the raw generated post content for evaluation purposes.
+func (g *Generator) GenerateDryRun() (string, error) {
+	// Seed and select topic.
+	if err := g.topicStore.SeedDefaults(); err != nil {
+		return "", fmt.Errorf("seed topics: %w", err)
+	}
+	topic, err := g.topicStore.NextTopic()
+	if err != nil {
+		return "", fmt.Errorf("select topic: %w", err)
+	}
+
+	// Gather context (errors are non-fatal).
+	insights, _ := g.scanner.ScanAll()
+	trends, _ := g.trendAnalyzer.FetchTrends(5)
+
+	// Build and run the prompt.
+	prompt := g.contentBuilder.BuildPrompt(topic, insights, trends)
+	content, err := g.generateWithClaude(prompt.FullPrompt)
+	if err != nil {
+		return "", fmt.Errorf("generate content: %w", err)
+	}
+	return content, nil
+}
+
 // generateWithClaude invokes claude -p with the given prompt.
 func (g *Generator) generateWithClaude(prompt string) (string, error) {
 	cmd := exec.Command("claude", "-p", prompt)
