@@ -118,6 +118,34 @@ func TestWriteLayout_NoKeybinds(t *testing.T) {
 	}
 }
 
+func TestGenerateLayout_NoSwapLayouts(t *testing.T) {
+	opts := LayoutOpts{
+		CmdrBinary:   "cmdr",
+		ProjectDir:   "/tmp/proj",
+		AgentCommand: "claude",
+		SystemWide:   false,
+	}
+	layout := GenerateLayout(opts)
+
+	// Dashboard must NOT contain swap layouts. With auto_layout=false in zellij
+	// config, new panes just split the focused pane without rearranging.
+	// Any swap layouts here would be inherited by the tab and could override
+	// this behavior if auto_layout is re-enabled.
+	if strings.Contains(layout, "swap_tiled_layout") {
+		t.Errorf("layout must not contain swap_tiled_layout")
+	}
+	if strings.Contains(layout, "swap_floating_layout") {
+		t.Errorf("layout must not contain swap_floating_layout")
+	}
+	if strings.Contains(layout, `tab_template name="ui"`) {
+		t.Errorf("layout must not contain unused ui tab_template")
+	}
+	// Must NOT contain keybinds.
+	if strings.Contains(layout, "keybinds") {
+		t.Errorf("layout must not contain keybinds block")
+	}
+}
+
 func TestGenerateLayout_ContainsTGPane(t *testing.T) {
 	opts := LayoutOpts{
 		CmdrBinary:   "/usr/local/bin/cmdr",
