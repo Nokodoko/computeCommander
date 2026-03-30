@@ -1,9 +1,13 @@
 [Unit]
-Description=LinkedIn Post Generator (2x/week)
+Description=LinkedIn Post Generator (2x/week: Tue and Thu at 08:00)
 
 [Timer]
-OnCalendar=Tue,Thu 08:00
+# Tuesday and Thursday at 08:00 local time
+OnCalendar=Tue,Thu 08:00:00
+# Catch up if a run was missed (e.g. machine was off)
 Persistent=true
+# Small jitter to avoid exact-second load spikes
+RandomizedDelaySec=60
 
 [Install]
 WantedBy=timers.target
