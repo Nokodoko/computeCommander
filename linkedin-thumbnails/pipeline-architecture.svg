@@ -1,0 +1,209 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="400" viewBox="0 0 1200 400">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0d0d1a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1a1a2e;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="pipeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#0A66C2;stop-opacity:0.3" />
+      <stop offset="50%" style="stop-color:#00d4ff;stop-opacity:0.6" />
+      <stop offset="100%" style="stop-color:#0A66C2;stop-opacity:0.3" />
+    </linearGradient>
+    <linearGradient id="subpipeGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#00d4ff;stop-opacity:0.05" />
+      <stop offset="50%" style="stop-color:#00d4ff;stop-opacity:0.12" />
+      <stop offset="100%" style="stop-color:#00d4ff;stop-opacity:0.05" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="glowStrong">
+      <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#00d4ff" opacity="0.9"/>
+    </marker>
+    <marker id="arrowBlueSmall" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#00d4ff" opacity="0.8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="400" fill="url(#bgGrad)"/>
+
+  <!-- Subtle grid -->
+  <g opacity="0.04" stroke="#0A66C2" stroke-width="1">
+    <line x1="0" y1="50" x2="1200" y2="50"/>
+    <line x1="0" y1="100" x2="1200" y2="100"/>
+    <line x1="0" y1="150" x2="1200" y2="150"/>
+    <line x1="0" y1="200" x2="1200" y2="200"/>
+    <line x1="0" y1="250" x2="1200" y2="250"/>
+    <line x1="0" y1="300" x2="1200" y2="300"/>
+    <line x1="0" y1="350" x2="1200" y2="350"/>
+    <line x1="60" y1="0" x2="60" y2="400"/>
+    <line x1="120" y1="0" x2="120" y2="400"/>
+    <line x1="180" y1="0" x2="180" y2="400"/>
+    <line x1="240" y1="0" x2="240" y2="400"/>
+    <line x1="300" y1="0" x2="300" y2="400"/>
+    <line x1="360" y1="0" x2="360" y2="400"/>
+    <line x1="420" y1="0" x2="420" y2="400"/>
+    <line x1="480" y1="0" x2="480" y2="400"/>
+    <line x1="540" y1="0" x2="540" y2="400"/>
+    <line x1="600" y1="0" x2="600" y2="400"/>
+    <line x1="660" y1="0" x2="660" y2="400"/>
+    <line x1="720" y1="0" x2="720" y2="400"/>
+    <line x1="780" y1="0" x2="780" y2="400"/>
+    <line x1="840" y1="0" x2="840" y2="400"/>
+    <line x1="900" y1="0" x2="900" y2="400"/>
+    <line x1="960" y1="0" x2="960" y2="400"/>
+    <line x1="1020" y1="0" x2="1020" y2="400"/>
+    <line x1="1080" y1="0" x2="1080" y2="400"/>
+    <line x1="1140" y1="0" x2="1140" y2="400"/>
+  </g>
+
+  <!-- Title -->
+  <text x="600" y="38" font-family="Courier New, monospace" font-size="18" font-weight="bold"
+        fill="#00d4ff" text-anchor="middle" filter="url(#glow)" opacity="0.9">Intent Engineering Pipeline</text>
+
+  <!-- Pipeline track line (background glow) -->
+  <rect x="20" y="193" width="1160" height="4" fill="url(#pipeGrad)" rx="2"/>
+
+  <!-- ─── NODE 1: PROMPT ─── -->
+  <!-- x=20, width=88 -->
+  <rect x="20" y="160" width="88" height="70" rx="8" fill="#0d1a2e" stroke="#0A66C2" stroke-width="1.8" filter="url(#glow)"/>
+  <text x="64" y="186" font-family="Courier New, monospace" font-size="12" font-weight="bold" fill="#00d4ff" text-anchor="middle">PROMPT</text>
+  <text x="64" y="203" font-family="Courier New, monospace" font-size="9" fill="#506880" text-anchor="middle">user intent</text>
+  <text x="64" y="218" font-family="Courier New, monospace" font-size="9" fill="#405060" text-anchor="middle">raw input</text>
+
+  <!-- Arrow 1→2 -->
+  <line x1="109" y1="195" x2="127" y2="195" stroke="#00d4ff" stroke-width="1.8" marker-end="url(#arrowBlue)" opacity="0.8"/>
+
+  <!-- ─── NODE 2: enforce-supervisor ─── -->
+  <!-- x=130, width=120 -->
+  <rect x="130" y="155" width="120" height="80" rx="8" fill="#0d1a2e" stroke="#0A66C2" stroke-width="1.8" filter="url(#glow)"/>
+  <text x="190" y="178" font-family="Courier New, monospace" font-size="10" font-weight="bold" fill="#00d4ff" text-anchor="middle">enforce-</text>
+  <text x="190" y="192" font-family="Courier New, monospace" font-size="10" font-weight="bold" fill="#00d4ff" text-anchor="middle">supervisor</text>
+  <text x="190" y="210" font-family="Courier New, monospace" font-size="8" fill="#506880" text-anchor="middle">delegate check</text>
+  <text x="190" y="224" font-family="Courier New, monospace" font-size="8" fill="#405060" text-anchor="middle">hook: UserPromptSubmit</text>
+
+  <!-- Arrow 2→3 -->
+  <line x1="251" y1="195" x2="269" y2="195" stroke="#00d4ff" stroke-width="1.8" marker-end="url(#arrowBlue)" opacity="0.8"/>
+
+  <!-- ─── NODE 3: context-inject ─── -->
+  <!-- x=272, width=110 -->
+  <rect x="272" y="155" width="110" height="80" rx="8" fill="#0d1a2e" stroke="#0A66C2" stroke-width="1.8" filter="url(#glow)"/>
+  <text x="327" y="178" font-family="Courier New, monospace" font-size="10" font-weight="bold" fill="#00d4ff" text-anchor="middle">context-</text>
+  <text x="327" y="192" font-family="Courier New, monospace" font-size="10" font-weight="bold" fill="#00d4ff" text-anchor="middle">inject</text>
+  <text x="327" y="210" font-family="Courier New, monospace" font-size="8" fill="#506880" text-anchor="middle">enrich prompt</text>
+  <text x="327" y="224" font-family="Courier New, monospace" font-size="8" fill="#405060" text-anchor="middle">hook: UserPromptSubmit</text>
+
+  <!-- Arrow 3→subpipeline -->
+  <line x1="383" y1="195" x2="401" y2="195" stroke="#00d4ff" stroke-width="1.8" marker-end="url(#arrowBlue)" opacity="0.8"/>
+
+  <!-- ─── NODE 4: intent-engineer ─── -->
+  <!-- x=404, width=118 -->
+  <rect x="404" y="155" width="118" height="80" rx="8" fill="#0d1a2e" stroke="#0A66C2" stroke-width="1.8" filter="url(#glow)"/>
+  <text x="463" y="178" font-family="Courier New, monospace" font-size="10" font-weight="bold" fill="#00d4ff" text-anchor="middle">intent-</text>
+  <text x="463" y="192" font-family="Courier New, monospace" font-size="10" font-weight="bold" fill="#00d4ff" text-anchor="middle">engineer</text>
+  <text x="463" y="210" font-family="Courier New, monospace" font-size="8" fill="#506880" text-anchor="middle">parse + score</text>
+  <text x="463" y="224" font-family="Courier New, monospace" font-size="8" fill="#405060" text-anchor="middle">hook: UserPromptSubmit</text>
+
+  <!-- Arrow into sub-pipeline -->
+  <line x1="523" y1="195" x2="543" y2="195" stroke="#00d4ff" stroke-width="1.8" marker-end="url(#arrowBlue)" opacity="0.8"/>
+
+  <!-- ─── SUB-PIPELINE: Parse → Classify → Align → Gate ─── -->
+  <!-- Dashed highlight box: x=548, y=130, w=284, h=130 -->
+  <rect x="548" y="130" width="284" height="130" rx="10" fill="url(#subpipeGrad)"
+        stroke="#00d4ff" stroke-width="1.5" stroke-dasharray="8,5" opacity="0.7"/>
+  <text x="690" y="148" font-family="Courier New, monospace" font-size="9" fill="#00d4ff"
+        text-anchor="middle" opacity="0.7" letter-spacing="1">intent verification sub-pipeline</text>
+
+  <!-- Sub-node: Parse -->
+  <rect x="558" y="157" width="54" height="50" rx="6" fill="#0a1a2a" stroke="#00d4ff" stroke-width="1.5" filter="url(#glow)"/>
+  <text x="585" y="178" font-family="Courier New, monospace" font-size="10" font-weight="bold" fill="#00d4ff" text-anchor="middle">Parse</text>
+  <text x="585" y="194" font-family="Courier New, monospace" font-size="7.5" fill="#4a6a80" text-anchor="middle">extract</text>
+  <text x="585" y="204" font-family="Courier New, monospace" font-size="7.5" fill="#4a6a80" text-anchor="middle">objectives</text>
+
+  <!-- Arrow Parse→Classify -->
+  <line x1="613" y1="182" x2="625" y2="182" stroke="#00d4ff" stroke-width="1.4" marker-end="url(#arrowBlueSmall)" opacity="0.8"/>
+
+  <!-- Sub-node: Classify -->
+  <rect x="628" y="157" width="60" height="50" rx="6" fill="#0a1a2a" stroke="#00d4ff" stroke-width="1.5" filter="url(#glow)"/>
+  <text x="658" y="178" font-family="Courier New, monospace" font-size="10" font-weight="bold" fill="#00d4ff" text-anchor="middle">Classify</text>
+  <text x="658" y="194" font-family="Courier New, monospace" font-size="7.5" fill="#4a6a80" text-anchor="middle">predicate</text>
+  <text x="658" y="204" font-family="Courier New, monospace" font-size="7.5" fill="#4a6a80" text-anchor="middle">types</text>
+
+  <!-- Arrow Classify→Align -->
+  <line x1="689" y1="182" x2="701" y2="182" stroke="#00d4ff" stroke-width="1.4" marker-end="url(#arrowBlueSmall)" opacity="0.8"/>
+
+  <!-- Sub-node: Align -->
+  <rect x="704" y="157" width="54" height="50" rx="6" fill="#0a1a2a" stroke="#00d4ff" stroke-width="1.5" filter="url(#glow)"/>
+  <text x="731" y="178" font-family="Courier New, monospace" font-size="10" font-weight="bold" fill="#00d4ff" text-anchor="middle">Align</text>
+  <text x="731" y="194" font-family="Courier New, monospace" font-size="7.5" fill="#4a6a80" text-anchor="middle">objectives</text>
+  <text x="731" y="204" font-family="Courier New, monospace" font-size="7.5" fill="#4a6a80" text-anchor="middle">.md check</text>
+
+  <!-- Arrow Align→Gate -->
+  <line x1="759" y1="182" x2="771" y2="182" stroke="#00d4ff" stroke-width="1.4" marker-end="url(#arrowBlueSmall)" opacity="0.8"/>
+
+  <!-- Sub-node: Gate (diamond) -->
+  <polygon points="793,157 823,182 793,207 763,182" fill="#1a0d2e" stroke="#ff6b35" stroke-width="1.8" filter="url(#glow)"/>
+  <text x="793" y="178" font-family="Courier New, monospace" font-size="9" font-weight="bold" fill="#ff6b35" text-anchor="middle">Gate</text>
+  <text x="793" y="191" font-family="Courier New, monospace" font-size="7" fill="#a06040" text-anchor="middle">block?</text>
+
+  <!-- Arrow out of sub-pipeline -->
+  <line x1="824" y1="182" x2="840" y2="182" stroke="#00d4ff" stroke-width="1.8" marker-end="url(#arrowBlue)" opacity="0.8"/>
+  <!-- vertical drop to main track -->
+  <line x1="844" y1="182" x2="844" y2="195" stroke="#00d4ff" stroke-width="1.8" opacity="0.6"/>
+  <line x1="844" y1="195" x2="862" y2="195" stroke="#00d4ff" stroke-width="1.8" marker-end="url(#arrowBlue)" opacity="0.8"/>
+
+  <!-- Gate reject feedback arc -->
+  <path d="M 793 207 Q 793 295 660 295 Q 527 295 527 245" fill="none" stroke="#ff4444" stroke-width="1.3" stroke-dasharray="6,4" opacity="0.55"/>
+  <polygon points="520,249 527,245 523,238" fill="#ff4444" opacity="0.55"/>
+  <text x="660" y="315" font-family="Courier New, monospace" font-size="9" fill="#ff4444" text-anchor="middle" opacity="0.65">blocked — clarify intent</text>
+
+  <!-- ─── NODE 5: Worker Agent ─── -->
+  <!-- x=865, width=115 -->
+  <rect x="865" y="150" width="115" height="90" rx="8" fill="#0d1a0d" stroke="#00ff88" stroke-width="1.8" filter="url(#glow)"/>
+  <text x="922" y="174" font-family="Courier New, monospace" font-size="11" font-weight="bold" fill="#00ff88" text-anchor="middle">Worker</text>
+  <text x="922" y="189" font-family="Courier New, monospace" font-size="11" font-weight="bold" fill="#00ff88" text-anchor="middle">Agent</text>
+  <text x="922" y="207" font-family="Courier New, monospace" font-size="8" fill="#408060" text-anchor="middle">supervisor / unix-coder</text>
+  <text x="922" y="220" font-family="Courier New, monospace" font-size="8" fill="#408060" text-anchor="middle">tech-lead / code-review</text>
+  <text x="922" y="233" font-family="Courier New, monospace" font-size="8" fill="#305040" text-anchor="middle">parallel fan-out</text>
+
+  <!-- Arrow 5→6 -->
+  <line x1="981" y1="195" x2="999" y2="195" stroke="#00d4ff" stroke-width="1.8" marker-end="url(#arrowBlue)" opacity="0.8"/>
+
+  <!-- ─── NODE 6: intent-verify-response ─── -->
+  <!-- x=1002, width=128 -->
+  <rect x="1002" y="150" width="128" height="90" rx="8" fill="#1a1a0d" stroke="#ffd700" stroke-width="1.8" filter="url(#glow)"/>
+  <text x="1066" y="173" font-family="Courier New, monospace" font-size="9" font-weight="bold" fill="#ffd700" text-anchor="middle">intent-verify-</text>
+  <text x="1066" y="186" font-family="Courier New, monospace" font-size="9" font-weight="bold" fill="#ffd700" text-anchor="middle">response</text>
+  <text x="1066" y="204" font-family="Courier New, monospace" font-size="8" fill="#808040" text-anchor="middle">verify outcomes</text>
+  <text x="1066" y="218" font-family="Courier New, monospace" font-size="8" fill="#808040" text-anchor="middle">align objectives</text>
+  <text x="1066" y="232" font-family="Courier New, monospace" font-size="8" fill="#505020" text-anchor="middle">hook: SubagentStop</text>
+
+  <!-- Arrow 6→7 -->
+  <line x1="1131" y1="195" x2="1149" y2="195" stroke="#00d4ff" stroke-width="1.8" marker-end="url(#arrowBlue)" opacity="0.8"/>
+
+  <!-- ─── NODE 7: OUTPUT ─── -->
+  <rect x="1152" y="157" width="42" height="76" rx="8" fill="#0d1a2e" stroke="#0A66C2" stroke-width="1.8" filter="url(#glow)"/>
+  <text x="1173" y="182" font-family="Courier New, monospace" font-size="9" font-weight="bold" fill="#00d4ff" text-anchor="middle">OUT-</text>
+  <text x="1173" y="195" font-family="Courier New, monospace" font-size="9" font-weight="bold" fill="#00d4ff" text-anchor="middle">PUT</text>
+  <text x="1173" y="212" font-family="Courier New, monospace" font-size="7.5" fill="#506880" text-anchor="middle">audited</text>
+  <text x="1173" y="224" font-family="Courier New, monospace" font-size="7.5" fill="#405060" text-anchor="middle">trusted</text>
+
+  <!-- Bottom label bar -->
+  <rect x="0" y="355" width="1200" height="45" fill="#08080f" opacity="0.85"/>
+  <line x1="0" y1="355" x2="1200" y2="355" stroke="#0A66C2" stroke-width="1" opacity="0.5"/>
+
+  <text x="600" y="378" font-family="Courier New, monospace" font-size="11" fill="#506880" text-anchor="middle">Prompt → enforce-supervisor → context-inject → intent-engineer → [ Parse → Classify → Align → Gate ] → Worker Agent → intent-verify-response → Output</text>
+  <text x="600" y="394" font-family="Courier New, monospace" font-size="9" fill="#304050" text-anchor="middle">#IntentEngineering  #AIGovernance  #ClaudeCode  #AgentOps  #HookArchitecture</text>
+</svg>

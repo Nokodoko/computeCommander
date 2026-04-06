@@ -1,0 +1,212 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="627" viewBox="0 0 1200 627">
+  <defs>
+    <linearGradient id="bgGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0d0d1a;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1a1a2e;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow2">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="glowStrong2">
+      <feGaussianBlur stdDeviation="7" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow2">
+      <feGaussianBlur stdDeviation="14" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <marker id="arrowBlue2" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#00d4ff" opacity="0.8"/>
+    </marker>
+    <marker id="arrowOrange" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#ff9500" opacity="0.8"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#00ff88" opacity="0.8"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="627" fill="url(#bgGrad2)"/>
+
+  <!-- Subtle grid -->
+  <g opacity="0.04" stroke="#0A66C2" stroke-width="1">
+    <line x1="0" y1="60" x2="1200" y2="60"/>
+    <line x1="0" y1="120" x2="1200" y2="120"/>
+    <line x1="0" y1="180" x2="1200" y2="180"/>
+    <line x1="0" y1="240" x2="1200" y2="240"/>
+    <line x1="0" y1="300" x2="1200" y2="300"/>
+    <line x1="0" y1="360" x2="1200" y2="360"/>
+    <line x1="0" y1="420" x2="1200" y2="420"/>
+    <line x1="0" y1="480" x2="1200" y2="480"/>
+    <line x1="0" y1="540" x2="1200" y2="540"/>
+    <line x1="0" y1="600" x2="1200" y2="600"/>
+    <line x1="60" y1="0" x2="60" y2="627"/>
+    <line x1="120" y1="0" x2="120" y2="627"/>
+    <line x1="180" y1="0" x2="180" y2="627"/>
+    <line x1="240" y1="0" x2="240" y2="627"/>
+    <line x1="300" y1="0" x2="300" y2="627"/>
+    <line x1="360" y1="0" x2="360" y2="627"/>
+    <line x1="420" y1="0" x2="420" y2="627"/>
+    <line x1="480" y1="0" x2="480" y2="627"/>
+    <line x1="540" y1="0" x2="540" y2="627"/>
+    <line x1="600" y1="0" x2="600" y2="627"/>
+    <line x1="660" y1="0" x2="660" y2="627"/>
+    <line x1="720" y1="0" x2="720" y2="627"/>
+    <line x1="780" y1="0" x2="780" y2="627"/>
+    <line x1="840" y1="0" x2="840" y2="627"/>
+    <line x1="900" y1="0" x2="900" y2="627"/>
+    <line x1="960" y1="0" x2="960" y2="627"/>
+    <line x1="1020" y1="0" x2="1020" y2="627"/>
+    <line x1="1080" y1="0" x2="1080" y2="627"/>
+    <line x1="1140" y1="0" x2="1140" y2="627"/>
+  </g>
+
+  <!-- Big envelope background motif -->
+  <g opacity="0.04" filter="url(#softGlow2)">
+    <rect x="300" y="80" width="600" height="420" rx="20" fill="none" stroke="#00d4ff" stroke-width="40"/>
+    <line x1="300" y1="80" x2="600" y2="290" stroke="#00d4ff" stroke-width="40"/>
+    <line x1="900" y1="80" x2="600" y2="290" stroke="#00d4ff" stroke-width="40"/>
+  </g>
+
+  <!-- Title -->
+  <text x="600" y="62" font-family="Courier New, monospace" font-size="34" font-weight="bold"
+        fill="#ffffff" text-anchor="middle" filter="url(#glow2)">My AI Agents Have a Mail System</text>
+
+  <!-- SQLite badge -->
+  <rect x="500" y="76" width="200" height="28" rx="14" fill="#1a1a0d" stroke="#ffd700" stroke-width="1.5" opacity="0.9"/>
+  <text x="600" y="95" font-family="Courier New, monospace" font-size="13" font-weight="bold" fill="#ffd700" text-anchor="middle">SQLite Mailboxes</text>
+
+  <!-- ========== AGENT NODES ========== -->
+
+  <!-- SUPERVISOR (center top) -->
+  <rect x="506" y="148" width="188" height="88" rx="12" fill="#0a1520" stroke="#00d4ff" stroke-width="2.5" filter="url(#glowStrong2)"/>
+  <!-- envelope icon inside -->
+  <rect x="518" y="162" width="32" height="22" rx="3" fill="none" stroke="#00d4ff" stroke-width="1.5"/>
+  <polyline points="518,162 534,174 550,162" fill="none" stroke="#00d4ff" stroke-width="1.5"/>
+  <text x="580" y="172" font-family="Courier New, monospace" font-size="8" fill="#507090" text-anchor="start">inbox: 0</text>
+  <text x="562" y="200" font-family="Courier New, monospace" font-size="15" font-weight="bold" fill="#00d4ff" text-anchor="middle">supervisor</text>
+  <text x="562" y="218" font-family="Courier New, monospace" font-size="10" fill="#507090" text-anchor="middle">@supervisor</text>
+  <text x="562" y="230" font-family="Courier New, monospace" font-size="9" fill="#304050" text-anchor="middle">orchestration</text>
+
+  <!-- CODER (bottom left) -->
+  <rect x="110" y="340" width="188" height="88" rx="12" fill="#0d1a0d" stroke="#00ff88" stroke-width="2" filter="url(#glow2)"/>
+  <rect x="122" y="354" width="32" height="22" rx="3" fill="none" stroke="#00ff88" stroke-width="1.5"/>
+  <polyline points="122,354 138,366 154,354" fill="none" stroke="#00ff88" stroke-width="1.5"/>
+  <text x="184" y="364" font-family="Courier New, monospace" font-size="8" fill="#408060" text-anchor="start">inbox: 3</text>
+  <text x="204" y="392" font-family="Courier New, monospace" font-size="15" font-weight="bold" fill="#00ff88" text-anchor="middle">unix-coder</text>
+  <text x="204" y="410" font-family="Courier New, monospace" font-size="10" fill="#408060" text-anchor="middle">@builders</text>
+  <text x="204" y="422" font-family="Courier New, monospace" font-size="9" fill="#253520" text-anchor="middle">implementation</text>
+
+  <!-- REVIEWER (bottom right) -->
+  <rect x="540" y="380" width="188" height="88" rx="12" fill="#1a1a0d" stroke="#ffd700" stroke-width="2" filter="url(#glow2)"/>
+  <rect x="552" y="394" width="32" height="22" rx="3" fill="none" stroke="#ffd700" stroke-width="1.5"/>
+  <polyline points="552,394 568,406 584,394" fill="none" stroke="#ffd700" stroke-width="1.5"/>
+  <text x="614" y="404" font-family="Courier New, monospace" font-size="8" fill="#807040" text-anchor="start">inbox: 2</text>
+  <text x="634" y="432" font-family="Courier New, monospace" font-size="15" font-weight="bold" fill="#ffd700" text-anchor="middle">code-review</text>
+  <text x="634" y="450" font-family="Courier New, monospace" font-size="10" fill="#807040" text-anchor="middle">@reviewers</text>
+  <text x="634" y="462" font-family="Courier New, monospace" font-size="9" fill="#504030" text-anchor="middle">quality gate</text>
+
+  <!-- TECH-LEAD (middle left) -->
+  <rect x="110" y="200" width="188" height="88" rx="12" fill="#1a0d2e" stroke="#cc44ff" stroke-width="2" filter="url(#glow2)"/>
+  <rect x="122" y="214" width="32" height="22" rx="3" fill="none" stroke="#cc44ff" stroke-width="1.5"/>
+  <polyline points="122,214 138,226 154,214" fill="none" stroke="#cc44ff" stroke-width="1.5"/>
+  <text x="184" y="224" font-family="Courier New, monospace" font-size="8" fill="#804090" text-anchor="start">inbox: 1</text>
+  <text x="204" y="252" font-family="Courier New, monospace" font-size="15" font-weight="bold" fill="#cc44ff" text-anchor="middle">tech-lead</text>
+  <text x="204" y="270" font-family="Courier New, monospace" font-size="10" fill="#804090" text-anchor="middle">@leads</text>
+  <text x="204" y="282" font-family="Courier New, monospace" font-size="9" fill="#401a50" text-anchor="middle">architecture</text>
+
+  <!-- MERGER (middle right) -->
+  <rect x="890" y="260" width="188" height="88" rx="12" fill="#1a0d0d" stroke="#ff6b35" stroke-width="2" filter="url(#glow2)"/>
+  <rect x="902" y="274" width="32" height="22" rx="3" fill="none" stroke="#ff6b35" stroke-width="1.5"/>
+  <polyline points="902,274 918,286 934,274" fill="none" stroke="#ff6b35" stroke-width="1.5"/>
+  <text x="964" y="284" font-family="Courier New, monospace" font-size="8" fill="#804020" text-anchor="start">inbox: 1</text>
+  <text x="984" y="312" font-family="Courier New, monospace" font-size="15" font-weight="bold" fill="#ff6b35" text-anchor="middle">merge-mgr</text>
+  <text x="984" y="330" font-family="Courier New, monospace" font-size="10" fill="#804020" text-anchor="middle">@merger</text>
+  <text x="984" y="342" font-family="Courier New, monospace" font-size="9" fill="#501a0a" text-anchor="middle">git operations</text>
+
+  <!-- ========== CONNECTION LINES ========== -->
+
+  <!-- supervisor → unix-coder -->
+  <line x1="506" y1="210" x2="298" y2="350" stroke="#00d4ff" stroke-width="1.5" stroke-dasharray="8,4" marker-end="url(#arrowGreen)" opacity="0.7"/>
+  <!-- small envelope on line -->
+  <g transform="translate(390,272) rotate(-32)">
+    <rect x="-10" y="-7" width="20" height="14" rx="2" fill="#0a1a2a" stroke="#00d4ff" stroke-width="1.2"/>
+    <polyline points="-10,-7 0,1 10,-7" fill="none" stroke="#00d4ff" stroke-width="1.2"/>
+  </g>
+
+  <!-- supervisor → tech-lead -->
+  <line x1="506" y1="192" x2="298" y2="244" stroke="#cc44ff" stroke-width="1.5" stroke-dasharray="8,4" marker-end="url(#arrowBlue2)" opacity="0.7"/>
+  <g transform="translate(400,216) rotate(-18)">
+    <rect x="-10" y="-7" width="20" height="14" rx="2" fill="#1a0d2e" stroke="#cc44ff" stroke-width="1.2"/>
+    <polyline points="-10,-7 0,1 10,-7" fill="none" stroke="#cc44ff" stroke-width="1.2"/>
+  </g>
+
+  <!-- supervisor → code-review -->
+  <line x1="634" y1="236" x2="634" y2="380" stroke="#ffd700" stroke-width="1.5" stroke-dasharray="8,4" marker-end="url(#arrowBlue2)" opacity="0.7"/>
+  <g transform="translate(634,310)">
+    <rect x="-10" y="-7" width="20" height="14" rx="2" fill="#1a1a0d" stroke="#ffd700" stroke-width="1.2"/>
+    <polyline points="-10,-7 0,1 10,-7" fill="none" stroke="#ffd700" stroke-width="1.2"/>
+  </g>
+
+  <!-- supervisor → merge-mgr -->
+  <line x1="694" y1="210" x2="890" y2="290" stroke="#ff6b35" stroke-width="1.5" stroke-dasharray="8,4" marker-end="url(#arrowOrange)" opacity="0.7"/>
+  <g transform="translate(796,244) rotate(28)">
+    <rect x="-10" y="-7" width="20" height="14" rx="2" fill="#1a0d0d" stroke="#ff6b35" stroke-width="1.2"/>
+    <polyline points="-10,-7 0,1 10,-7" fill="none" stroke="#ff6b35" stroke-width="1.2"/>
+  </g>
+
+  <!-- unix-coder → code-review (reply) -->
+  <line x1="298" y1="430" x2="540" y2="430" stroke="#00ff88" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrowBlue2)" opacity="0.5"/>
+  <g transform="translate(418,430)">
+    <rect x="-10" y="-7" width="20" height="14" rx="2" fill="#0d1a0d" stroke="#00ff88" stroke-width="1.2"/>
+    <polyline points="-10,-7 0,1 10,-7" fill="none" stroke="#00ff88" stroke-width="1.2"/>
+  </g>
+
+  <!-- ========== BROADCAST PANEL ========== -->
+  <rect x="130" y="490" width="940" height="100" rx="10" fill="#0a0f1a" stroke="#0A66C2" stroke-width="1" opacity="0.9"/>
+  <text x="600" y="516" font-family="Courier New, monospace" font-size="12" fill="#507090" text-anchor="middle">broadcast addresses</text>
+
+  <!-- @builders -->
+  <rect x="160" y="526" width="130" height="28" rx="14" fill="#0d1a0d" stroke="#00ff88" stroke-width="1.5"/>
+  <text x="225" y="545" font-family="Courier New, monospace" font-size="13" font-weight="bold" fill="#00ff88" text-anchor="middle">@builders</text>
+
+  <!-- @reviewers -->
+  <rect x="320" y="526" width="150" height="28" rx="14" fill="#1a1a0d" stroke="#ffd700" stroke-width="1.5"/>
+  <text x="395" y="545" font-family="Courier New, monospace" font-size="13" font-weight="bold" fill="#ffd700" text-anchor="middle">@reviewers</text>
+
+  <!-- @leads -->
+  <rect x="500" y="526" width="120" height="28" rx="14" fill="#1a0d2e" stroke="#cc44ff" stroke-width="1.5"/>
+  <text x="560" y="545" font-family="Courier New, monospace" font-size="13" font-weight="bold" fill="#cc44ff" text-anchor="middle">@leads</text>
+
+  <!-- @security -->
+  <rect x="650" y="526" width="150" height="28" rx="14" fill="#1a0d0d" stroke="#ff6b35" stroke-width="1.5"/>
+  <text x="725" y="545" font-family="Courier New, monospace" font-size="13" font-weight="bold" fill="#ff6b35" text-anchor="middle">@security</text>
+
+  <!-- @all -->
+  <rect x="830" y="526" width="120" height="28" rx="14" fill="#0a1520" stroke="#00d4ff" stroke-width="1.5"/>
+  <text x="890" y="545" font-family="Courier New, monospace" font-size="13" font-weight="bold" fill="#00d4ff" text-anchor="middle">@all</text>
+
+  <!-- DB label -->
+  <text x="600" y="578" font-family="Courier New, monospace" font-size="11" fill="#304050" text-anchor="middle">messages.db  |  threads  |  receipts  |  broadcast routing  |  SQLite</text>
+
+  <!-- Top right: DB icon -->
+  <g transform="translate(1090, 148)">
+    <ellipse cx="0" cy="0" rx="50" ry="14" fill="#0a1520" stroke="#0A66C2" stroke-width="1.5"/>
+    <rect x="-50" y="0" width="100" height="36" fill="#0a1520" stroke="#0A66C2" stroke-width="1.5"/>
+    <ellipse cx="0" cy="36" rx="50" ry="14" fill="#0a1520" stroke="#0A66C2" stroke-width="1.5"/>
+    <ellipse cx="0" cy="18" rx="50" ry="14" fill="#0d1a2e" stroke="#0A66C2" stroke-width="1" stroke-dasharray="4,3"/>
+    <text x="0" y="22" font-family="Courier New, monospace" font-size="11" font-weight="bold" fill="#00d4ff" text-anchor="middle" filter="url(#glow2)">SQLite</text>
+    <text x="0" y="56" font-family="Courier New, monospace" font-size="9" fill="#507090" text-anchor="middle">messages.db</text>
+  </g>
+</svg>
