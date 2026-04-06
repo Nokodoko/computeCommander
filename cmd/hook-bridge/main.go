@@ -25,6 +25,8 @@ import (
 	"strings"
 
 	"github.com/noko/computecommander/bridge"
+	"github.com/noko/computecommander/bridge/cmdr"
+	"github.com/noko/computecommander/bridge/intent"
 	"github.com/noko/computecommander/bridge/types"
 )
 
@@ -171,11 +173,9 @@ func writeError(msg string) {
 }
 
 // registerBuiltinHooks registers the default set of Go hook handlers.
-// For now this is empty — handlers are added as hooks are implemented.
-func registerBuiltinHooks(_ *bridge.Registry) {
-	// TODO: Register cmdr-bridge and other Go hook handlers here.
-	// Example:
-	//   registry.Register("cmdr-bridge", cmdrBridgeHandler)
+func registerBuiltinHooks(registry *bridge.Registry) {
+	registry.Register("cmdr-bridge", cmdr.Handler)
+	registry.Register("intent-verify", intent.Handler)
 }
 
 // findBridgeSource locates bridge/bridge.go from common paths.
