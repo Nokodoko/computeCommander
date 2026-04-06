@@ -1,0 +1,114 @@
+<svg width="700" height="400" xmlns="http://www.w3.org/2000/svg" font-family="Inter, Segoe UI, Arial, sans-serif">
+  <defs>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="110%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#00000018"/>
+    </filter>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#555"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#2d9d6e"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#e05c3a"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="700" height="400" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="350" y="28" text-anchor="middle" font-size="15" font-weight="700" fill="#1a1a2e">/sr Workflow: 5-Phase Spec-Review Loop</text>
+
+  <!-- Phase 0: Context Discovery -->
+  <rect x="16" y="48" width="120" height="72" rx="10" fill="#dbeafe" stroke="#3b82f6" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="76" y="68" text-anchor="middle" font-size="9" font-weight="700" fill="#1e40af">PHASE 0</text>
+  <text x="76" y="82" text-anchor="middle" font-size="10" font-weight="700" fill="#1e3a8a">Codebase Context</text>
+  <text x="76" y="95" text-anchor="middle" font-size="10" font-weight="700" fill="#1e3a8a">Discovery</text>
+  <text x="76" y="111" text-anchor="middle" font-size="8.5" fill="#3b5fc4">Read agentic_instructions.md</text>
+
+  <!-- Arrow 0->1 -->
+  <line x1="136" y1="84" x2="158" y2="84" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Phase 1: Generate Spec -->
+  <rect x="158" y="48" width="120" height="72" rx="10" fill="#d1fae5" stroke="#10b981" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="218" y="68" text-anchor="middle" font-size="9" font-weight="700" fill="#065f46">PHASE 1</text>
+  <text x="218" y="82" text-anchor="middle" font-size="10" font-weight="700" fill="#064e3b">Generate</text>
+  <text x="218" y="95" text-anchor="middle" font-size="10" font-weight="700" fill="#064e3b">Spec</text>
+  <text x="218" y="111" text-anchor="middle" font-size="8.5" fill="#047857">spec-builder → SPEC.md</text>
+
+  <!-- Arrow 1->2 -->
+  <line x1="278" y1="84" x2="300" y2="84" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Phase 2: Validate Structure -->
+  <rect x="300" y="48" width="120" height="72" rx="10" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="360" y="68" text-anchor="middle" font-size="9" font-weight="700" fill="#475569">PHASE 2</text>
+  <text x="360" y="82" text-anchor="middle" font-size="10" font-weight="700" fill="#334155">Validate</text>
+  <text x="360" y="95" text-anchor="middle" font-size="10" font-weight="700" fill="#334155">Structure</text>
+  <text x="360" y="111" text-anchor="middle" font-size="8.5" fill="#64748b">19 sections, no cycles</text>
+
+  <!-- Arrow 2->3 -->
+  <line x1="420" y1="84" x2="442" y2="84" stroke="#555" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Phase 3: Review Loop box (taller) -->
+  <rect x="442" y="38" width="148" height="200" rx="10" fill="#fff7ed" stroke="#f97316" stroke-width="2" filter="url(#shadow)"/>
+  <text x="516" y="58" text-anchor="middle" font-size="9" font-weight="700" fill="#c2410c">PHASE 3</text>
+  <text x="516" y="72" text-anchor="middle" font-size="10" font-weight="700" fill="#9a3412">Review Loop</text>
+  <text x="516" y="86" text-anchor="middle" font-size="8.5" fill="#ea580c">max 3 iterations</text>
+
+  <!-- Loop inner elements -->
+  <!-- spec-reviewer box -->
+  <rect x="456" y="98" width="120" height="34" rx="7" fill="#fed7aa" stroke="#fb923c" stroke-width="1"/>
+  <text x="516" y="113" text-anchor="middle" font-size="9" font-weight="600" fill="#7c2d12">spec-reviewer</text>
+  <text x="516" y="125" text-anchor="middle" font-size="8" fill="#9a3412">writes SPEC-REVIEW.md</text>
+
+  <!-- Arrow down from reviewer -->
+  <line x1="516" y1="132" x2="516" y2="148" stroke="#f97316" stroke-width="1.5" marker-end="url(#arrow-red)"/>
+
+  <!-- Decision diamond -->
+  <polygon points="516,148 548,166 516,184 484,166" fill="#fde68a" stroke="#d97706" stroke-width="1.2"/>
+  <text x="516" y="163" text-anchor="middle" font-size="9" font-weight="700" fill="#78350f">PASS?</text>
+
+  <!-- FAIL path: curved back arrow -->
+  <!-- FAIL label -->
+  <text x="472" y="195" text-anchor="middle" font-size="8.5" font-weight="700" fill="#e05c3a">FAIL</text>
+  <!-- Curved back arrow: path going left, then up along left side, then right back into spec-builder -->
+  <path d="M484,166 Q452,166 452,130 Q452,98 456,98" fill="none" stroke="#e05c3a" stroke-width="1.5" stroke-dasharray="4,2" marker-end="url(#arrow-red)"/>
+
+  <!-- PASS arrow goes right from diamond -->
+  <text x="554" y="163" text-anchor="start" font-size="8.5" font-weight="700" fill="#2d9d6e">PASS</text>
+  <line x1="548" y1="166" x2="590" y2="166" stroke="#2d9d6e" stroke-width="1.5"/>
+  <line x1="590" y1="166" x2="590" y2="255" stroke="#2d9d6e" stroke-width="1.5"/>
+  <line x1="590" y1="255" x2="618" y2="255" stroke="#2d9d6e" stroke-width="1.5" marker-end="url(#arrow-green)"/>
+
+  <!-- Phase 4: Execute -->
+  <rect x="618" y="228" width="68" height="72" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="652" y="248" text-anchor="middle" font-size="9" font-weight="700" fill="#5b21b6">PHASE 4</text>
+  <text x="652" y="262" text-anchor="middle" font-size="10" font-weight="700" fill="#4c1d95">Execute</text>
+  <text x="652" y="274" text-anchor="middle" font-size="8.5" fill="#6d28d9">/swarm</text>
+  <text x="652" y="287" text-anchor="middle" font-size="8.5" fill="#6d28d9">dispatches</text>
+  <text x="652" y="300" text-anchor="middle" font-size="8.5" fill="#6d28d9">agents</text>
+
+  <!-- execute flag note -->
+  <text x="652" y="318" text-anchor="middle" font-size="7.5" fill="#7c3aed" font-style="italic">--execute flag</text>
+
+  <!-- Legend -->
+  <rect x="16" y="148" width="10" height="10" rx="2" fill="#dbeafe" stroke="#3b82f6" stroke-width="1"/>
+  <text x="30" y="157" font-size="8" fill="#555">Context</text>
+  <rect x="16" y="165" width="10" height="10" rx="2" fill="#d1fae5" stroke="#10b981" stroke-width="1"/>
+  <text x="30" y="174" font-size="8" fill="#555">Generation</text>
+  <rect x="16" y="182" width="10" height="10" rx="2" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1"/>
+  <text x="30" y="191" font-size="8" fill="#555">Validation</text>
+  <rect x="16" y="199" width="10" height="10" rx="2" fill="#fff7ed" stroke="#f97316" stroke-width="1"/>
+  <text x="30" y="208" font-size="8" fill="#555">Review Loop</text>
+  <rect x="16" y="216" width="10" height="10" rx="2" fill="#ede9fe" stroke="#7c3aed" stroke-width="1"/>
+  <text x="30" y="225" font-size="8" fill="#555">Execution</text>
+
+  <!-- Feedback note -->
+  <rect x="16" y="258" width="410" height="40" rx="8" fill="#fafafa" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="221" y="274" text-anchor="middle" font-size="8.5" fill="#64748b">On FAIL: spec-reviewer writes SPEC-REVIEW-feedback.md</text>
+  <text x="221" y="290" text-anchor="middle" font-size="8.5" fill="#64748b">spec-builder reads feedback and revises SPEC.md → re-review</text>
+
+  <!-- Bottom caption -->
+  <text x="350" y="380" text-anchor="middle" font-size="8.5" fill="#94a3b8">computeCommander /sr — Spec Review Loop</text>
+</svg>
