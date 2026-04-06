@@ -1,0 +1,315 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 1000" font-family="Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0a0f;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#111127;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="contextGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#5DADE2;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#5DADE2;stop-opacity:0.05" />
+    </linearGradient>
+    <linearGradient id="intentGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#FFB347;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#FFB347;stop-opacity:0.05" />
+    </linearGradient>
+    <linearGradient id="specGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#4ECDC4;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#4ECDC4;stop-opacity:0.05" />
+    </linearGradient>
+    <linearGradient id="reviewGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#FF6B6B;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#FF6B6B;stop-opacity:0.05" />
+    </linearGradient>
+    <linearGradient id="execGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#9B59B6;stop-opacity:0.2" />
+      <stop offset="100%" style="stop-color:#9B59B6;stop-opacity:0.05" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="shadow">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000" flood-opacity="0.3"/>
+    </filter>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5DADE2"/>
+    </marker>
+    <marker id="arrowOrange" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#FFB347"/>
+    </marker>
+    <marker id="arrowTeal" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4ECDC4"/>
+    </marker>
+    <marker id="arrowRed" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#FF6B6B"/>
+    </marker>
+    <marker id="arrowPurple" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9B59B6"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2ECC71"/>
+    </marker>
+    <marker id="arrowGold" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#F1C40F"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1400" height="1000" fill="url(#bgGrad)"/>
+
+  <!-- Grid pattern -->
+  <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+    <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#ffffff" stroke-width="0.3" opacity="0.03"/>
+  </pattern>
+  <rect width="1400" height="1000" fill="url(#grid)"/>
+
+  <!-- Title -->
+  <text x="700" y="40" text-anchor="middle" fill="#e0e0e0" font-size="22" font-weight="700" letter-spacing="1">The Spec-Review Loop Architecture</text>
+  <text x="700" y="63" text-anchor="middle" fill="#888" font-size="13">Deterministic Specifications from Probabilistic Systems</text>
+
+  <!-- ========== PHASE 0: INPUT ========== -->
+  <rect x="530" y="85" width="240" height="60" rx="10" fill="#1a1a2e" stroke="#e0e0e0" stroke-width="2" filter="url(#shadow)"/>
+  <text x="650" y="112" text-anchor="middle" fill="#e0e0e0" font-size="15" font-weight="700">Human Prompt</text>
+  <text x="650" y="132" text-anchor="middle" fill="#888" font-size="10">"Build a webhook pipeline for alerts"</text>
+
+  <!-- Arrow down from prompt -->
+  <line x1="650" y1="145" x2="650" y2="170" stroke="#e0e0e0" stroke-width="2" marker-end="url(#arrowBlue)"/>
+
+  <!-- ========== PHASE 1: CONTEXT INJECTION (blue) ========== -->
+  <rect x="40" y="170" width="620" height="120" rx="10" fill="url(#contextGrad)" stroke="#5DADE2" stroke-width="1" stroke-opacity="0.5" filter="url(#shadow)"/>
+  <text x="60" y="195" fill="#5DADE2" font-size="14" font-weight="700">CONTEXT INJECTION</text>
+  <text x="250" y="195" fill="#5DADE2" font-size="11" opacity="0.7">context-inject.py — Domain Knowledge Enrichment</text>
+
+  <rect x="60" y="210" width="170" height="60" rx="6" fill="#1a1a2e" stroke="#5DADE2" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="145" y="233" text-anchor="middle" fill="#5DADE2" font-size="11" font-weight="600">Prompt Classifier</text>
+  <text x="145" y="250" text-anchor="middle" fill="#666" font-size="9">Task type detection</text>
+  <text x="145" y="263" text-anchor="middle" fill="#666" font-size="9">Domain routing</text>
+
+  <rect x="250" y="210" width="190" height="60" rx="6" fill="#1a1a2e" stroke="#5DADE2" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="345" y="233" text-anchor="middle" fill="#5DADE2" font-size="11" font-weight="600">agentic_instructions.md</text>
+  <text x="345" y="250" text-anchor="middle" fill="#666" font-size="9">Per-directory context</text>
+  <text x="345" y="263" text-anchor="middle" fill="#666" font-size="9">Tech stack, patterns, scope</text>
+
+  <rect x="460" y="210" width="180" height="60" rx="6" fill="#1a1a2e" stroke="#5DADE2" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="550" y="233" text-anchor="middle" fill="#5DADE2" font-size="11" font-weight="600">Enriched Prompt</text>
+  <text x="550" y="250" text-anchor="middle" fill="#666" font-size="9">Original + domain context</text>
+  <text x="550" y="263" text-anchor="middle" fill="#666" font-size="9">+ codebase architecture</text>
+
+  <!-- ========== PHASE 1B: INTENT GATE (orange) ========== -->
+  <rect x="700" y="170" width="660" height="120" rx="10" fill="url(#intentGrad)" stroke="#FFB347" stroke-width="1" stroke-opacity="0.5" filter="url(#shadow)"/>
+  <text x="720" y="195" fill="#FFB347" font-size="14" font-weight="700">INTENT ENGINEERING</text>
+  <text x="930" y="195" fill="#FFB347" font-size="11" opacity="0.7">intent-engineer.py — Objective Alignment Gate</text>
+
+  <rect x="720" y="210" width="180" height="60" rx="6" fill="#1a1a2e" stroke="#FFB347" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="810" y="233" text-anchor="middle" fill="#FFB347" font-size="11" font-weight="600">Personal Objectives</text>
+  <text x="810" y="250" text-anchor="middle" fill="#666" font-size="9">Tests pass, no secrets</text>
+  <text x="810" y="263" text-anchor="middle" fill="#666" font-size="9">Go conventions, error handling</text>
+
+  <rect x="920" y="210" width="180" height="60" rx="6" fill="#1a1a2e" stroke="#FFB347" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="1010" y="233" text-anchor="middle" fill="#FFB347" font-size="11" font-weight="600">Org Objectives</text>
+  <text x="1010" y="250" text-anchor="middle" fill="#666" font-size="9">No vulnerabilities</text>
+  <text x="1010" y="263" text-anchor="middle" fill="#666" font-size="9">Parameterized queries</text>
+
+  <rect x="1120" y="210" width="220" height="60" rx="6" fill="#1a1a2e" stroke="#FFB347" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="1230" y="233" text-anchor="middle" fill="#FFB347" font-size="11" font-weight="600">Predicate Classifier</text>
+  <text x="1230" y="250" text-anchor="middle" fill="#666" font-size="9">contains_pattern | count_check</text>
+  <text x="1230" y="263" text-anchor="middle" fill="#666" font-size="9">negation_check | ast_check | ...</text>
+
+  <!-- Arrow from context to spec-builder -->
+  <line x1="550" y1="290" x2="550" y2="330" stroke="#5DADE2" stroke-width="2" marker-end="url(#arrowTeal)"/>
+
+  <!-- Arrow from intent to spec-builder -->
+  <line x1="1030" y1="290" x2="850" y2="330" stroke="#FFB347" stroke-width="2" marker-end="url(#arrowTeal)" stroke-dasharray="6,3"/>
+
+  <!-- ========== PHASE 2: SPEC BUILDER (green/teal) ========== -->
+  <rect x="250" y="330" width="680" height="140" rx="10" fill="url(#specGrad)" stroke="#4ECDC4" stroke-width="1" stroke-opacity="0.5" filter="url(#shadow)"/>
+  <text x="270" y="355" fill="#4ECDC4" font-size="14" font-weight="700">SPEC-BUILDER AGENT</text>
+  <text x="510" y="355" fill="#4ECDC4" font-size="11" opacity="0.7">model: opus — Generation Specialist</text>
+
+  <rect x="270" y="370" width="150" height="80" rx="6" fill="#1a1a2e" stroke="#4ECDC4" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="345" y="393" text-anchor="middle" fill="#4ECDC4" font-size="11" font-weight="600">Template Reader</text>
+  <text x="345" y="410" text-anchor="middle" fill="#666" font-size="9">19-section format</text>
+  <text x="345" y="425" text-anchor="middle" fill="#666" font-size="9">14 design + 5 execution</text>
+  <text x="345" y="440" text-anchor="middle" fill="#666" font-size="9">template.md (gold std)</text>
+
+  <rect x="440" y="370" width="150" height="80" rx="6" fill="#1a1a2e" stroke="#4ECDC4" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="515" y="393" text-anchor="middle" fill="#4ECDC4" font-size="11" font-weight="600">Gap Interrogator</text>
+  <text x="515" y="410" text-anchor="middle" fill="#666" font-size="9">14-item checklist</text>
+  <text x="515" y="425" text-anchor="middle" fill="#666" font-size="9">Suggested defaults</text>
+  <text x="515" y="440" text-anchor="middle" fill="#666" font-size="9">No ambiguity allowed</text>
+
+  <rect x="610" y="370" width="150" height="80" rx="6" fill="#1a1a2e" stroke="#4ECDC4" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="685" y="393" text-anchor="middle" fill="#4ECDC4" font-size="11" font-weight="600">Spec Writer</text>
+  <text x="685" y="410" text-anchor="middle" fill="#666" font-size="9">ASCII diagrams</text>
+  <text x="685" y="425" text-anchor="middle" fill="#666" font-size="9">TS interfaces</text>
+  <text x="685" y="440" text-anchor="middle" fill="#666" font-size="9">Task manifest</text>
+
+  <rect x="780" y="370" width="130" height="80" rx="6" fill="#1a1a2e" stroke="#2ECC71" stroke-width="1.5"/>
+  <text x="845" y="400" text-anchor="middle" fill="#2ECC71" font-size="14" font-weight="700">SPEC.md</text>
+  <text x="845" y="420" text-anchor="middle" fill="#888" font-size="9">Self-contained</text>
+  <text x="845" y="435" text-anchor="middle" fill="#888" font-size="9">execution plan</text>
+
+  <!-- Arrow from SPEC.md to Validator -->
+  <line x1="700" y1="470" x2="700" y2="500" stroke="#4ECDC4" stroke-width="2" marker-end="url(#arrowGold)"/>
+
+  <!-- ========== PHASE 3: VALIDATOR ========== -->
+  <rect x="500" y="500" width="400" height="55" rx="8" fill="#1a1a2e" stroke="#F1C40F" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="700" y="525" text-anchor="middle" fill="#F1C40F" font-size="13" font-weight="700">STRUCTURAL VALIDATOR</text>
+  <text x="700" y="543" text-anchor="middle" fill="#888" font-size="10">10 checks: sections, cycles, agents, write-scope, checksums</text>
+
+  <!-- Arrow from Validator to Review -->
+  <line x1="700" y1="555" x2="700" y2="590" stroke="#F1C40F" stroke-width="2" marker-end="url(#arrowRed)"/>
+  <text x="730" y="578" fill="#2ECC71" font-size="10" font-weight="600">VALID</text>
+
+  <!-- ========== PHASE 4: REVIEW LOOP (red) ========== -->
+  <rect x="40" y="590" width="1320" height="210" rx="10" fill="url(#reviewGrad)" stroke="#FF6B6B" stroke-width="1" stroke-opacity="0.5" filter="url(#shadow)"/>
+  <text x="60" y="615" fill="#FF6B6B" font-size="14" font-weight="700">REVIEW LOOP</text>
+  <text x="210" y="615" fill="#FF6B6B" font-size="11" opacity="0.7">/sr orchestrator — Max 3 Iterations — Most converge in 1-2</text>
+
+  <!-- Spec-Reviewer box -->
+  <rect x="60" y="635" width="400" height="145" rx="8" fill="#1a1a2e" stroke="#FF6B6B" stroke-width="1.5"/>
+  <text x="260" y="660" text-anchor="middle" fill="#FF6B6B" font-size="13" font-weight="700">SPEC-REVIEWER AGENT</text>
+  <text x="260" y="678" text-anchor="middle" fill="#888" font-size="10">model: opus — Evaluation Specialist</text>
+
+  <!-- 7 dimension boxes -->
+  <rect x="80" y="690" width="65" height="30" rx="4" fill="#2a1a1a" stroke="#FF6B6B" stroke-width="0.8"/>
+  <text x="112" y="709" text-anchor="middle" fill="#FF6B6B" font-size="8" font-weight="600">COMP</text>
+
+  <rect x="150" y="690" width="65" height="30" rx="4" fill="#2a1a1a" stroke="#FF6B6B" stroke-width="0.8"/>
+  <text x="182" y="709" text-anchor="middle" fill="#FF6B6B" font-size="8" font-weight="600">CLAR</text>
+
+  <rect x="220" y="690" width="65" height="30" rx="4" fill="#2a1a1a" stroke="#FF6B6B" stroke-width="0.8"/>
+  <text x="252" y="709" text-anchor="middle" fill="#FF6B6B" font-size="8" font-weight="600">CORR</text>
+
+  <rect x="290" y="690" width="65" height="30" rx="4" fill="#2a1a1a" stroke="#FF6B6B" stroke-width="0.8"/>
+  <text x="322" y="709" text-anchor="middle" fill="#FF6B6B" font-size="8" font-weight="600">CONS</text>
+
+  <rect x="80" y="725" width="65" height="30" rx="4" fill="#2a1a1a" stroke="#FF6B6B" stroke-width="0.8"/>
+  <text x="112" y="744" text-anchor="middle" fill="#FF6B6B" font-size="8" font-weight="600">SDLC</text>
+
+  <rect x="150" y="725" width="65" height="30" rx="4" fill="#2a1a1a" stroke="#FF6B6B" stroke-width="0.8"/>
+  <text x="182" y="744" text-anchor="middle" fill="#FF6B6B" font-size="8" font-weight="600">ACTN</text>
+
+  <rect x="220" y="725" width="65" height="30" rx="4" fill="#2a1a1a" stroke="#FF6B6B" stroke-width="0.8"/>
+  <text x="252" y="744" text-anchor="middle" fill="#FF6B6B" font-size="8" font-weight="600">RBLD</text>
+
+  <!-- Severity legend -->
+  <rect x="310" y="725" width="130" height="30" rx="4" fill="#1a1a2e" stroke="#555" stroke-width="0.5"/>
+  <circle cx="325" cy="740" r="5" fill="#E74C3C"/>
+  <text x="335" y="744" fill="#E74C3C" font-size="8">CRITICAL</text>
+  <circle cx="375" cy="740" r="5" fill="#F39C12"/>
+  <text x="385" y="744" fill="#F39C12" font-size="8">WARN</text>
+  <circle cx="415" cy="740" r="5" fill="#3498DB"/>
+  <text x="425" y="744" fill="#3498DB" font-size="8">INFO</text>
+
+  <!-- SPEC-REVIEW.md output -->
+  <rect x="490" y="635" width="180" height="70" rx="8" fill="#1a1a2e" stroke="#FF6B6B" stroke-width="1.5"/>
+  <text x="580" y="660" text-anchor="middle" fill="#FF6B6B" font-size="12" font-weight="700">SPEC-REVIEW.md</text>
+  <text x="580" y="680" text-anchor="middle" fill="#888" font-size="9">Verdict: PASS | FAIL</text>
+  <text x="580" y="695" text-anchor="middle" fill="#888" font-size="9">Findings by dimension</text>
+
+  <!-- Arrow from reviewer to review doc -->
+  <line x1="460" y1="680" x2="488" y2="680" stroke="#FF6B6B" stroke-width="2" marker-end="url(#arrowRed)"/>
+
+  <!-- Decision diamond -->
+  <polygon points="700,655 740,685 700,715 660,685" fill="#1a1a2e" stroke="#F1C40F" stroke-width="2"/>
+  <text x="700" y="690" text-anchor="middle" fill="#F1C40F" font-size="11" font-weight="700">?</text>
+
+  <!-- Arrow from review doc to decision -->
+  <line x1="670" y1="670" x2="660" y2="680" stroke="#FF6B6B" stroke-width="1.5"/>
+
+  <!-- PASS path (right) -->
+  <line x1="740" y1="685" x2="850" y2="685" stroke="#2ECC71" stroke-width="2.5" marker-end="url(#arrowGreen)"/>
+  <text x="795" y="678" fill="#2ECC71" font-size="11" font-weight="700">PASS</text>
+
+  <!-- FAIL path (down) -->
+  <line x1="700" y1="715" x2="700" y2="745" stroke="#FF6B6B" stroke-width="2" marker-end="url(#arrowRed)"/>
+  <text x="720" y="738" fill="#FF6B6B" font-size="10" font-weight="600">FAIL</text>
+
+  <!-- Feedback file -->
+  <rect x="600" y="745" width="200" height="45" rx="6" fill="#1a1a2e" stroke="#FFB347" stroke-width="1.5"/>
+  <text x="700" y="765" text-anchor="middle" fill="#FFB347" font-size="11" font-weight="600">SPEC-REVIEW-feedback.md</text>
+  <text x="700" y="782" text-anchor="middle" fill="#888" font-size="9">MUST FIX + SHOULD FIX items</text>
+
+  <!-- Loop-back arrow from feedback to spec-builder (via left side) -->
+  <path d="M 600 767 L 60 767 L 60 410 L 268 410" fill="none" stroke="#FFB347" stroke-width="2.5" stroke-dasharray="8,4" marker-end="url(#arrowTeal)"/>
+  <text x="60" y="580" fill="#FFB347" font-size="11" font-weight="600" transform="rotate(-90, 60, 580)">REBUILD LOOP</text>
+
+  <!-- Iteration counter on loop -->
+  <rect x="20" y="480" width="65" height="25" rx="4" fill="#1a1a2e" stroke="#FFB347" stroke-width="1"/>
+  <text x="52" y="497" text-anchor="middle" fill="#FFB347" font-size="9" font-weight="600">iter++</text>
+
+  <!-- PASS destination box -->
+  <rect x="860" y="640" width="180" height="90" rx="10" fill="#1a1a2e" stroke="#2ECC71" stroke-width="2" filter="url(#shadow)"/>
+  <text x="950" y="668" text-anchor="middle" fill="#2ECC71" font-size="14" font-weight="800" filter="url(#glow)">VERIFIED</text>
+  <text x="950" y="688" text-anchor="middle" fill="#888" font-size="10">0 critical findings</text>
+  <text x="950" y="705" text-anchor="middle" fill="#888" font-size="10">All dimensions pass</text>
+  <text x="950" y="722" text-anchor="middle" fill="#2ECC71" font-size="10" font-weight="600">Ready for execution</text>
+
+  <!-- Arrow from verified to final intent gate -->
+  <line x1="950" y1="730" x2="950" y2="800" stroke="#2ECC71" stroke-width="2" marker-end="url(#arrowOrange)"/>
+
+  <!-- ========== PHASE 5: FINAL INTENT GATE ========== -->
+  <rect x="830" y="800" width="240" height="50" rx="8" fill="#1a1a2e" stroke="#FFB347" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="950" y="822" text-anchor="middle" fill="#FFB347" font-size="12" font-weight="700">INTENT GATE (final)</text>
+  <text x="950" y="840" text-anchor="middle" fill="#888" font-size="9">Success criteria vs objectives</text>
+
+  <!-- Arrow to execution -->
+  <line x1="950" y1="850" x2="950" y2="890" stroke="#FFB347" stroke-width="2" marker-end="url(#arrowPurple)"/>
+
+  <!-- ========== PHASE 6: EXECUTION (purple) ========== -->
+  <rect x="640" y="890" width="620" height="85" rx="10" fill="url(#execGrad)" stroke="#9B59B6" stroke-width="1" stroke-opacity="0.5" filter="url(#shadow)"/>
+  <text x="660" y="915" fill="#9B59B6" font-size="14" font-weight="700">SWARM EXECUTION</text>
+  <text x="870" y="915" fill="#9B59B6" font-size="11" opacity="0.7">/swarm --spec SPEC.md</text>
+
+  <rect x="660" y="930" width="120" height="30" rx="4" fill="#1a1a2e" stroke="#9B59B6" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="720" y="950" text-anchor="middle" fill="#9B59B6" font-size="10" font-weight="600">unix-coder</text>
+
+  <rect x="790" y="930" width="120" height="30" rx="4" fill="#1a1a2e" stroke="#9B59B6" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="850" y="950" text-anchor="middle" fill="#9B59B6" font-size="10" font-weight="600">tech-lead</text>
+
+  <rect x="920" y="930" width="120" height="30" rx="4" fill="#1a1a2e" stroke="#9B59B6" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="980" y="950" text-anchor="middle" fill="#9B59B6" font-size="10" font-weight="600">code-review</text>
+
+  <rect x="1050" y="930" width="120" height="30" rx="4" fill="#1a1a2e" stroke="#9B59B6" stroke-width="1" stroke-opacity="0.5"/>
+  <text x="1110" y="950" text-anchor="middle" fill="#9B59B6" font-size="10" font-weight="600">security-review</text>
+
+  <!-- Right sidebar: pipeline summary -->
+  <rect x="1100" y="635" width="240" height="155" rx="8" fill="#1a1a2e" stroke="#555" stroke-width="1" filter="url(#shadow)"/>
+  <text x="1220" y="660" text-anchor="middle" fill="#e0e0e0" font-size="12" font-weight="700">Pipeline Summary</text>
+  <line x1="1115" y1="670" x2="1325" y2="670" stroke="#333" stroke-width="1"/>
+
+  <circle cx="1125" cy="690" r="5" fill="#5DADE2"/>
+  <text x="1140" y="694" fill="#5DADE2" font-size="10">Context: Domain enrichment</text>
+
+  <circle cx="1125" cy="712" r="5" fill="#FFB347"/>
+  <text x="1140" y="716" fill="#FFB347" font-size="10">Intent: Objective alignment</text>
+
+  <circle cx="1125" cy="734" r="5" fill="#4ECDC4"/>
+  <text x="1140" y="738" fill="#4ECDC4" font-size="10">Spec: 19-section generation</text>
+
+  <circle cx="1125" cy="756" r="5" fill="#FF6B6B"/>
+  <text x="1140" y="760" fill="#FF6B6B" font-size="10">Review: 7-dimension scrutiny</text>
+
+  <circle cx="1125" cy="778" r="5" fill="#9B59B6"/>
+  <text x="1140" y="782" fill="#9B59B6" font-size="10">Execute: Agent dispatch</text>
+
+  <!-- Color legend at bottom left -->
+  <text x="60" y="910" fill="#555" font-size="10">Color Key:</text>
+  <rect x="60" y="920" width="12" height="12" rx="2" fill="#5DADE2"/>
+  <text x="78" y="931" fill="#5DADE2" font-size="9">Context</text>
+  <rect x="130" y="920" width="12" height="12" rx="2" fill="#FFB347"/>
+  <text x="148" y="931" fill="#FFB347" font-size="9">Intent</text>
+  <rect x="195" y="920" width="12" height="12" rx="2" fill="#4ECDC4"/>
+  <text x="213" y="931" fill="#4ECDC4" font-size="9">Spec</text>
+  <rect x="250" y="920" width="12" height="12" rx="2" fill="#FF6B6B"/>
+  <text x="268" y="931" fill="#FF6B6B" font-size="9">Review</text>
+  <rect x="315" y="920" width="12" height="12" rx="2" fill="#9B59B6"/>
+  <text x="333" y="931" fill="#9B59B6" font-size="9">Execution</text>
+
+  <!-- Footer -->
+  <text x="700" y="980" text-anchor="middle" fill="#444" font-size="9">Article #4 in the AI Agent Harness Series  |  Spec-Builder + Spec-Reviewer + Intent Engineering + Context Injection</text>
+</svg>
