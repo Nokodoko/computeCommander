@@ -140,13 +140,83 @@ func TestExtractPromptOutcomesEmpty(t *testing.T) {
 	}
 }
 
+func TestExtractPromptOutputsHeading(t *testing.T) {
+	// # Outputs should work the same as # Outcomes
+	prompt := "# Outputs\n\n- First output\n- Second output\n"
+	outcomes := extractPromptOutcomes(prompt)
+	if len(outcomes) != 2 {
+		t.Errorf("expected 2 outcomes from # Outputs, got %d: %v", len(outcomes), outcomes)
+	}
+}
+
+func TestExtractPromptOutputSingular(t *testing.T) {
+	prompt := "# Output\n\n- Single item\n"
+	outcomes := extractPromptOutcomes(prompt)
+	if len(outcomes) != 1 {
+		t.Errorf("expected 1 outcome from # Output, got %d: %v", len(outcomes), outcomes)
+	}
+}
+
+func TestExtractPromptOutcomeSingular(t *testing.T) {
+	prompt := "## Outcome\n\n- Single item\n"
+	outcomes := extractPromptOutcomes(prompt)
+	if len(outcomes) != 1 {
+		t.Errorf("expected 1 outcome from ## Outcome, got %d: %v", len(outcomes), outcomes)
+	}
+}
+
+func TestExtractNumberedList(t *testing.T) {
+	prompt := "# Outcomes\n\n1. First item\n2. Second item\n3. Third item\n"
+	outcomes := extractPromptOutcomes(prompt)
+	if len(outcomes) != 3 {
+		t.Errorf("expected 3 numbered outcomes, got %d: %v", len(outcomes), outcomes)
+	}
+	if len(outcomes) > 0 && outcomes[0] != "First item" {
+		t.Errorf("expected 'First item', got %q", outcomes[0])
+	}
+}
+
+func TestExtractMixedList(t *testing.T) {
+	prompt := "# Outputs\n\n1. Numbered item\n- Bullet item\n* Star item\n"
+	outcomes := extractPromptOutcomes(prompt)
+	if len(outcomes) != 3 {
+		t.Errorf("expected 3 mixed outcomes, got %d: %v", len(outcomes), outcomes)
+	}
+}
+
+func TestIsOutcomeHeading(t *testing.T) {
+	cases := []struct {
+		line string
+		want bool
+	}{
+		{"# Outcomes", true},
+		{"## Outcomes", true},
+		{"# Outcome", true},
+		{"# Outputs", true},
+		{"# Output", true},
+		{"## Output", true},
+		{"### Outcomes", true},
+		{"# outcomes", true},
+		{"# OUTPUTS", true},
+		{"# Other", false},
+		{"# Out", false},
+		{"Outcomes", false},
+	}
+	for _, tc := range cases {
+		got := isOutcomeHeading(tc.line)
+		if got != tc.want {
+			t.Errorf("isOutcomeHeading(%q) = %v, want %v", tc.line, got, tc.want)
+		}
+	}
+}
+
 func TestKeywordOverlap(t *testing.T) {
-	score := keywordOverlap("tests pass for all new code", "tests pass for all new code")
+	score := KeywordOverlap("tests pass for all new code", "tests pass for all new code")
 	if score < 0.9 {
 		t.Errorf("identical strings should have high overlap, got %.2f", score)
 	}
 
-	score = keywordOverlap("completely different text here", "nothing in common at all")
+	score = KeywordOverlap("completely different text here", "nothing in common at all")
 	if score > 0.3 {
 		t.Errorf("unrelated strings should have low overlap, got %.2f", score)
 	}

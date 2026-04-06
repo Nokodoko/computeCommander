@@ -38,18 +38,35 @@ func NewIntentVerifier(objectivesDir string) *IntentVerifier {
 	return &IntentVerifier{ObjectivesDir: objectivesDir}
 }
 
+// HasOutputsHeading checks if the prompt contains an # Outputs/Outcomes heading.
+func HasOutputsHeading(prompt string) bool {
+	for _, line := range strings.Split(prompt, "\n") {
+		if isOutcomeHeading(strings.TrimSpace(line)) {
+			return true
+		}
+	}
+	return false
+}
+
 // Verify validates a prompt's # Outcomes section against project objectives.
 func (v *IntentVerifier) Verify(prompt string) *VerifyResult {
 	outcomes := extractPromptOutcomes(prompt)
 	if len(outcomes) == 0 {
+		if HasOutputsHeading(prompt) {
+			return &VerifyResult{
+				Valid:    false,
+				Score:    0,
+				Blockers: []string{"# Outputs heading found but no list items — use bullet (- ) or numbered (1. ) format"},
+			}
+		}
 		return &VerifyResult{
 			Valid:    false,
 			Score:    0,
-			Blockers: []string{"No # Outcomes section found in prompt"},
+			Blockers: []string{"No # Outputs section found in prompt"},
 		}
 	}
 
-	objectives := v.loadObjectives()
+	objectives := v.LoadObjectives()
 
 	var checks []OutcomeCheck
 	var totalScore float64
@@ -77,7 +94,25 @@ func (v *IntentVerifier) Verify(prompt string) *VerifyResult {
 	return result
 }
 
-// extractPromptOutcomes parses the # Outcomes section from a prompt.
+// isOutcomeHeading checks if a line is an outcome/output section heading.
+// Matches: # Outcome, # Outcomes, # Output, # Outputs (and ## variants).
+func isOutcomeHeading(line string) bool {
+	lower := strings.ToLower(line)
+	// Strip leading #s and whitespace.
+	for _, prefix := range []string{"### ", "## ", "# "} {
+		if strings.HasPrefix(lower, prefix) {
+			word := strings.TrimSpace(strings.TrimPrefix(lower, prefix))
+			switch word {
+			case "outcome", "outcomes", "output", "outputs":
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// extractPromptOutcomes parses the # Outcomes/Outputs section from a prompt.
+// Accepts bullet lists (- / *) and numbered lists (1. / 2.).
 func extractPromptOutcomes(prompt string) []string {
 	var outcomes []string
 	inOutcomes := false
@@ -85,7 +120,7 @@ func extractPromptOutcomes(prompt string) []string {
 	for _, line := range strings.Split(prompt, "\n") {
 		trimmed := strings.TrimSpace(line)
 
-		if strings.HasPrefix(trimmed, "## Outcomes") || strings.HasPrefix(trimmed, "# Outcomes") {
+		if isOutcomeHeading(trimmed) {
 			inOutcomes = true
 			continue
 		}
@@ -94,17 +129,45 @@ func extractPromptOutcomes(prompt string) []string {
 			break // Next section
 		}
 
-		if inOutcomes && (strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ")) {
-			outcome := strings.TrimPrefix(strings.TrimPrefix(trimmed, "- "), "* ")
-			outcomes = append(outcomes, outcome)
+		if !inOutcomes {
+			continue
+		}
+
+		// Bullet list: - item or * item
+		if strings.HasPrefix(trimmed, "- ") {
+			outcomes = append(outcomes, strings.TrimPrefix(trimmed, "- "))
+			continue
+		}
+		if strings.HasPrefix(trimmed, "* ") {
+			outcomes = append(outcomes, strings.TrimPrefix(trimmed, "* "))
+			continue
+		}
+
+		// Numbered list: 1. item, 2. item, etc.
+		if len(trimmed) > 2 {
+			dotIdx := strings.Index(trimmed, ". ")
+			if dotIdx > 0 && dotIdx <= 3 {
+				prefix := trimmed[:dotIdx]
+				allDigits := true
+				for _, c := range prefix {
+					if c < '0' || c > '9' {
+						allDigits = false
+						break
+					}
+				}
+				if allDigits {
+					outcomes = append(outcomes, trimmed[dotIdx+2:])
+					continue
+				}
+			}
 		}
 	}
 
 	return outcomes
 }
 
-// loadObjectives reads objective files from the objectives directory.
-func (v *IntentVerifier) loadObjectives() []string {
+// LoadObjectives reads objective files from the objectives directory.
+func (v *IntentVerifier) LoadObjectives() []string {
 	var objectives []string
 
 	paths := []string{
@@ -150,7 +213,7 @@ func (v *IntentVerifier) classifyAndScore(outcome string, objectives []string) O
 	outcomeLower := strings.ToLower(outcome)
 	for _, obj := range objectives {
 		objLower := strings.ToLower(obj)
-		score := keywordOverlap(outcomeLower, objLower)
+		score := KeywordOverlap(outcomeLower, objLower)
 		if score > bestScore {
 			bestScore = score
 			bestReason = fmt.Sprintf("Aligned with: %s", obj)
@@ -192,8 +255,8 @@ func classifyPredicate(outcome string) string {
 	}
 }
 
-// keywordOverlap computes a simple keyword overlap score between two strings.
-func keywordOverlap(a, b string) float64 {
+// KeywordOverlap computes a simple keyword overlap score between two strings.
+func KeywordOverlap(a, b string) float64 {
 	aWords := strings.Fields(a)
 	bWords := strings.Fields(b)
 
