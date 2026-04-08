@@ -77,6 +77,8 @@ func GenerateLayout(opts LayoutOpts) string {
 		projectDir, _ = os.Getwd()
 	}
 
+	home, _ := os.UserHomeDir()
+
 	agentPane := buildAgentPane(opts.AgentCommand, opts.AgentWrapperPath, opts.TabHash)
 
 	// Use fp-wrapper.sh for session-switch support. The wrapper watches
@@ -85,7 +87,6 @@ func GenerateLayout(opts LayoutOpts) string {
 	lazygitWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "lazygit-wrapper.sh")
 	tgVizWrapperPath := filepath.Join(projectDir, ".computecommander", "scripts", "tg-viz-wrapper.sh")
 	if opts.SystemWide {
-		home, _ := os.UserHomeDir()
 		fpWrapperPath = filepath.Join(home, ".computecommander", "scripts", "fp-wrapper.sh")
 		lazygitWrapperPath = filepath.Join(home, ".computecommander", "scripts", "lazygit-wrapper.sh")
 		tgVizWrapperPath = filepath.Join(home, ".computecommander", "scripts", "tg-viz-wrapper.sh")
@@ -97,6 +98,10 @@ func GenerateLayout(opts LayoutOpts) string {
 		projectFlag = fmt.Sprintf(` "--project" "%s"`, opts.ProjectID)
 	}
 
+	// Calcurse config and data directories.
+	calcurseConf := filepath.Join(home, ".calcurse", "conf")
+	calcurseDir := filepath.Join(home, ".calcurse")
+
 	tabName := "[CMDR] Dashboard"
 	if opts.Version != "" {
 		tabName = fmt.Sprintf("[CMDR] Dashboard v%s", opts.Version)
@@ -105,7 +110,6 @@ func GenerateLayout(opts LayoutOpts) string {
 	// Resolve the focus-watcher path (Rust binary or bash script fallback).
 	scriptDir := projectDir
 	if opts.SystemWide {
-		home, _ := os.UserHomeDir()
 		scriptDir = home
 	}
 	focusWatcherPath, _ := WriteFocusWatcher(scriptDir, projectDir, opts.TabHash)
@@ -153,10 +157,14 @@ func GenerateLayout(opts LayoutOpts) string {
 %s
         pane split_direction="horizontal" {
             pane split_direction="vertical" size="67%%" {
-                pane split_direction="horizontal" size="10%%" {
+                pane split_direction="horizontal" size="14%%" {
                     pane name="Prompt" size=1 borderless=true {
                         command "%s"
                         args "prompt" "--pane"
+                    }
+                    pane name="Cal" size="25%%" color="cyan" {
+                        command "calcurse"
+                        args "-C" "%s" "-D" "%s"
                     }
                     pane {
                         command "bash"
@@ -200,7 +208,7 @@ func GenerateLayout(opts LayoutOpts) string {
         }
     }
 }
-`, projectDir, tabName, focusWatcherPane, cmdrBin, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, tgVizWrapperPath, lazygitWrapperPath, projectDir, opts.TabHash)
+`, projectDir, tabName, focusWatcherPane, cmdrBin, calcurseConf, calcurseDir, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, tgVizWrapperPath, lazygitWrapperPath, projectDir, opts.TabHash)
 }
 
 
