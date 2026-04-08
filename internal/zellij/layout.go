@@ -162,7 +162,7 @@ func GenerateLayout(opts LayoutOpts) string {
                         command "%s"
                         args "prompt" "--pane"
                     }
-                    pane name="Cal" size="25%%" color="cyan" {
+                    pane name="Cal" size="25%%" {
                         command "calcurse"
                         args "-C" "%s" "-D" "%s"
                     }
