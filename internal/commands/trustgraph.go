@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"time"
@@ -96,6 +97,18 @@ func printTGSummary(app *App, jsonOut bool) error {
 
 func runTGPane(ctx context.Context, app *App) error {
 	cfg := app.Config.TrustGraph
+
+	// Feature flag: if trustgraph-viewer Electron overlay is installed, yield to it.
+	// The overlay renders the graph visualization; the bar graph beneath is redundant.
+	if _, err := exec.LookPath("trustgraph-viewer"); err == nil {
+		const dim = "\033[2m"
+		const reset = "\033[0m"
+		fmt.Fprintf(os.Stdout, "\033[2J\033[H") // clear screen
+		fmt.Fprintf(os.Stdout, dim+" TG Viz overlay active"+reset+"\n")
+		fmt.Fprintf(os.Stdout, dim+" trustgraph-viewer"+reset+"\n")
+		<-ctx.Done()
+		return nil
+	}
 
 	refreshInterval := time.Duration(cfg.RefreshSecs) * time.Second
 	if refreshInterval < 2*time.Second {

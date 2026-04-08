@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -125,6 +126,9 @@ Use --agent-cmd to override the default agent command in the center pane.`,
 			// so the status/feed panes have data to display immediately.
 			registerDashboardSession(cmd.Context(), app, projectDir)
 
+			// Spawn TrustGraph viewer overlay after layout renders.
+			spawnTrustGraphViewer()
+
 			return nil
 		},
 	}
@@ -208,4 +212,27 @@ func registerDashboardSession(ctx context.Context, app *App, projectDir string) 
 		VALUES ('system', 'dashboard_started', '', 'Dashboard launched', 'info', ?, ?)`,
 		runID, now,
 	)
+}
+
+// spawnTrustGraphViewer launches the trustgraph-viewer overlay if the binary
+// is installed. A goroutine sleeps briefly so the zellij layout has time to
+// render before the viewer starts querying pane positions. The child process
+// is fully detached (setsid) so it survives the parent exiting.
+func spawnTrustGraphViewer() {
+	bin, err := exec.LookPath("trustgraph-viewer")
+	if err != nil {
+		return // not installed — skip silently
+	}
+
+	// The delay runs inside the forked shell process so it survives the
+	// parent exiting. Passing bin as $0 avoids string concatenation and
+	// shell injection if the path contains spaces.
+	c := exec.Command("sh", "-c", `sleep 2 && exec "$0"`, bin)
+	c.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	if err := c.Start(); err != nil {
+		fmt.Fprintf(os.Stderr, "trustgraph-viewer: %v\n", err)
+		return
+	}
+	// Release — child is in its own session, will outlive us.
+	_ = c.Process.Release()
 }
