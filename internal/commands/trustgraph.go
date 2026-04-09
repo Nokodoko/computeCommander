@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/noko/computecommander/internal/sse"
 	"github.com/noko/computecommander/internal/trustgraph"
 	"github.com/spf13/cobra"
 )
@@ -18,6 +19,8 @@ import (
 // TrustGraphCmd creates the "tg" subcommand for TrustGraph dashboard integration.
 // In --pane mode it runs a long-lived loop that polls the TrustGraph gateway and
 // renders a compact ANSI status view suitable for a zellij dashboard pane.
+// When sse_relay is configured it streams live events from the SSE relay as the
+// primary data source, with TG gateway stats rendered as secondary context.
 func TrustGraphCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "tg",
@@ -97,9 +100,9 @@ func printTGSummary(app *App, jsonOut bool) error {
 
 func runTGPane(ctx context.Context, app *App) error {
 	cfg := app.Config.TrustGraph
+	relayCfg := app.Config.SSERelay
 
 	// Feature flag: if trustgraph-viewer Electron overlay is installed, yield to it.
-	// The overlay renders the graph visualization; the bar graph beneath is redundant.
 	if _, err := exec.LookPath("trustgraph-viewer"); err == nil {
 		const dim = "\033[2m"
 		const reset = "\033[0m"
@@ -123,32 +126,45 @@ func runTGPane(ctx context.Context, app *App) error {
 		red     = "\033[31m"
 		cyan    = "\033[36m"
 		yellow  = "\033[33m"
+		amber   = "\033[33m" // amber = yellow on most terminals — for lewis events
 		white   = "\033[37m"
+		magenta = "\033[35m"
 		reset   = "\033[0m"
 		clearSc = "\033[2J\033[H" // clear screen + cursor home
 	)
 
-	var client *trustgraph.Client
+	// Start SSE relay client if configured (primary data source).
+	var relayClient *sse.RelayClient
+	if relayCfg.URL != "" {
+		relayClient = sse.NewRelayClient(relayCfg.URL, relayCfg.APIKey)
+		defer relayClient.Close()
+	}
+
+	// TG gateway client (secondary / fallback data source).
+	var tgClient *trustgraph.Client
 
 	for {
 		select {
 		case <-ctx.Done():
-			if client != nil {
-				client.Close()
+			if tgClient != nil {
+				tgClient.Close()
 			}
 			return nil
 		default:
 		}
 
 		var buf strings.Builder
-
 		buf.WriteString(clearSc)
 
-		if !cfg.Enabled {
+		hasSource := relayClient != nil || cfg.Enabled
+
+		if !hasSource {
+			// Neither source configured.
 			buf.WriteString(dim + " TG  disabled" + reset + "\n")
 			buf.WriteString(dim + strings.Repeat("─", 40) + reset + "\n\n")
 			buf.WriteString(dim + "  Enable in config:" + reset + "\n")
 			buf.WriteString(dim + "  trustgraph.enabled: true" + reset + "\n")
+			buf.WriteString(dim + "  # or configure sse_relay.url" + reset + "\n")
 			fmt.Fprint(os.Stdout, buf.String())
 			select {
 			case <-ctx.Done():
@@ -158,108 +174,146 @@ func runTGPane(ctx context.Context, app *App) error {
 			continue
 		}
 
-		// Lazily create client.
-		if client == nil {
-			client = trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
-		}
+		// ── SSE Relay section (primary) ──────────────────────────────────────
+		if relayClient != nil {
+			counts := relayClient.Counts()
+			recentEvents := relayClient.RecentEvents(10)
 
-		if !client.Available() {
-			buf.WriteString(bold + cyan + " TG" + reset + "  " + dim + "disconnected" + reset + "\n")
-			buf.WriteString(dim + strings.Repeat("─", 40) + reset + "\n\n")
-			buf.WriteString(dim + "  Gateway: " + cfg.GatewayURL + reset + "\n")
-			buf.WriteString(dim + "  Waiting for connection..." + reset + "\n")
-			fmt.Fprint(os.Stdout, buf.String())
-			select {
-			case <-ctx.Done():
-				client.Close()
-				return nil
-			case <-time.After(refreshInterval):
-			}
-			continue
-		}
-
-		// Query triples.
-		queryCtx, queryCancel := context.WithTimeout(ctx, 5*time.Second)
-		limit := cfg.MaxTriples
-		if limit <= 0 {
-			limit = 200
-		}
-		resp, err := client.TriplesQuery(queryCtx, trustgraph.TriplesQueryRequest{Limit: limit})
-		queryCancel()
-
-		if err != nil {
-			buf.WriteString(bold + cyan + " TG" + reset + "  " + red + "error" + reset + "\n")
-			buf.WriteString(dim + strings.Repeat("─", 40) + reset + "\n\n")
-			errMsg := err.Error()
-			if len(errMsg) > 60 {
-				errMsg = errMsg[:58] + ".."
-			}
-			buf.WriteString(red + "  " + errMsg + reset + "\n")
-			fmt.Fprint(os.Stdout, buf.String())
-			select {
-			case <-ctx.Done():
-				client.Close()
-				return nil
-			case <-time.After(refreshInterval):
-			}
-			continue
-		}
-
-		// Derive stats.
-		nodes, topEntities := deriveTGStats(resp.Response, cfg.MaxNodes)
-		nodeCount := len(nodes)
-		edgeCount := len(resp.Response)
-
-		// Render header.
-		buf.WriteString(bold + cyan + " TG" + reset + "  " + green + "connected" + reset)
-		buf.WriteString(dim + fmt.Sprintf("  %d nodes  %d edges", nodeCount, edgeCount) + reset + "\n")
-		buf.WriteString(dim + strings.Repeat("─", 40) + reset + "\n")
-
-		// Top entities.
-		buf.WriteString(bold + white + " Top Entities:" + reset + "\n")
-
-		if len(topEntities) == 0 {
-			buf.WriteString(dim + "  No entities found." + reset + "\n")
-		} else {
-			maxShow := 12
-			if len(topEntities) < maxShow {
-				maxShow = len(topEntities)
+			connColor := green
+			connLabel := "connected"
+			if !relayClient.Connected() {
+				connColor = red
+				connLabel = "disconnected"
 			}
 
-			// Find max name length for alignment.
-			maxNameLen := 0
-			for _, e := range topEntities[:maxShow] {
-				if len(e.id) > maxNameLen {
-					maxNameLen = len(e.id)
+			buf.WriteString(bold + cyan + " SSE" + reset + "  " + connColor + connLabel + reset)
+
+			total := counts.Lewis + counts.Monty + counts.Other
+			if total > 0 {
+				buf.WriteString(dim + fmt.Sprintf("  lewis:%d  monty:%d  total:%d",
+					counts.Lewis, counts.Monty, total) + reset)
+			}
+			buf.WriteString("\n")
+
+			if !relayClient.Connected() {
+				if lastErr := relayClient.LastError(); lastErr != "" {
+					errMsg := lastErr
+					if len(errMsg) > 58 {
+						errMsg = errMsg[:56] + ".."
+					}
+					buf.WriteString(dim + "  " + errMsg + reset + "\n")
+				}
+				buf.WriteString(dim + "  Reconnecting to " + relayCfg.URL + reset + "\n")
+			} else if len(recentEvents) == 0 {
+				buf.WriteString(dim + "  Waiting for events..." + reset + "\n")
+			} else {
+				buf.WriteString(bold + white + " Recent Activity:" + reset + "\n")
+				for _, ev := range recentEvents {
+					hostColor := magenta
+					switch ev.Host {
+					case "lewis":
+						hostColor = amber
+					case "monty":
+						hostColor = cyan
+					}
+					summary := ev.Summary
+					if len(summary) > 48 {
+						summary = summary[:46] + ".."
+					}
+					timeStr := ev.CapturedAt.Format("15:04:05")
+					buf.WriteString(fmt.Sprintf("  %s%-6s%s %s%s%s  %s%s%s\n",
+						hostColor, ev.Host, reset,
+						dim, timeStr, reset,
+						dim, summary, reset,
+					))
 				}
 			}
-			if maxNameLen > 22 {
-				maxNameLen = 22
+
+			buf.WriteString(dim + strings.Repeat("─", 40) + reset + "\n")
+		}
+
+		// ── TG Gateway section (secondary) ───────────────────────────────────
+		if cfg.Enabled {
+			// Lazily create client.
+			if tgClient == nil {
+				tgClient = trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
 			}
 
-			for _, e := range topEntities[:maxShow] {
-				name := e.id
-				if len(name) > 22 {
-					name = name[:20] + ".."
+			if !tgClient.Available() {
+				buf.WriteString(bold + cyan + " TG" + reset + "  " + dim + "disconnected" + reset + "\n")
+				buf.WriteString(dim + "  Gateway: " + cfg.GatewayURL + reset + "\n")
+			} else {
+				queryCtx, queryCancel := context.WithTimeout(ctx, 5*time.Second)
+				limit := cfg.MaxTriples
+				if limit <= 0 {
+					limit = 200
 				}
-				bar := strings.Repeat("|", min(e.degree, 20))
-				buf.WriteString(fmt.Sprintf("  "+cyan+"%-*s"+reset+"  "+dim+"%3d"+reset+" "+yellow+"%s"+reset+"\n",
-					maxNameLen, name, e.degree, bar))
-			}
+				resp, err := tgClient.TriplesQuery(queryCtx, trustgraph.TriplesQueryRequest{Limit: limit})
+				queryCancel()
 
-			if len(topEntities) > maxShow {
-				buf.WriteString(dim + fmt.Sprintf("  ... +%d more", len(topEntities)-maxShow) + reset + "\n")
+				if err != nil {
+					errMsg := err.Error()
+					if len(errMsg) > 60 {
+						errMsg = errMsg[:58] + ".."
+					}
+					buf.WriteString(bold + cyan + " TG" + reset + "  " + red + "error" + reset + "\n")
+					buf.WriteString(dim + "  " + errMsg + reset + "\n")
+				} else {
+					nodes, topEntities := deriveTGStats(resp.Response, cfg.MaxNodes)
+					nodeCount := len(nodes)
+					edgeCount := len(resp.Response)
+
+					buf.WriteString(bold + cyan + " TG" + reset + "  " + green + "connected" + reset)
+					buf.WriteString(dim + fmt.Sprintf("  %d nodes  %d edges", nodeCount, edgeCount) + reset + "\n")
+					buf.WriteString(bold + white + " Top Entities:" + reset + "\n")
+
+					maxShow := 8
+					if len(topEntities) < maxShow {
+						maxShow = len(topEntities)
+					}
+
+					if maxShow == 0 {
+						buf.WriteString(dim + "  No entities found." + reset + "\n")
+					} else {
+						maxNameLen := 0
+						for _, e := range topEntities[:maxShow] {
+							if len(e.id) > maxNameLen {
+								maxNameLen = len(e.id)
+							}
+						}
+						if maxNameLen > 20 {
+							maxNameLen = 20
+						}
+
+						for _, e := range topEntities[:maxShow] {
+							name := e.id
+							if len(name) > 20 {
+								name = name[:18] + ".."
+							}
+							bar := strings.Repeat("|", min(e.degree, 16))
+							buf.WriteString(fmt.Sprintf("  "+cyan+"%-*s"+reset+"  "+dim+"%3d"+reset+" "+yellow+"%s"+reset+"\n",
+								maxNameLen, name, e.degree, bar))
+						}
+
+						if len(topEntities) > maxShow {
+							buf.WriteString(dim + fmt.Sprintf("  ... +%d more", len(topEntities)-maxShow) + reset + "\n")
+						}
+					}
+				}
 			}
 		}
 
 		// Footer with timestamp.
-		buf.WriteString("\n" + dim + "  " + time.Now().Format("15:04:05") + "  refresh " + fmt.Sprintf("%ds", int(refreshInterval.Seconds())) + reset + "\n")
+		buf.WriteString("\n" + dim + "  " + time.Now().Format("15:04:05") +
+			"  refresh " + fmt.Sprintf("%ds", int(refreshInterval.Seconds())) + reset + "\n")
 
 		fmt.Fprint(os.Stdout, buf.String())
 
 		select {
 		case <-ctx.Done():
-			client.Close()
+			if tgClient != nil {
+				tgClient.Close()
+			}
 			return nil
 		case <-time.After(refreshInterval):
 		}

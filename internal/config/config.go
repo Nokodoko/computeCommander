@@ -12,46 +12,54 @@ import (
 
 // Config is the top-level ComputeCommander configuration matching spec section 6.1.
 type Config struct {
-	Version   int              `yaml:"version"`
-	System    SystemConfig     `yaml:"system"`
-	Project   ProjectConfig    `yaml:"project"`
-	Projects  []ProjectEntry   `yaml:"projects"`
-	Database  DatabaseConfig   `yaml:"database"`
-	Zellij    ZellijConfig     `yaml:"zellij"`
-	Agents    AgentsConfig     `yaml:"agents"`
-	Worktrees WorktreesConfig  `yaml:"worktrees"`
-	Defaults  DefaultsConfig   `yaml:"defaults"`
-	Nudge     NudgeConfig      `yaml:"nudge"`
-	Watchdog  WatchdogConfig   `yaml:"watchdog"`
-	Merge     MergeConfig      `yaml:"merge"`
-	Features  FeaturesConfig   `yaml:"features"`
-	Logging   LoggingConfig    `yaml:"logging"`
-	Runtimes  RuntimesConfig   `yaml:"runtimes"`
-	Agentic   AgenticConfig    `yaml:"agentic"`
+	Version    int              `yaml:"version"`
+	System     SystemConfig     `yaml:"system"`
+	Project    ProjectConfig    `yaml:"project"`
+	Projects   []ProjectEntry   `yaml:"projects"`
+	Database   DatabaseConfig   `yaml:"database"`
+	Zellij     ZellijConfig     `yaml:"zellij"`
+	Agents     AgentsConfig     `yaml:"agents"`
+	Worktrees  WorktreesConfig  `yaml:"worktrees"`
+	Defaults   DefaultsConfig   `yaml:"defaults"`
+	Nudge      NudgeConfig      `yaml:"nudge"`
+	Watchdog   WatchdogConfig   `yaml:"watchdog"`
+	Merge      MergeConfig      `yaml:"merge"`
+	Features   FeaturesConfig   `yaml:"features"`
+	Logging    LoggingConfig    `yaml:"logging"`
+	Runtimes   RuntimesConfig   `yaml:"runtimes"`
+	Agentic    AgenticConfig    `yaml:"agentic"`
 	Jira       JiraConfig       `yaml:"jira"`
 	OpenBrain  OpenBrainConfig  `yaml:"openbrain"`
 	TrustGraph TrustGraphConfig `yaml:"trustgraph"`
+	SSERelay   SSERelayConfig   `yaml:"sse_relay"`
 }
 
 // OpenBrainConfig holds the configuration for the OpenBrain MCP server integration.
 type OpenBrainConfig struct {
 	Enabled        bool   `yaml:"enabled"`
-	MCPSseURL      string `yaml:"mcp_sse_url"`       // ob-mcp SSE transport address (default: http://localhost:8200)
-	APIKey         string `yaml:"api_key"`            // API key for authentication (supports ${OB_API_KEY})
-	PollIntervalMs int    `yaml:"poll_interval_ms"`   // Fallback poll interval in milliseconds (default: 30000)
-	MaxEntries     int    `yaml:"max_entries"`         // Max entries shown in pane (default: 20)
-	DefaultSince   string `yaml:"default_since"`       // Default time window for reads (default: 72h)
+	MCPSseURL      string `yaml:"mcp_sse_url"`      // ob-mcp SSE transport address (default: http://localhost:8200)
+	APIKey         string `yaml:"api_key"`          // API key for authentication (supports ${OB_API_KEY})
+	PollIntervalMs int    `yaml:"poll_interval_ms"` // Fallback poll interval in milliseconds (default: 30000)
+	MaxEntries     int    `yaml:"max_entries"`      // Max entries shown in pane (default: 20)
+	DefaultSince   string `yaml:"default_since"`    // Default time window for reads (default: 72h)
 }
 
 // TrustGraphConfig holds the configuration for the TrustGraph knowledge graph integration.
 type TrustGraphConfig struct {
 	Enabled     bool   `yaml:"enabled"`
-	GatewayURL  string `yaml:"gateway_url"`   // TrustGraph REST gateway address (default: http://localhost:8088)
-	Token       string `yaml:"token"`          // API key for gateway auth (supports ${TG_TOKEN})
-	FlowID      string `yaml:"flow_id"`        // TrustGraph flow ID for service queries (default: default)
-	MaxNodes    int    `yaml:"max_nodes"`      // max nodes to display (default: 100)
-	MaxTriples  int    `yaml:"max_triples"`    // max triples per query (default: 200)
-	RefreshSecs int    `yaml:"refresh_secs"`   // override refresh interval (default: 5)
+	GatewayURL  string `yaml:"gateway_url"`  // TrustGraph REST gateway address (default: http://localhost:8088)
+	Token       string `yaml:"token"`        // API key for gateway auth (supports ${TG_TOKEN})
+	FlowID      string `yaml:"flow_id"`      // TrustGraph flow ID for service queries (default: default)
+	MaxNodes    int    `yaml:"max_nodes"`    // max nodes to display (default: 100)
+	MaxTriples  int    `yaml:"max_triples"`  // max triples per query (default: 200)
+	RefreshSecs int    `yaml:"refresh_secs"` // override refresh interval (default: 5)
+}
+
+// SSERelayConfig holds configuration for the OpenBrain SSE relay connection.
+// The relay aggregates memory events from multiple hosts (lewis, monty).
+type SSERelayConfig struct {
+	URL    string `yaml:"url"`     // SSE relay endpoint (e.g. http://monty:8202/events/memories)
+	APIKey string `yaml:"api_key"` // Authentication key for the relay (supports ${ENV_VAR})
 }
 
 // JiraConfig holds multi-instance Jira integration configuration.
@@ -119,25 +127,25 @@ type AgenticConfig struct {
 // TraceConfig configures the traceability engine.
 type TraceConfig struct {
 	Enabled       bool   `yaml:"enabled"`
-	BatchSize     int    `yaml:"batch_size"`      // Max events before flush (default: 100)
-	FlushInterval string `yaml:"flush_interval"`  // Max time before flush (default: "5s")
-	RetentionDays int    `yaml:"retention_days"`   // Auto-prune after N days (default: 7)
+	BatchSize     int    `yaml:"batch_size"`     // Max events before flush (default: 100)
+	FlushInterval string `yaml:"flush_interval"` // Max time before flush (default: "5s")
+	RetentionDays int    `yaml:"retention_days"` // Auto-prune after N days (default: 7)
 }
 
 // BlocksConfig configures the block rule engine.
 type BlocksConfig struct {
-	Enabled      bool     `yaml:"enabled"`
-	RulesDir     string   `yaml:"rules_dir"`       // Directory containing YAML rule files
-	DefaultRules string   `yaml:"default_rules"`    // Path to default.yaml
-	CustomRules  string   `yaml:"custom_rules"`     // Path to custom.yaml (optional)
-	FailClosed   bool     `yaml:"fail_closed"`      // If true, block on rule engine failure
+	Enabled      bool   `yaml:"enabled"`
+	RulesDir     string `yaml:"rules_dir"`     // Directory containing YAML rule files
+	DefaultRules string `yaml:"default_rules"` // Path to default.yaml
+	CustomRules  string `yaml:"custom_rules"`  // Path to custom.yaml (optional)
+	FailClosed   bool   `yaml:"fail_closed"`   // If true, block on rule engine failure
 }
 
 // IsolationConfig configures the isolation engine.
 type IsolationConfig struct {
-	Enabled         bool              `yaml:"enabled"`
-	UseCgroups      bool              `yaml:"use_cgroups"`       // Enable cgroup v2 isolation
-	UseNamespaces   bool              `yaml:"use_namespaces"`    // Enable mount namespace isolation
+	Enabled          bool             `yaml:"enabled"`
+	UseCgroups       bool             `yaml:"use_cgroups"`       // Enable cgroup v2 isolation
+	UseNamespaces    bool             `yaml:"use_namespaces"`    // Enable mount namespace isolation
 	DefaultResources ResourceDefaults `yaml:"default_resources"` // Default resource limits
 }
 
@@ -151,10 +159,10 @@ type ResourceDefaults struct {
 
 // GatesConfig configures the quality gate pipeline.
 type GatesConfig struct {
-	Enabled    bool       `yaml:"enabled"`
-	Timeout    string     `yaml:"timeout"`     // Per-gate timeout (default: "5m")
-	RetryLimit int        `yaml:"retry_limit"` // Max gate retries (default: 3)
-	Pipeline   []GateDef  `yaml:"pipeline"`    // Ordered list of gates
+	Enabled    bool      `yaml:"enabled"`
+	Timeout    string    `yaml:"timeout"`     // Per-gate timeout (default: "5m")
+	RetryLimit int       `yaml:"retry_limit"` // Max gate retries (default: 3)
+	Pipeline   []GateDef `yaml:"pipeline"`    // Ordered list of gates
 }
 
 // GateDef defines a single quality gate in the pipeline.
@@ -173,16 +181,16 @@ type HoldoutConfig struct {
 
 // BlueprintConfig configures the blueprint engine.
 type BlueprintConfig struct {
-	Enabled      bool   `yaml:"enabled"`
-	BlueprintDir string `yaml:"blueprint_dir"` // Directory for blueprint YAML files
+	Enabled        bool   `yaml:"enabled"`
+	BlueprintDir   string `yaml:"blueprint_dir"`   // Directory for blueprint YAML files
 	DefaultTimeout string `yaml:"default_timeout"` // Default timeout for blueprints (default: "30m")
 }
 
 type ProjectConfig struct {
-	Name            string         `yaml:"name"`
-	Root            string         `yaml:"root"`
-	CanonicalBranch string         `yaml:"canonical_branch"`
-	QualityGates    []QualityGate  `yaml:"quality_gates"`
+	Name            string        `yaml:"name"`
+	Root            string        `yaml:"root"`
+	CanonicalBranch string        `yaml:"canonical_branch"`
+	QualityGates    []QualityGate `yaml:"quality_gates"`
 }
 
 type QualityGate struct {
@@ -213,9 +221,9 @@ type SQLiteConfig struct {
 
 type ZellijConfig struct {
 	DashboardLayout string `yaml:"dashboard_layout"`
-	Layout        string `yaml:"layout"`
-	Terminal      string `yaml:"terminal"`
-	SessionPrefix string `yaml:"session_prefix"`
+	Layout          string `yaml:"layout"`
+	Terminal        string `yaml:"terminal"`
+	SessionPrefix   string `yaml:"session_prefix"`
 }
 
 type AgentsConfig struct {
@@ -239,11 +247,11 @@ type DefaultsConfig struct {
 }
 
 type NudgeConfig struct {
-	SoftTimeout       string            `yaml:"soft_timeout"`
-	HardTimeout       string            `yaml:"hard_timeout"`
-	EscalationEnabled bool              `yaml:"escalation_enabled"`
-	ContextWindow     int               `yaml:"context_window"`
-	LoopDetection     LoopDetection     `yaml:"loop_detection"`
+	SoftTimeout       string        `yaml:"soft_timeout"`
+	HardTimeout       string        `yaml:"hard_timeout"`
+	EscalationEnabled bool          `yaml:"escalation_enabled"`
+	ContextWindow     int           `yaml:"context_window"`
+	LoopDetection     LoopDetection `yaml:"loop_detection"`
 }
 
 type LoopDetection struct {
@@ -483,6 +491,10 @@ func DefaultConfig() *Config {
 			MaxNodes:    100,
 			MaxTriples:  200,
 			RefreshSecs: 5,
+		},
+		SSERelay: SSERelayConfig{
+			URL:    "",
+			APIKey: "",
 		},
 		Runtimes: RuntimesConfig{
 			Claude: RuntimeConfig{

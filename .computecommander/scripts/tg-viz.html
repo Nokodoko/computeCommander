@@ -18,12 +18,28 @@
   #status.ok { background: #00ff88; }
   #status.err { background: #ff4444; }
   #status.stale { background: #ffaa00; }
+  #sidebar {
+    position: fixed; top: 16px; right: 0; width: 180px; bottom: 0;
+    background: rgba(10,10,15,0.92); border-left: 1px solid #1a1a2e;
+    overflow-y: auto; padding: 4px;
+    z-index: 5;
+  }
+  #sidebar h2 { font-size: 8px; color: #555; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px; }
+  .event-item {
+    font-size: 8px; padding: 2px 0; border-bottom: 1px solid #111;
+    word-break: break-word; line-height: 1.3;
+  }
+  .event-item .host-lewis { color: #ffaa00; font-weight: bold; }
+  .event-item .host-monty { color: #00aaff; font-weight: bold; }
+  .event-item .host-unknown { color: #888; }
+  .event-item .ts { color: #444; }
+  .event-item .summary { color: #888; }
   #empty {
-    position: fixed; top: 16px; left: 0; right: 0; bottom: 0;
+    position: fixed; top: 16px; left: 0; right: 180px; bottom: 0;
     display: flex; align-items: center; justify-content: center;
     color: #333; font-size: 10px;
   }
-  svg { position: fixed; top: 16px; left: 0; width: 100vw; height: calc(100vh - 16px); }
+  svg { position: fixed; top: 16px; left: 0; width: calc(100vw - 180px); height: calc(100vh - 16px); }
   .link { stroke-opacity: 0.4; }
   .node-label { font-size: 8px; pointer-events: none; text-anchor: middle; }
 </style>
@@ -34,22 +50,34 @@
   <h1>TrustGraph</h1>
   <span class="stats" id="stats">connecting...</span>
 </div>
+<div id="sidebar">
+  <h2>Live Events</h2>
+  <div id="event-list"></div>
+</div>
 <div id="empty">Waiting for graph data...</div>
 <svg></svg>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
-const GATEWAY = 'http://localhost:8088/api/v1/flow/default/service/triples';
-const POLL_MS = 10000;
+// ── Config ────────────────────────────────────────────────────────────────────
+const SSE_URL   = 'http://monty:8202/events/memories?api_key=54c6862ad97a750e8743ab904e5abf14';
+const GATEWAY   = 'http://localhost:8088/api/v1/flow/default/service/triples';
+const POLL_MS   = 30000; // poll TG gateway as fallback every 30s
+const MAX_EVENTS_SIDEBAR = 40;
 
-// State
-let lastData = null;
-let connected = false;
+// ── State ─────────────────────────────────────────────────────────────────────
+let graphData    = null;       // last rendered graph {nodes, links}
+let sseConnected = false;
+let tgConnected  = false;
+let eventCount   = { lewis: 0, monty: 0, total: 0 };
+let sseEvents    = [];         // ring buffer for sidebar
+let activityNodes = new Map(); // iri -> { count, lastHost, lastTs }
 let sim = null;
 let svgG = null;
 
-const statusEl = document.getElementById('status');
-const statsEl = document.getElementById('stats');
-const emptyEl = document.getElementById('empty');
+const statusEl    = document.getElementById('status');
+const statsEl     = document.getElementById('stats');
+const emptyEl     = document.getElementById('empty');
+const eventListEl = document.getElementById('event-list');
 
 function shortLabel(iri) {
   if (!iri) return '';
@@ -61,29 +89,153 @@ function shortLabel(iri) {
   return iri;
 }
 
+function extractHost(tags) {
+  if (!Array.isArray(tags)) return 'unknown';
+  for (const t of tags) {
+    if (t.startsWith('host:')) return t.slice(5);
+  }
+  return 'unknown';
+}
+
+function hostClass(host) {
+  if (host === 'lewis') return 'host-lewis';
+  if (host === 'monty') return 'host-monty';
+  return 'host-unknown';
+}
+
+// ── SSE Event Processing ──────────────────────────────────────────────────────
+
+function handleMemoryEvent(ev) {
+  const host = extractHost(ev.entities && ev.entities.tags);
+  const ts   = ev.captured_at ? new Date(ev.captured_at) : new Date();
+
+  eventCount.total++;
+  if (host === 'lewis') eventCount.lewis++;
+  else if (host === 'monty') eventCount.monty++;
+
+  // Push to sidebar ring buffer.
+  sseEvents.push({ host, ts, summary: ev.raw_content || ev.item_type || '' });
+  if (sseEvents.length > MAX_EVENTS_SIDEBAR) sseEvents.shift();
+
+  // Extract entity labels from tags for graph activity nodes.
+  const tags = (ev.entities && ev.entities.tags) || [];
+  for (const tag of tags) {
+    if (tag.startsWith('host:') || tag.startsWith('source:')) continue;
+    const existing = activityNodes.get(tag);
+    if (existing) {
+      existing.count++;
+      existing.lastHost = host;
+      existing.lastTs = ts;
+    } else {
+      activityNodes.set(tag, { count: 1, lastHost: host, lastTs: ts, label: tag });
+    }
+  }
+
+  updateStatus();
+  renderSidebar();
+  renderActivityGraph();
+}
+
+function updateStatus() {
+  if (sseConnected) {
+    statusEl.className = 'ok';
+    statsEl.textContent = `sse live | lewis:${eventCount.lewis} monty:${eventCount.monty} total:${eventCount.total}`;
+  } else if (tgConnected && graphData) {
+    statusEl.className = 'stale';
+    const n = graphData.nodes.length;
+    statsEl.textContent = `sse offline | tg: ${n} nodes`;
+  } else {
+    statusEl.className = 'err';
+    statsEl.textContent = 'connecting...';
+  }
+}
+
+function renderSidebar() {
+  const items = sseEvents.slice().reverse(); // newest first
+  eventListEl.innerHTML = items.map(e => {
+    const hc   = hostClass(e.host);
+    const time = e.ts.toTimeString().slice(0, 8);
+    const summ = (e.summary || '').slice(0, 80);
+    return `<div class="event-item">
+      <span class="${hc}">${e.host}</span>
+      <span class="ts"> ${time}</span><br>
+      <span class="summary">${summ}</span>
+    </div>`;
+  }).join('');
+}
+
+// ── Activity Graph (from SSE tags) ────────────────────────────────────────────
+
+function renderActivityGraph() {
+  if (activityNodes.size === 0) return;
+  emptyEl.style.display = 'none';
+
+  // Build graph from activity node co-occurrence.
+  // Nodes = distinct tags. Edges = tags that appeared in the same event.
+  const nodes = [];
+  for (const [id, info] of activityNodes) {
+    nodes.push({
+      id,
+      label: id.length > 20 ? id.slice(0, 18) + '..' : id,
+      count: info.count,
+      host:  info.lastHost,
+    });
+  }
+
+  // Sort by count, keep top 80 for readability.
+  nodes.sort((a, b) => b.count - a.count);
+  const topNodes = nodes.slice(0, 80);
+  const nodeSet  = new Set(topNodes.map(n => n.id));
+
+  // Simple links: nodes from the same event that are both in topNodes.
+  // We approximate via sseEvents co-occurrence.
+  const linkMap = new Map();
+  for (const ev of sseEvents) {
+    const tags = (ev.tags || []).filter(t => nodeSet.has(t));
+    for (let i = 0; i < tags.length; i++) {
+      for (let j = i + 1; j < tags.length; j++) {
+        const key = tags[i] < tags[j] ? `${tags[i]}|${tags[j]}` : `${tags[j]}|${tags[i]}`;
+        linkMap.set(key, (linkMap.get(key) || 0) + 1);
+      }
+    }
+  }
+
+  const links = [];
+  for (const [key, weight] of linkMap) {
+    const [s, t] = key.split('|');
+    links.push({ source: s, target: t, weight });
+  }
+
+  renderD3Graph({ nodes: topNodes, links });
+}
+
+function nodeColor(d) {
+  if (d.host === 'lewis') return '#ffaa00'; // amber
+  if (d.host === 'monty') return '#00aaff'; // cyan
+  return '#888888';
+}
+
+function nodeRadius(d) {
+  return 3 + Math.min(Math.sqrt(d.count || 1) * 1.5, 10);
+}
+
 function triplesToGraph(triples) {
   const nodeMap = new Map();
   const links = [];
 
-  function addNode(iri) {
-    if (nodeMap.has(iri)) return nodeMap.get(iri);
-    const isLiteral = iri.startsWith('lit:') || !iri.startsWith('http');
-    const n = { id: iri, label: shortLabel(iri), type: isLiteral ? 'literal' : 'entity' };
-    nodeMap.set(iri, n);
-    return n;
-  }
-
-  // TG RDF term format: {t:"i", i:"<IRI>"} or {t:"l", v:"<value>"}
   function termValue(term) {
     if (!term) return '';
     if (typeof term === 'string') return term;
     if (term.t === 'l') return 'lit:' + (term.v || '');
     return term.i || term.v || '';
   }
-  function isLiteralTerm(term) {
-    if (!term) return false;
-    if (typeof term === 'string') return !term.startsWith('http');
-    return term.t === 'l';
+
+  function addNode(iri) {
+    if (nodeMap.has(iri)) return nodeMap.get(iri);
+    const isLiteral = iri.startsWith('lit:') || !iri.startsWith('http');
+    const n = { id: iri, label: shortLabel(iri), type: isLiteral ? 'literal' : 'entity', host: 'tg', count: 1 };
+    nodeMap.set(iri, n);
+    return n;
   }
 
   for (const t of triples) {
@@ -92,8 +244,8 @@ function triplesToGraph(triples) {
     const o = t.o || t.object;
     if (!s || !p || !o) continue;
     const sv = termValue(s);
-    const pv = termValue(p);
     const ov = termValue(o);
+    const pv = termValue(p);
     if (!sv || !ov) continue;
     addNode(sv);
     addNode(ov);
@@ -103,41 +255,28 @@ function triplesToGraph(triples) {
   return { nodes: [...nodeMap.values()], links };
 }
 
-function nodeRadius(d) {
-  if (d.type === 'literal') return 3;
-  return 5;
-}
-
-function nodeColor(d) {
-  if (d.type === 'literal') return '#FFB347';
-  return '#00aaff';
-}
-
-const svg = d3.select('svg');
-const width = () => window.innerWidth;
-const height = () => window.innerHeight - 16;
-
+const svg  = d3.select('svg');
 svgG = svg.append('g');
 
-function render(graphData) {
+function renderD3Graph(gd) {
   emptyEl.style.display = 'none';
-
-  // Stop old sim
   if (sim) sim.stop();
 
-  // Clone nodes/links to avoid mutation across renders
-  const nodes = graphData.nodes.map(d => Object.assign({}, d));
-  const links = graphData.links.map(d => ({ ...d }));
+  const nodes = gd.nodes.map(d => Object.assign({}, d));
+  const links = gd.links.map(d => ({ ...d }));
 
   svgG.selectAll('*').remove();
+
+  const w = window.innerWidth - 180;
+  const h = window.innerHeight - 16;
 
   const linkSel = svgG.append('g')
     .selectAll('line')
     .data(links)
     .join('line')
     .attr('class', 'link')
-    .attr('stroke', '#555')
-    .attr('stroke-width', 0.8)
+    .attr('stroke', '#333')
+    .attr('stroke-width', 0.7)
     .attr('stroke-opacity', 0.4);
 
   const nodeSel = svgG.append('g')
@@ -146,25 +285,23 @@ function render(graphData) {
     .join('circle')
     .attr('r', d => nodeRadius(d))
     .attr('fill', d => nodeColor(d))
-    .attr('opacity', d => d.type === 'literal' ? 0.6 : 0.85);
+    .attr('opacity', 0.85);
 
   const labelSel = svgG.append('g')
     .selectAll('text')
-    .data(nodes.filter(d => d.type === 'entity'))
+    .data(nodes.filter(d => d.count >= 2 || nodes.length < 30))
     .join('text')
     .attr('class', 'node-label')
-    .attr('fill', '#888')
+    .attr('fill', '#666')
     .attr('dy', d => nodeRadius(d) + 8)
-    .text(d => d.label.length > 18 ? d.label.slice(0, 16) + '..' : d.label);
-
-  const w = width(), h = height();
+    .text(d => d.label);
 
   sim = d3.forceSimulation(nodes)
-    .force('link', d3.forceLink(links).id(d => d.id).distance(55))
-    .force('charge', d3.forceManyBody().strength(-120))
+    .force('link', d3.forceLink(links).id(d => d.id).distance(50))
+    .force('charge', d3.forceManyBody().strength(-80))
     .force('center', d3.forceCenter(w / 2, h / 2))
-    .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 4))
-    .alphaDecay(0.04)  // stabilize fast
+    .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 3))
+    .alphaDecay(0.04)
     .velocityDecay(0.4);
 
   sim.on('tick', () => {
@@ -175,11 +312,45 @@ function render(graphData) {
     labelSel.attr('x', d => d.x).attr('y', d => d.y);
   });
 
-  // Stop after ~3s to save CPU
   setTimeout(() => { if (sim) sim.stop(); }, 3000);
 }
 
-async function fetchGraph() {
+// ── SSE Connection ────────────────────────────────────────────────────────────
+
+function connectSSE() {
+  const es = new EventSource(SSE_URL);
+
+  es.addEventListener('memory', (e) => {
+    try {
+      const ev = JSON.parse(e.data);
+      // Attach tags for co-occurrence in sidebar rendering.
+      const tags = (ev.entities && ev.entities.tags) || [];
+      ev._tags = tags;
+      handleMemoryEvent(ev);
+      // Store tags on the sidebar entry.
+      if (sseEvents.length > 0) {
+        sseEvents[sseEvents.length - 1].tags = tags;
+      }
+    } catch (err) {
+      console.warn('sse parse error:', err);
+    }
+  });
+
+  es.onopen = () => {
+    sseConnected = true;
+    updateStatus();
+  };
+
+  es.onerror = () => {
+    sseConnected = false;
+    updateStatus();
+    // EventSource reconnects automatically per spec.
+  };
+}
+
+// ── TG Gateway Fallback Poll ──────────────────────────────────────────────────
+
+async function fetchTGGraph() {
   try {
     const res = await fetch(GATEWAY, {
       method: 'POST',
@@ -190,41 +361,28 @@ async function fetchGraph() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
 
-    // TG returns {response: [...]}
     const triples = Array.isArray(data) ? data : (data.response || data.triples || data.results || []);
-    const graph = triplesToGraph(triples);
+    const graph   = triplesToGraph(triples);
 
-    connected = true;
-    statusEl.className = 'ok';
-    statsEl.textContent = `${graph.nodes.length} nodes, ${graph.links.length} edges`;
+    tgConnected = true;
+    graphData   = graph;
 
-    if (graph.nodes.length > 0) {
-      lastData = graph;
-      render(graph);
-    } else if (lastData) {
-      // No data returned but we had prior data; keep showing it
-      statusEl.className = 'stale';
-      statsEl.textContent = `${lastData.nodes.length} nodes (cached)`;
-    } else {
-      emptyEl.style.display = 'flex';
+    // Only render TG graph when SSE has no activity nodes yet.
+    if (activityNodes.size === 0 && graph.nodes.length > 0) {
+      renderD3Graph(graph);
     }
+    updateStatus();
   } catch (e) {
-    connected = false;
-    if (lastData) {
-      // Show stale data with disconnected indicator
-      statusEl.className = 'err';
-      statsEl.textContent = `${lastData.nodes.length} nodes (disconnected)`;
-    } else {
-      statusEl.className = 'err';
-      statsEl.textContent = 'gateway unreachable';
-      emptyEl.style.display = 'flex';
-    }
+    tgConnected = false;
+    updateStatus();
   }
 }
 
-// Initial fetch then poll
-fetchGraph();
-setInterval(fetchGraph, POLL_MS);
+// ── Bootstrap ─────────────────────────────────────────────────────────────────
+
+connectSSE();
+fetchTGGraph();
+setInterval(fetchTGGraph, POLL_MS);
 </script>
 </body>
 </html>

@@ -129,7 +129,8 @@ func TestGenerateLayout_ContainsTGPane(t *testing.T) {
 	if !strings.Contains(layout, `name="TG Viz"`) {
 		t.Errorf("layout must contain a TG Viz (TrustGraph visualization) pane")
 	}
-	if !strings.Contains(layout, `tg-viz-wrapper.sh`) {
-		t.Errorf("layout TG Viz pane must run tg-viz-wrapper.sh")
+	// The TG pane now runs "cmdr tg --pane" directly instead of a wrapper script.
+	if !strings.Contains(layout, `"tg"`) || !strings.Contains(layout, `"--pane"`) {
+		t.Errorf("layout TG Viz pane must run cmdr tg --pane")
 	}
 }
