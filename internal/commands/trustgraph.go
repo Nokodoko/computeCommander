@@ -247,46 +247,12 @@ func runTGPane(ctx context.Context, app *App) error {
 					buf.WriteString(bold + cyan + " TG" + reset + "  " + red + "error" + reset + "\n")
 					buf.WriteString(dim + "  " + errMsg + reset + "\n")
 				} else {
-					nodes, topEntities := deriveTGStats(resp.Response, cfg.MaxNodes)
+					nodes, _ := deriveTGStats(resp.Response, cfg.MaxNodes)
 					nodeCount := len(nodes)
 					edgeCount := len(resp.Response)
 
 					buf.WriteString(bold + cyan + " TG" + reset + "  " + green + "connected" + reset)
 					buf.WriteString(dim + fmt.Sprintf("  %d nodes  %d edges", nodeCount, edgeCount) + reset + "\n")
-					buf.WriteString(bold + white + " Top Entities:" + reset + "\n")
-
-					maxShow := 8
-					if len(topEntities) < maxShow {
-						maxShow = len(topEntities)
-					}
-
-					if maxShow == 0 {
-						buf.WriteString(dim + "  No entities found." + reset + "\n")
-					} else {
-						maxNameLen := 0
-						for _, e := range topEntities[:maxShow] {
-							if len(e.id) > maxNameLen {
-								maxNameLen = len(e.id)
-							}
-						}
-						if maxNameLen > 20 {
-							maxNameLen = 20
-						}
-
-						for _, e := range topEntities[:maxShow] {
-							name := e.id
-							if len(name) > 20 {
-								name = name[:18] + ".."
-							}
-							bar := strings.Repeat("|", min(e.degree, 16))
-							buf.WriteString(fmt.Sprintf("  "+cyan+"%-*s"+reset+"  "+dim+"%3d"+reset+" "+yellow+"%s"+reset+"\n",
-								maxNameLen, name, e.degree, bar))
-						}
-
-						if len(topEntities) > maxShow {
-							buf.WriteString(dim + fmt.Sprintf("  ... +%d more", len(topEntities)-maxShow) + reset + "\n")
-						}
-					}
 				}
 			}
 		}

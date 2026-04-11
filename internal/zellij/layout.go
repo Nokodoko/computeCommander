@@ -196,10 +196,7 @@ func GenerateLayout(opts LayoutOpts) string {
                     command "%s"
                     args "openbrain" "--pane"%s
                 }
-                pane name="TG Viz" size="20%%" {
-                    command "%s"
-                    args "tg" "--pane"
-                }
+                pane name="TG Viz" size="20%%"
                 pane size="28%%" {
                     command "bash"
                     args "%s" "%s" "%s"
@@ -208,7 +205,7 @@ func GenerateLayout(opts LayoutOpts) string {
         }
     }
 }
-`, projectDir, tabName, focusWatcherPane, cmdrBin, calcurseWrapperPath, calcurseConf, calcurseDir, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, lazygitWrapperPath, projectDir, opts.TabHash)
+`, projectDir, tabName, focusWatcherPane, cmdrBin, calcurseWrapperPath, calcurseConf, calcurseDir, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, lazygitWrapperPath, projectDir, opts.TabHash)
 }
 
 
