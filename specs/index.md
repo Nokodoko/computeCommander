@@ -18,6 +18,7 @@ reviewed (e.g., `reviews/jira-board-generator-review.md`).
 | [go-typescript-bridge.md](go-typescript-bridge.md) | Go-TypeScript bridge layer for Pi agent extension integration |
 | [linkedin-post-generator.md](linkedin-post-generator.md) | LinkedIn Post Generator -- automated AI thought leadership content pipeline |
 | [trustgraph-visualization.md](trustgraph-visualization.md) | TrustGraph visualization pane -- terminal-native graph viewer for RDF knowledge graph |
+| [sse-relay.md](sse-relay.md) | SSE Event Relay -- Go service merging upstream OpenBrain MCP SSE streams into unified endpoint |
 
 ## Reviews
 
