@@ -2,7 +2,11 @@ package linkedin
 
 import (
 	"fmt"
+	"log"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 )
 
 // ContentBuilder assembles the prompt and context for Claude to generate a post.
@@ -13,6 +17,48 @@ type ContentBuilder struct{}
 // NewContentBuilder creates a ContentBuilder.
 func NewContentBuilder() *ContentBuilder {
 	return &ContentBuilder{}
+}
+
+// styleGuideFilename is the canonical name of the single-source-of-truth
+// style guide file, resolved against the user's home directory at runtime.
+const styleGuideFilename = "linkedin_context_one_shot.md"
+
+// loadStyleGuide returns the active style guide text for the current
+// process. It attempts to read $HOME/linkedin_context_one_shot.md first;
+// if that read fails for any reason, it logs a warning and falls back to
+// the in-code fallbackStyleGuide constant so generation never breaks.
+//
+// The result is cached for the lifetime of the process; a redeploy or
+// restart is required to pick up edits to the file (by design — the
+// daily systemd job starts a fresh process every run).
+var (
+	styleGuideOnce   sync.Once
+	styleGuideCached string
+)
+
+func loadStyleGuide() string {
+	styleGuideOnce.Do(func() {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			log.Printf("linkedin: style guide fallback; cannot resolve $HOME: %v", err)
+			styleGuideCached = fallbackStyleGuide
+			return
+		}
+		path := filepath.Join(home, styleGuideFilename)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			log.Printf("linkedin: style guide fallback; missing %s: %v", path, err)
+			styleGuideCached = fallbackStyleGuide
+			return
+		}
+		if len(data) == 0 {
+			log.Printf("linkedin: style guide fallback; %s is empty", path)
+			styleGuideCached = fallbackStyleGuide
+			return
+		}
+		styleGuideCached = string(data)
+	})
+	return styleGuideCached
 }
 
 // GenerationPrompt holds the structured prompt for Claude to generate a post.
@@ -37,7 +83,7 @@ type GenerationPrompt struct {
 func (c *ContentBuilder) BuildPrompt(topic *Topic, insights []ProjectInsight, trends []TrendItem) *GenerationPrompt {
 	prompt := &GenerationPrompt{}
 
-	prompt.SystemContext = styleGuide
+	prompt.SystemContext = loadStyleGuide()
 
 	prompt.TopicContext = fmt.Sprintf("Topic: %s\nSource Project: %s\nPriority: %d",
 		topic.Topic, topic.SourceProject, topic.Priority)
@@ -113,7 +159,10 @@ func assemblePrompt(p *GenerationPrompt) string {
 	return strings.Join(parts, "\n")
 }
 
-const styleGuide = `ByteByteGo-Inspired LinkedIn Style:
+// fallbackStyleGuide is used only when $HOME/linkedin_context_one_shot.md
+// cannot be read. The authoritative style guide lives in that file;
+// edit it (not this constant) to change generation behavior.
+const fallbackStyleGuide = `ByteByteGo-Inspired LinkedIn Style:
 1. Lead with a question or bold claim. "What if your CI/CD pipeline could think?" not "We implemented AI in our pipeline."
 2. Show architecture, not just prose. Every post needs a visual element description.
 3. Concrete numbers over vague claims. "45 hooks fire on every prompt" not "we have lots of automation."
