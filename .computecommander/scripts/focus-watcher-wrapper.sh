@@ -7,7 +7,7 @@
 # file stale, causing fp and lazygit panes to stop receiving updates.
 set -uo pipefail
 
-WATCHER_CMD="\"/home/n0ko/Programs/ai/computeCommander/plugins/focus-watcher/target/release/focus-watcher\" --tab-hash \"f9539735\" --poll-ms 250"
+WATCHER_CMD="\"/home/n0ko/Programs/ai/computeCommander/plugins/focus-watcher/target/release/focus-watcher\" --tab-hash \"abc12345\" --poll-ms 250"
 LOG_FILE="/tmp/cmdr-$(id -u)-focus-watcher.log"
 RESTART_DELAY=3
 MAX_RAPID_RESTARTS=5

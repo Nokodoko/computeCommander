@@ -129,8 +129,28 @@ func TestGenerateLayout_ContainsTGPane(t *testing.T) {
 	if !strings.Contains(layout, `name="TG Viz"`) {
 		t.Errorf("layout must contain a TG Viz (TrustGraph visualization) pane")
 	}
-	// The TG pane now runs "cmdr tg --pane" directly instead of a wrapper script.
-	if !strings.Contains(layout, `"tg"`) || !strings.Contains(layout, `"--pane"`) {
-		t.Errorf("layout TG Viz pane must run cmdr tg --pane")
+	// The TG Viz pane is passive — it runs `tail -f /dev/null` so zellij
+	// does not spawn a default shell, leaving the pane empty/transparent for
+	// the trustgraph-viewer Electron overlay to render through.
+	if !strings.Contains(layout, `command "tail"`) || !strings.Contains(layout, `"-f" "/dev/null"`) {
+		t.Errorf("layout TG Viz pane must run `tail -f /dev/null` to stay passive")
+	}
+	// The agent session pane must be named "Agent" so external tools can
+	// distinguish it from the TG Viz overlay target.
+	if !strings.Contains(layout, `name="Agent"`) {
+		t.Errorf("layout must contain a named Agent pane for the central agent session")
+	}
+	// The agent pane must occupy the full top section of the central column
+	// (67% height). If TG Viz is stacked underneath it again, this width drops
+	// back to 14% and the agent shrinks to a sliver.
+	if !strings.Contains(layout, `name="Agent" size="67%"`) {
+		t.Errorf("Agent pane must be 67%% of the central column (TG Viz must NOT be stacked above/below it):\n%s", layout)
+	}
+	// TG Viz must live on the bottom row (next to LazyGit). The bottom-row
+	// vertical split contains it; we assert by checking it's wider than the
+	// original 20%% — a regression to the central-column layout would size
+	// it 86%%, which would also fail the bottom-row siblings check above.
+	if !strings.Contains(layout, `name="TG Viz" size="38%"`) {
+		t.Errorf("TG Viz must be on the bottom row at 38%% width, not stacked in the central column:\n%s", layout)
 	}
 }
