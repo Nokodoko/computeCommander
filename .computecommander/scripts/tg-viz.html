@@ -12,17 +12,20 @@
     border-bottom: 1px solid #1a1a2e;
     display: flex; align-items: center; gap: 8px; height: 16px;
   }
-  #header h1 { font-size: 9px; color: #00ff88; font-weight: 600; letter-spacing: 1px; }
+  #header h1 { font-size: 9px; color: #00ffff; font-weight: 600; letter-spacing: 1px; text-shadow: 0 0 6px #00ffff80; }
   #header .stats { font-size: 9px; color: #555; }
   #status { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-  #status.ok { background: #00ff88; }
-  #status.err { background: #ff4444; }
+  #status.ok { background: #50fa7b; }
+  #status.err { background: #ff5555; }
   #status.stale { background: #ffaa00; }
   #sidebar {
-    position: fixed; top: 16px; right: 0; width: 180px; bottom: 0;
+    position: fixed; top: 16px; right: 0; width: 120px; bottom: 0;
     background: rgba(10,10,15,0.92); border-left: 1px solid #1a1a2e;
     overflow-y: auto; padding: 4px;
     z-index: 5;
+  }
+  @media (max-width: 600px) {
+    #sidebar { width: 0; padding: 0; border-left: none; display: none; }
   }
   #sidebar h2 { font-size: 8px; color: #555; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 1px; }
   .event-item {
@@ -35,13 +38,66 @@
   .event-item .ts { color: #444; }
   .event-item .summary { color: #888; }
   #empty {
-    position: fixed; top: 16px; left: 0; right: 180px; bottom: 0;
+    position: fixed; top: 16px; left: 0; right: 120px; bottom: 0;
     display: flex; align-items: center; justify-content: center;
     color: #333; font-size: 10px;
   }
-  svg { position: fixed; top: 16px; left: 0; width: calc(100vw - 180px); height: calc(100vh - 16px); }
-  .link { stroke-opacity: 0.4; }
-  .node-label { font-size: 8px; pointer-events: none; text-anchor: middle; }
+  svg { position: fixed; top: 16px; left: 0; width: calc(100vw - 120px); height: calc(100vh - 16px); }
+  @media (max-width: 600px) {
+    #empty { right: 0; }
+    svg { width: 100vw; }
+  }
+  .link {
+    stroke: #00ffff;
+    stroke-opacity: 0.55;
+    filter: url(#neon-glow);
+    stroke-dasharray: 4 6;
+    animation: trace 1.6s linear infinite;
+    fill: none;
+  }
+  .axis-line {
+    stroke: #1a3a4a; stroke-width: 0.8; stroke-opacity: 0.5;
+    stroke-dasharray: 1 3;
+  }
+  .axis-label {
+    font-size: 7px; fill: #00ffff; opacity: 0.6;
+    text-shadow: 0 0 3px #00ffff60;
+    pointer-events: none;
+  }
+  #expand-btn {
+    cursor: pointer; color: #00ffff; opacity: 0.9;
+    text-decoration: underline; padding: 0 4px;
+  }
+  #expand-btn:hover { color: #39ff14; }
+  .link.lewis { stroke: #ffaa00; }
+  .link.monty { stroke: #00aaff; }
+  /* Edges that connect two nodes referenced by the most recent prompt/event. */
+  .link.active {
+    stroke: #39ff14;
+    stroke-opacity: 0.95;
+    stroke-width: 1.6;
+    stroke-dasharray: 6 3;
+    animation: trace 0.8s linear infinite, pulse-glow 1.4s ease-in-out infinite;
+    filter: url(#neon-glow-strong);
+  }
+  @keyframes pulse-glow {
+    0%, 100% { stroke-opacity: 0.6; }
+    50%      { stroke-opacity: 1.0; }
+  }
+  /* When hovering a node, dim non-neighboring edges/nodes. */
+  .dim { opacity: 0.12 !important; }
+  .neighbor-edge {
+    stroke: #39ff14 !important;
+    stroke-opacity: 1 !important;
+    stroke-width: 1.4 !important;
+    filter: url(#neon-glow-strong);
+  }
+  @keyframes trace {
+    from { stroke-dashoffset: 20; }
+    to   { stroke-dashoffset: 0; }
+  }
+  .node { filter: url(#neon-glow); }
+  .node-label { font-size: 8px; pointer-events: none; text-anchor: middle; fill: #b8faff; text-shadow: 0 0 4px #00ffff80; }
 </style>
 </head>
 <body>
@@ -49,13 +105,35 @@
   <div id="status" class="err"></div>
   <h1>TrustGraph</h1>
   <span class="stats" id="stats">connecting...</span>
+  <span id="expand-btn" title="show more nodes"></span>
 </div>
 <div id="sidebar">
   <h2>Live Events</h2>
   <div id="event-list"></div>
 </div>
 <div id="empty">Waiting for graph data...</div>
-<svg></svg>
+<svg>
+  <defs>
+    <filter id="neon-glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.6" result="blur1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="0.6" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="neon-glow-strong" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3.2" result="blur1"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="1.0" result="blur2"/>
+      <feMerge>
+        <feMergeNode in="blur1"/>
+        <feMergeNode in="blur2"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+</svg>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -63,6 +141,12 @@ const SSE_URL   = 'http://monty:8202/events/memories?api_key=54c6862ad97a750e874
 const GATEWAY   = 'http://localhost:8088/api/v1/flow/default/service/triples';
 const POLL_MS   = 30000; // poll TG gateway as fallback every 30s
 const MAX_EVENTS_SIDEBAR = 40;
+const RECENT_PROMPTS = 5;       // # recent prompts whose entities define the visible subgraph
+const MAX_HOPS       = 2;       // BFS depth from focus when expanding the visible neighborhood
+let   TOP_K          = 250;     // semantic LOD: render up to this many nodes (most by degree)
+const TOP_K_STEP     = 50;      // expand by this many on header click
+const LOD_LABEL      = 1.4;     // zoom scale above which we render labels
+const LOD_HIGH_DEG   = 0.7;     // zoom scale below which we show only top-degree labels
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let graphData    = null;       // last rendered graph {nodes, links}
@@ -71,8 +155,12 @@ let tgConnected  = false;
 let eventCount   = { lewis: 0, monty: 0, total: 0 };
 let sseEvents    = [];         // ring buffer for sidebar
 let activityNodes = new Map(); // iri -> { count, lastHost, lastTs }
+let lastEventTags = new Set(); // tags from the most recent SSE prompt/event
+let recentPromptSets = [];     // ring buffer of last RECENT_PROMPTS Sets
 let sim = null;
 let svgG = null;
+let lastLinkSel = null;        // remembered selection so SSE can re-class active edges
+let dormantCount = 0;          // # nodes hidden by the recent-prompts filter
 
 const statusEl    = document.getElementById('status');
 const statsEl     = document.getElementById('stats');
@@ -87,6 +175,27 @@ function shortLabel(iri) {
   const slash = iri.lastIndexOf('/');
   if (slash >= 0) return iri.slice(slash + 1);
   return iri;
+}
+
+// True when a node's display label is an opaque blob (hash, UUID, hex digest,
+// base64-ish chunk, etc.) and contributes no semantic value to the viewer.
+// Filters: pure-hex >=8 chars, UUID, base64-ish >=20 chars w/o words, raw
+// numeric IDs >=10 chars, and labels that are 24+ chars with no separator
+// (URN-style opaque IDs).
+const HEX_RE   = /^[0-9a-fA-F]{8,}$/;
+const UUID_RE  = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const NUM_RE   = /^[0-9]{10,}$/;
+const B64_RE   = /^[A-Za-z0-9+/_-]{20,}={0,2}$/;
+function isOpaqueLabel(s) {
+  if (!s) return true;
+  const t = String(s).trim();
+  if (t.length < 4) return false;
+  if (UUID_RE.test(t)) return true;
+  if (HEX_RE.test(t)) return true;
+  if (NUM_RE.test(t)) return true;
+  // base64-style: long, no spaces, no separators, no vowel runs
+  if (t.length >= 20 && B64_RE.test(t) && !/[\s_.\-]/.test(t) && !/[aeiouAEIOU]{2}/.test(t)) return true;
+  return false;
 }
 
 function extractHost(tags) {
@@ -119,8 +228,10 @@ function handleMemoryEvent(ev) {
 
   // Extract entity labels from tags for graph activity nodes.
   const tags = (ev.entities && ev.entities.tags) || [];
+  const promptTags = new Set();
   for (const tag of tags) {
     if (tag.startsWith('host:') || tag.startsWith('source:')) continue;
+    promptTags.add(tag);
     const existing = activityNodes.get(tag);
     if (existing) {
       existing.count++;
@@ -131,6 +242,25 @@ function handleMemoryEvent(ev) {
     }
   }
 
+  // Mark the connected nodes from this prompt; render highlights edges
+  // between them. Auto-clear after 12s so the active set decays.
+  lastEventTags = promptTags;
+  refreshActiveEdges();
+  clearTimeout(handleMemoryEvent._decay);
+  handleMemoryEvent._decay = setTimeout(() => {
+    lastEventTags = new Set();
+    refreshActiveEdges();
+  }, 12000);
+
+  // Push to recent-prompt ring buffer so the radial filter expands the
+  // visible subgraph to include this prompt's entities.
+  if (promptTags.size) {
+    recentPromptSets.push(promptTags);
+    if (recentPromptSets.length > RECENT_PROMPTS) recentPromptSets.shift();
+    // Re-render the TG graph so newly relevant nodes appear.
+    if (graphData) renderD3Graph(graphData);
+  }
+
   updateStatus();
   renderSidebar();
   renderActivityGraph();
@@ -139,7 +269,7 @@ function handleMemoryEvent(ev) {
 function updateStatus() {
   if (sseConnected) {
     statusEl.className = 'ok';
-    statsEl.textContent = `sse live | lewis:${eventCount.lewis} monty:${eventCount.monty} total:${eventCount.total}`;
+    statsEl.textContent = `sse live | l:${eventCount.lewis} m:${eventCount.monty} t:${eventCount.total}`;
   } else if (tgConnected && graphData) {
     statusEl.className = 'stale';
     const n = graphData.nodes.length;
@@ -148,7 +278,32 @@ function updateStatus() {
     statusEl.className = 'err';
     statsEl.textContent = 'connecting...';
   }
+
+  const expandEl = document.getElementById('expand-btn');
+  if (expandEl) {
+    if (dormantCount > 0) {
+      expandEl.textContent = `+${dormantCount} more  ▼`;
+      expandEl.style.display = '';
+    } else if (TOP_K > 18) {
+      expandEl.textContent = `reset (showing ${TOP_K})  ▲`;
+      expandEl.style.display = '';
+    } else {
+      expandEl.style.display = 'none';
+    }
+  }
 }
+
+// Wire the expand button: bumps TOP_K by TOP_K_STEP, or resets if everything is shown.
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('expand-btn');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    if (dormantCount === 0 && TOP_K > 18) TOP_K = 18;
+    else TOP_K += TOP_K_STEP;
+    if (graphData) renderD3Graph(graphData);
+    updateStatus();
+  });
+});
 
 function renderSidebar() {
   const items = sseEvents.slice().reverse(); // newest first
@@ -210,13 +365,174 @@ function renderActivityGraph() {
 }
 
 function nodeColor(d) {
+  // SSE activity nodes (live multi-host events) keep host-based hues.
   if (d.host === 'lewis') return '#ffaa00'; // amber
-  if (d.host === 'monty') return '#00aaff'; // cyan
-  return '#888888';
+  if (d.host === 'monty') return '#00aaff'; // neon blue
+  // TG gateway nodes — neon palette.
+  if (d.focus) return '#39ff14';              // neon green focus
+  if (d.type === 'literal') return '#ff6ec7'; // neon pink literals
+  return '#00ffff';                           // neon cyan entities
 }
 
 function nodeRadius(d) {
-  return 3 + Math.min(Math.sqrt(d.count || 1) * 1.5, 10);
+  // LOD mode: ALL nodes render, so keep base radius small. Degree boosts
+  // important nodes; focus gets a small bonus. Stroke scaling at zoom
+  // time visually inflates these without re-laying out.
+  const base = 2 + Math.min(Math.sqrt((d.degree || d.count || 1)) * 0.9, 5);
+  return d.focus ? base + 1.5 : base;
+}
+
+// True when a node id/label intersects the latest prompt's tag set.
+// SSE tag strings are short labels (e.g. "langchaingo") while TG node IDs
+// are full IRIs (e.g. "http://example/langchaingo"). Compare both forms.
+function nodeMatchesPrompt(n) {
+  if (!lastEventTags.size || !n) return false;
+  const id    = n.id || '';
+  const label = n.label || shortLabel(id);
+  if (lastEventTags.has(id) || lastEventTags.has(label)) return true;
+  for (const t of lastEventTags) {
+    if (!t) continue;
+    if (id.endsWith('/' + t) || id.endsWith('#' + t)) return true;
+    if (label.toLowerCase() === t.toLowerCase()) return true;
+  }
+  return false;
+}
+
+// Classify an edge: gets a host class if either endpoint is host-tagged,
+// and `active` if BOTH endpoints are referenced by the most recent prompt.
+function baseLinkClass(d) {
+  const s = d.source, t = d.target;
+  const sh = (s && s.host) || '';
+  const th = (t && t.host) || '';
+  let cls = 'link';
+  if (sh === 'lewis' || th === 'lewis') cls += ' lewis';
+  else if (sh === 'monty' || th === 'monty') cls += ' monty';
+  if (nodeMatchesPrompt(s) && nodeMatchesPrompt(t)) cls += ' active';
+  return cls;
+}
+
+function refreshActiveEdges() {
+  if (!lastLinkSel) return;
+  lastLinkSel.attr('class', d => baseLinkClass(d));
+}
+
+// Highlight a node's 1-hop neighborhood; dim everything else.
+function highlightNeighborhood(node, nodeSel, linkSel) {
+  const neighbors = new Set([node.id]);
+  linkSel.each(d => {
+    const sId = (d.source && d.source.id) || d.source;
+    const tId = (d.target && d.target.id) || d.target;
+    if (sId === node.id) neighbors.add(tId);
+    if (tId === node.id) neighbors.add(sId);
+  });
+  nodeSel.classed('dim', d => !neighbors.has(d.id));
+  linkSel.each(function(d) {
+    const sId = (d.source && d.source.id) || d.source;
+    const tId = (d.target && d.target.id) || d.target;
+    const touches = sId === node.id || tId === node.id;
+    d3.select(this)
+      .classed('dim', !touches)
+      .classed('neighbor-edge', touches);
+  });
+}
+
+function clearHighlight(nodeSel, linkSel) {
+  nodeSel.classed('dim', false);
+  linkSel.classed('dim', false).classed('neighbor-edge', false);
+}
+
+// Detail-on-demand filter: keep only the TOP_K most-connected nodes,
+// preferring nodes touched by recent prompts. Edges with both endpoints
+// in the visible set are rendered. Hidden node count stored in dormantCount.
+function filterRecentSubgraph(full) {
+  if (!full || !full.nodes.length) return { nodes: [], links: [], focus: null };
+
+  // Build adjacency to compute degree.
+  const adj = new Map();
+  for (const n of full.nodes) adj.set(n.id, new Set());
+  for (const l of full.links) {
+    const sId = (l.source && l.source.id) || l.source;
+    const tId = (l.target && l.target.id) || l.target;
+    if (adj.has(sId) && adj.has(tId)) {
+      adj.get(sId).add(tId);
+      adj.get(tId).add(sId);
+    }
+  }
+
+  // Candidates: prompt-touched nodes first, then top-degree fillers.
+  const promptIds = new Set();
+  for (const s of recentPromptSets) for (const t of s) promptIds.add(t);
+
+  function isPromptNode(n) {
+    if (promptIds.has(n.id)) return true;
+    const lbl = (n.label || shortLabel(n.id)).toLowerCase();
+    for (const t of promptIds) {
+      if (!t) continue;
+      const tl = t.toLowerCase();
+      if (lbl === tl) return true;
+      if (n.id.endsWith('/' + t) || n.id.endsWith('#' + t)) return true;
+    }
+    return false;
+  }
+
+  // Drop opaque-label nodes (hashes, UUIDs, raw hex digests) before ranking —
+  // they pollute the top-K and add no semantic value.
+  const meaningful = full.nodes.filter(n => {
+    const lbl = n.label || shortLabel(n.id);
+    return !isOpaqueLabel(lbl);
+  });
+  const scored = meaningful.map(n => ({
+    n,
+    deg: adj.get(n.id).size,
+    prompt: isPromptNode(n),
+  }));
+  // Prompt-touched first; within each group, highest degree first.
+  scored.sort((a, b) => {
+    if (a.prompt !== b.prompt) return a.prompt ? -1 : 1;
+    return b.deg - a.deg;
+  });
+
+  const visibleArr = scored.slice(0, TOP_K);
+  const visible    = new Set(visibleArr.map(x => x.n.id));
+
+  const nodes = visibleArr.map(x => x.n);
+  const links = full.links.filter(l => {
+    const sId = (l.source && l.source.id) || l.source;
+    const tId = (l.target && l.target.id) || l.target;
+    return visible.has(sId) && visible.has(tId);
+  });
+
+  // Focus = the highest-ranked visible node (top of the sorted list).
+  const focus = visibleArr.length ? visibleArr[0].n.id : null;
+  dormantCount = full.nodes.length - nodes.length;
+  return { nodes, links, focus };
+}
+
+// Pre-position nodes in concentric rings keyed by hop distance from focus.
+function radialPrePosition(nodes, focus, ringByNode, w, h) {
+  const cx = w / 2, cy = h / 2;
+  const minDim = Math.min(w, h);
+  const ringStep = Math.max(28, (minDim / 2 - 16) / (MAX_HOPS + 0.5));
+  // Group nodes by ring.
+  const byRing = new Map();
+  for (const n of nodes) {
+    const r = (n.id === focus) ? 0 : (ringByNode.get(n.id) || 1);
+    if (!byRing.has(r)) byRing.set(r, []);
+    byRing.get(r).push(n);
+  }
+  for (const [ring, list] of byRing) {
+    if (ring === 0) {
+      list.forEach(n => { n.x = cx; n.y = cy; n.fx = cx; n.fy = cy; });
+      continue;
+    }
+    const radius = ring * ringStep;
+    const step   = (Math.PI * 2) / Math.max(1, list.length);
+    list.forEach((n, i) => {
+      const angle = i * step;
+      n.x = cx + Math.cos(angle) * radius;
+      n.y = cy + Math.sin(angle) * radius;
+    });
+  }
 }
 
 function triplesToGraph(triples) {
@@ -262,49 +578,88 @@ function renderD3Graph(gd) {
   emptyEl.style.display = 'none';
   if (sim) sim.stop();
 
-  const nodes = gd.nodes.map(d => Object.assign({}, d));
-  const links = gd.links.map(d => ({ ...d }));
+  const filtered = filterRecentSubgraph(gd);
+  const focus    = filtered.focus;
+  const nodes    = filtered.nodes.map(d => Object.assign({}, d, { focus: d.id === focus }));
+  const nodeById = new Map(nodes.map(n => [n.id, n]));
+  const links    = filtered.links
+    .map(d => {
+      const sObj = (d.source && d.source.id) ? nodeById.get(d.source.id) : nodeById.get(d.source);
+      const tObj = (d.target && d.target.id) ? nodeById.get(d.target.id) : nodeById.get(d.target);
+      return sObj && tObj ? { ...d, source: sObj.id, target: tObj.id } : null;
+    })
+    .filter(Boolean);
+
+  // Compute degree on the visible subgraph for radius / LOD decisions.
+  const degMap = new Map();
+  for (const n of nodes) degMap.set(n.id, 0);
+  for (const l of links) {
+    degMap.set(l.source, (degMap.get(l.source) || 0) + 1);
+    degMap.set(l.target, (degMap.get(l.target) || 0) + 1);
+  }
+  for (const n of nodes) n.degree = degMap.get(n.id) || 0;
+  // Threshold: top 25% by degree are considered "high importance" for LOD labels.
+  const sortedDegs = nodes.map(n => n.degree).sort((a, b) => b - a);
+  const highDegThreshold = sortedDegs[Math.max(0, Math.floor(sortedDegs.length * 0.25))] || 0;
 
   svgG.selectAll('*').remove();
+  svgG.attr('transform', null);
 
-  const w = window.innerWidth - 180;
+  const sbW = (window.innerWidth <= 600) ? 0 : 120;
+  const w = window.innerWidth - sbW;
   const h = window.innerHeight - 16;
+  const minDim = Math.min(w, h);
 
-  const linkSel = svgG.append('g')
+  // Tighter forces — we want the full graph to fit at the initial zoom-out.
+  const linkDist = Math.max(10, Math.min(28, minDim / 14));
+  const charge   = -Math.max(15, Math.min(60, minDim / 9));
+  const pad      = 2;
+
+  const linkSel = svgG.append('g').attr('class', 'links')
     .selectAll('line')
     .data(links)
     .join('line')
-    .attr('class', 'link')
-    .attr('stroke', '#333')
-    .attr('stroke-width', 0.7)
-    .attr('stroke-opacity', 0.4);
+    .attr('class', d => baseLinkClass(d))
+    .attr('stroke-width', 0.7);
+  lastLinkSel = linkSel;
 
-  const nodeSel = svgG.append('g')
+  const nodeSel = svgG.append('g').attr('class', 'nodes')
     .selectAll('circle')
     .data(nodes)
     .join('circle')
+    .attr('class', 'node')
     .attr('r', d => nodeRadius(d))
     .attr('fill', d => nodeColor(d))
-    .attr('opacity', 0.85);
+    .attr('stroke', d => nodeColor(d))
+    .attr('stroke-opacity', 0.95)
+    .attr('opacity', 0.95)
+    .on('mouseover', (e, d) => highlightNeighborhood(d, nodeSel, linkSel))
+    .on('mouseout',  ()    => clearHighlight(nodeSel, linkSel))
+    .on('click', (e, d) => zoomToNode(d));
 
-  const labelSel = svgG.append('g')
+  const labelSel = svgG.append('g').attr('class', 'labels')
     .selectAll('text')
-    .data(nodes.filter(d => d.count >= 2 || nodes.length < 30))
+    .data(nodes)
     .join('text')
     .attr('class', 'node-label')
-    .attr('fill', '#666')
-    .attr('dy', d => nodeRadius(d) + 8)
-    .text(d => d.label);
+    .attr('dy', d => nodeRadius(d) + 7)
+    .text(d => (d.label || shortLabel(d.id)).slice(0, 18))
+    .style('display', 'none'); // initially hidden until zoomed in
 
   sim = d3.forceSimulation(nodes)
-    .force('link', d3.forceLink(links).id(d => d.id).distance(50))
-    .force('charge', d3.forceManyBody().strength(-80))
+    .force('link', d3.forceLink(links).id(d => d.id).distance(linkDist).strength(0.5))
+    .force('charge', d3.forceManyBody().strength(charge))
     .force('center', d3.forceCenter(w / 2, h / 2))
-    .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 3))
-    .alphaDecay(0.04)
-    .velocityDecay(0.4);
+    .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 1.5))
+    .alphaDecay(0.045)
+    .velocityDecay(0.5);
 
   sim.on('tick', () => {
+    nodes.forEach(d => {
+      const r = nodeRadius(d) + pad;
+      d.x = Math.max(r, Math.min(w - r, d.x));
+      d.y = Math.max(r, Math.min(h - r, d.y));
+    });
     linkSel
       .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
       .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
@@ -312,8 +667,81 @@ function renderD3Graph(gd) {
     labelSel.attr('x', d => d.x).attr('y', d => d.y);
   });
 
-  setTimeout(() => { if (sim) sim.stop(); }, 3000);
+  // ── d3.zoom + semantic LOD ─────────────────────────────────────────────────
+  // Apply zoom transforms to svgG, and adjust visual properties based on the
+  // current zoom scale (label visibility, stroke widths) so the graph stays
+  // legible whether you're at 0.4× (fit-to-pane overview) or 6× (entity detail).
+  const zoomBehavior = d3.zoom()
+    .scaleExtent([0.3, 8])
+    .on('zoom', (event) => {
+      const t = event.transform;
+      svgG.attr('transform', t);
+      applyLOD(t.k);
+    });
+  svg.call(zoomBehavior).on('dblclick.zoom', null); // dbl-click = reset, see below
+  svg.on('dblclick', () => {
+    svg.transition().duration(500).call(zoomBehavior.transform, d3.zoomIdentity);
+    autoFit();
+  });
+
+  function applyLOD(k) {
+    // Edges become hairline at high zoom (preserve neon glow without thickening).
+    linkSel.attr('stroke-width', Math.max(0.5, 1.1 / k));
+    // Show labels when zoomed in; show only high-degree labels at medium zoom.
+    labelSel.style('display', d => {
+      if (k >= LOD_LABEL) return null;
+      if (k >= LOD_HIGH_DEG && d.degree >= highDegThreshold) return null;
+      return 'none';
+    });
+    // Counter-scale label font so it stays readable at all zoom levels.
+    labelSel.style('font-size', `${Math.max(6, 8 / Math.sqrt(k))}px`);
+  }
+  applyLOD(1);
+
+  // Click a node → smoothly zoom + center on its neighborhood.
+  function zoomToNode(d) {
+    if (!d || d.x == null) return;
+    const targetK = 3.5;
+    const tx = w / 2 - d.x * targetK;
+    const ty = h / 2 - d.y * targetK;
+    svg.transition().duration(600)
+       .call(zoomBehavior.transform,
+             d3.zoomIdentity.translate(tx, ty).scale(targetK));
+  }
+
+  // Initial fit-to-pane: compute bbox after settle, transform via zoomBehavior
+  // so subsequent user pan/zoom continues from this anchor.
+  function autoFit() {
+    if (!nodes.length) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    nodes.forEach(d => {
+      const r = nodeRadius(d) + 6;
+      if (d.x - r < minX) minX = d.x - r;
+      if (d.y - r < minY) minY = d.y - r;
+      if (d.x + r > maxX) maxX = d.x + r;
+      if (d.y + r > maxY) maxY = d.y + r;
+    });
+    const bw = Math.max(1, maxX - minX);
+    const bh = Math.max(1, maxY - minY);
+    const margin = 12;
+    const scale = Math.min((w - margin * 2) / bw, (h - margin * 2) / bh, 1);
+    const tx = margin + (w - margin * 2 - bw * scale) / 2 - minX * scale;
+    const ty = margin + (h - margin * 2 - bh * scale) / 2 - minY * scale;
+    svg.transition().duration(400)
+       .call(zoomBehavior.transform, d3.zoomIdentity.translate(tx, ty).scale(scale));
+  }
+
+  setTimeout(autoFit, 900);
+  setTimeout(autoFit, 1700);
+  setTimeout(() => { if (sim) sim.stop(); autoFit(); }, 2600);
 }
+
+// Re-render on resize so sidebar/forces re-fit when the pane changes size.
+let resizeT;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeT);
+  resizeT = setTimeout(() => { if (graphData) renderD3Graph(graphData); }, 200);
+});
 
 // ── SSE Connection ────────────────────────────────────────────────────────────
 
@@ -367,8 +795,9 @@ async function fetchTGGraph() {
     tgConnected = true;
     graphData   = graph;
 
-    // Only render TG graph when SSE has no activity nodes yet.
-    if (activityNodes.size === 0 && graph.nodes.length > 0) {
+    // Always re-render the TG gateway graph on poll so the viewer
+    // refreshes independently of SSE activity.
+    if (graph.nodes.length > 0) {
       renderD3Graph(graph);
     }
     updateStatus();
@@ -383,6 +812,9 @@ async function fetchTGGraph() {
 connectSSE();
 fetchTGGraph();
 setInterval(fetchTGGraph, POLL_MS);
+// Redraw activity graph on its own cadence so the viewer refreshes
+// even when SSE events are sparse.
+setInterval(renderActivityGraph, 5000);
 </script>
 </body>
 </html>
