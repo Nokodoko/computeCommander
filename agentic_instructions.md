@@ -136,3 +136,54 @@ All specification files live in `specs/`. Never create spec files in the repo ro
 - **Self-registering runtimes**: `init()` + `RegisterRuntime()`
 - **SQL**: `?` positional params, `CREATE TABLE IF NOT EXISTS` for idempotence
 - **TypeScript**: Functional exports (`createServer()`), Bun-native APIs, `import.meta.main` guards
+
+---
+
+## cmdr_coder scope anchor
+
+This repository is governed by the `cmdr_coder` agent (definition: `/home/n0ko/.claude/agents/cmdr_coder.md`).
+
+**All Go and Rust code authorship, modification, refactoring, and code review for `/home/n0ko/Programs/ai/computeCommander/` MUST be delegated to `cmdr_coder`.** This SUPERSEDES any earlier rule that named `golang-coder` or `unix-coder`. See the three pinned rules at the top of `CLAUDE.md` (PINNED ORCHESTRATION RULE, REVIEWER INDEPENDENCE RULE, SPEC LAYOUT RULE).
+
+### Scope boundary
+
+| Path | Owner | Notes |
+|------|-------|-------|
+| `cmd/` | `cmdr_coder` | See `cmd/agentic_instructions.md`. Cobra command tree (one command per file). |
+| `internal/` | `cmdr_coder` | See `internal/agentic_instructions.md`. 23+ internal packages; 7 load-bearing interfaces. |
+| `pkg/` | `cmdr_coder` | See `pkg/agentic_instructions.md`. LOCKED at 2 packages (`runtimes`, `integrations`). |
+| `plugins/` | `cmdr_coder` | See `plugins/agentic_instructions.md`. Rust focus-watcher; cargo required for `make build`. |
+| `bridge/` | `cmdr_coder` | (planned per legacy `specs/go-typescript-bridge.md`) |
+| `agents/`, `templates/`, `migrations/`, `scripts/` | `cmdr_coder` | Project-internal config / overlays. |
+| `k8s-cluster/` | NOT `cmdr_coder` | TypeScript/Bun. Read-only for `cmdr_coder`. Route TS edits to a TypeScript-capable agent. |
+| `SPEC/`, `specs/` | `spec-builder` / `spec-reviewer` | Spec authorship and review. `cmdr_coder` may READ but never write. |
+| `.computecommander/scripts/tg-viz.html` | NOT `cmdr_coder` | Pre-existing WIP on `pi` branch — separate workstream; do NOT stage. |
+
+### Spec of record
+
+Authoritative spec for the agent: `SPEC/CMDR_CODER_AGENT/CMDR_CODER_AGENT.md`.
+
+Reviews:
+- `SPEC/CMDR_CODER_AGENT/REVIEWS/CMDR_CODER_AGENT_REVIEW.md` — spec review
+- `SPEC/CMDR_CODER_AGENT/REVIEWS/CMDR_CODER_AGENT_FILE_REVIEW.md` — review of the agent file at `~/.claude/agents/cmdr_coder.md`
+
+### Build / Test / Vet (the gates `cmdr_coder` honors)
+
+```bash
+cd /home/n0ko/Programs/ai/computeCommander && make build      # requires cargo (Rust focus-watcher)
+cd /home/n0ko/Programs/ai/computeCommander && go test ./...
+cd /home/n0ko/Programs/ai/computeCommander && make vet
+cd /home/n0ko/Programs/ai/computeCommander && make lint       # best-effort, NOT a gate
+```
+
+### ob1 / ob2 project tag
+
+`cmdr_coder` writes activity entries tagged `project=computeCommander` (key shape: `computeCommander/activity/<YYYY-MM-DD>/<task_id>.md`). The host CLI today is `ob2` at `/home/n0ko/.local/bin/ob2`; legacy spec text references "ob1" for historical naming. Project-scoping flag: `-project <path>` (single dash). Default project detection is via `.git`, so within this repo no flag is strictly required.
+
+### Read-first cascade
+
+1. `CLAUDE.md` (repo-root)
+2. This file (`agentic_instructions.md`)
+3. The local `agentic_instructions.md` for the subdirectory you'll touch
+4. `SPEC/CMDR_CODER_AGENT/CMDR_CODER_AGENT.md` (§3 Design Principles, §10 Integration / Orchestrator-Injected Context)
+5. The interface or symbol definition for any load-bearing type you'll modify (`AgentRuntime`, `DB`, `MailStore`, `MergeQueue`, `WorktreeManager`, `PaneManager`, `WindowManager`).
