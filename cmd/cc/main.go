@@ -319,6 +319,7 @@ conflict resolution.`,
 	addAppCmd(root, commands.OpenBrainCmd(sharedApp))
 	addAppCmd(root, commands.PromptLineCmd(sharedApp))
 	addAppCmd(root, commands.TrustGraphCmd(sharedApp))
+	addAppCmd(root, commands.TGListCmd(sharedApp))
 
 	// Infrastructure commands.
 	addAppCmd(root, commands.WorktreeCmd(sharedApp))
