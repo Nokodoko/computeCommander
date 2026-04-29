@@ -129,28 +129,48 @@ func TestGenerateLayout_ContainsTGPane(t *testing.T) {
 	if !strings.Contains(layout, `name="TG Viz"`) {
 		t.Errorf("layout must contain a TG Viz (TrustGraph visualization) pane")
 	}
-	// The TG Viz pane is passive — it runs `tail -f /dev/null` so zellij
-	// does not spawn a default shell, leaving the pane empty/transparent for
-	// the trustgraph-viewer Electron overlay to render through.
-	if !strings.Contains(layout, `command "tail"`) || !strings.Contains(layout, `"-f" "/dev/null"`) {
-		t.Errorf("layout TG Viz pane must run `tail -f /dev/null` to stay passive")
+	// The TG Viz pane runs `cmdr tg-list` — a refreshing text list of
+	// TrustGraph nodes and edges. The prior Electron overlay was retired
+	// for resource reasons; the pane no longer needs to stay passive.
+	if !strings.Contains(layout, `args "tg-list"`) {
+		t.Errorf("layout TG Viz pane must run `cmdr tg-list`:\n%s", layout)
+	}
+	// Sanity: the old passive placeholder must be gone.
+	if strings.Contains(layout, `"-f" "/dev/null"`) {
+		t.Errorf("layout must no longer contain the legacy `tail -f /dev/null` placeholder:\n%s", layout)
 	}
 	// The agent session pane must be named "Agent" so external tools can
-	// distinguish it from the TG Viz overlay target.
+	// distinguish it from other panes.
 	if !strings.Contains(layout, `name="Agent"`) {
 		t.Errorf("layout must contain a named Agent pane for the central agent session")
 	}
-	// The agent pane must occupy the full top section of the central column
-	// (67% height). If TG Viz is stacked underneath it again, this width drops
-	// back to 14% and the agent shrinks to a sliver.
-	if !strings.Contains(layout, `name="Agent" size="67%"`) {
-		t.Errorf("Agent pane must be 67%% of the central column (TG Viz must NOT be stacked above/below it):\n%s", layout)
+	// The agent pane must occupy the central column of the top row.
+	// Width is 64% (reduced from 67% to widen the left column for calcurse).
+	// If TG Viz is stacked underneath it again, this width collapses and the
+	// agent shrinks to a sliver.
+	if !strings.Contains(layout, `name="Agent" size="64%"`) {
+		t.Errorf("Agent pane must be 64%% of the central column (TG Viz must NOT be stacked above/below it):\n%s", layout)
 	}
-	// TG Viz must live on the bottom row (next to LazyGit). The bottom-row
-	// vertical split contains it; we assert by checking it's wider than the
-	// original 20%% — a regression to the central-column layout would size
-	// it 86%%, which would also fail the bottom-row siblings check above.
-	if !strings.Contains(layout, `name="TG Viz" size="38%"`) {
-		t.Errorf("TG Viz must be on the bottom row at 38%% width, not stacked in the central column:\n%s", layout)
+	// TG Viz lives on the bottom row at 20%% (reduced from 38%% when the
+	// Electron overlay was replaced with the lighter-weight tg-list text view).
+	if !strings.Contains(layout, `name="TG Viz" size="20%"`) {
+		t.Errorf("TG Viz must be on the bottom row at 20%% width:\n%s", layout)
+	}
+	// Bottom row reordered (UX request): OB1 widened and moved to the left,
+	// Event Log narrowed and moved next to it. Evals trimmed, TG Viz/LazyGit unchanged.
+	if !strings.Contains(layout, `name="OB1" size="28%"`) {
+		t.Errorf("OB1 must be 28%% wide and on the left of the bottom row:\n%s", layout)
+	}
+	if !strings.Contains(layout, `name="Event Log" size="16%"`) {
+		t.Errorf("Event Log must be 16%% wide:\n%s", layout)
+	}
+	if !strings.Contains(layout, `name="Evals" size="20%"`) {
+		t.Errorf("Evals must be 20%% wide:\n%s", layout)
+	}
+	// OB1 must appear before Event Log in the layout text (left of it on screen).
+	ob1Idx := strings.Index(layout, `name="OB1"`)
+	evIdx := strings.Index(layout, `name="Event Log"`)
+	if ob1Idx < 0 || evIdx < 0 || ob1Idx > evIdx {
+		t.Errorf("OB1 must appear before Event Log in the bottom row (OB1 at %d, Event Log at %d):\n%s", ob1Idx, evIdx, layout)
 	}
 }
