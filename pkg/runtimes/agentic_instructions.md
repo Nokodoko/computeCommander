@@ -1,7 +1,7 @@
 # pkg/runtimes/ -- Pluggable Agent Runtime System
 
 ## Purpose
-Defines the `AgentRuntime` interface and global registry for pluggable AI coding agent backends. Each runtime adapter (Claude, Gemini, Codex, Pi, Goose) registers itself via `init()` and implements spawning, config deployment, readiness detection, and transcript parsing.
+Defines the `AgentRuntime` interface and global registry for pluggable AI coding agent backends. Each runtime adapter (Claude, Gemini, Codex, Pi, Goose, Icarus) registers itself via `init()` and implements spawning, config deployment, readiness detection, and transcript parsing.
 
 ## Technology
 - Go 1.25
@@ -18,6 +18,7 @@ Defines the `AgentRuntime` interface and global registry for pluggable AI coding
 | `gemini/` | Gemini CLI runtime adapter (stub) |
 | `goose/` | Goose runtime adapter (stub) |
 | `pi/` | Pi agent runtime adapter (stub with JSON-RPC 2.0 placeholder) |
+| `icarus/` | Icarus Go-native harness adapter (effort knob via `ICARUS_EFFORT` env, full method coverage) |
 
 ## Key Functions
 
@@ -30,7 +31,7 @@ Defines the `AgentRuntime` interface and global registry for pluggable AI coding
 ## Data Types
 
 ### RuntimeID (string enum)
-`claude` | `gemini` | `codex` | `pi` | `goose`
+`claude` | `gemini` | `codex` | `pi` | `goose` | `icarus`
 
 ### AgentRuntime (interface)
 | Method | Returns | Description |

@@ -18,6 +18,7 @@ const (
 	RuntimeCodex  RuntimeID = "codex"
 	RuntimePi     RuntimeID = "pi"
 	RuntimeGoose  RuntimeID = "goose"
+	RuntimeIcarus RuntimeID = "icarus"
 )
 
 // SpawnOpts configures agent process spawning.
@@ -161,5 +162,6 @@ func AllRuntimeIDs() []RuntimeID {
 		RuntimeCodex,
 		RuntimePi,
 		RuntimeGoose,
+		RuntimeIcarus,
 	}
 }

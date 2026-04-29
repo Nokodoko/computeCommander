@@ -14,6 +14,7 @@ import (
 	_ "github.com/noko/computecommander/pkg/runtimes/codex"
 	_ "github.com/noko/computecommander/pkg/runtimes/gemini"
 	_ "github.com/noko/computecommander/pkg/runtimes/goose"
+	_ "github.com/noko/computecommander/pkg/runtimes/icarus"
 	_ "github.com/noko/computecommander/pkg/runtimes/pi"
 )
 
@@ -361,8 +362,8 @@ func TestGooseInstructionPath(t *testing.T) {
 
 func TestAllRuntimeIDs(t *testing.T) {
 	ids := runtimes.AllRuntimeIDs()
-	if len(ids) != 5 {
-		t.Fatalf("AllRuntimeIDs() returned %d, want 5", len(ids))
+	if len(ids) != 6 {
+		t.Fatalf("AllRuntimeIDs() returned %d, want 6", len(ids))
 	}
 	expected := map[runtimes.RuntimeID]bool{
 		runtimes.RuntimeClaude: true,
@@ -370,6 +371,7 @@ func TestAllRuntimeIDs(t *testing.T) {
 		runtimes.RuntimeCodex:  true,
 		runtimes.RuntimePi:     true,
 		runtimes.RuntimeGoose:  true,
+		runtimes.RuntimeIcarus: true,
 	}
 	for _, id := range ids {
 		if !expected[id] {
