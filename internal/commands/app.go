@@ -33,6 +33,7 @@ import (
 	_ "github.com/noko/computecommander/pkg/runtimes/codex"
 	_ "github.com/noko/computecommander/pkg/runtimes/gemini"
 	_ "github.com/noko/computecommander/pkg/runtimes/goose"
+	_ "github.com/noko/computecommander/pkg/runtimes/icarus"
 	_ "github.com/noko/computecommander/pkg/runtimes/pi"
 )
 

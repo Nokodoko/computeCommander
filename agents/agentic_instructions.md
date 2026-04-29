@@ -18,6 +18,7 @@ YAML configuration files defining the role hierarchy for AI coding agents in the
 | `reviewer.yaml` | Validation and code review (read_only, no spawn, claude-sonnet-4) |
 | `scout.yaml` | Read-only exploration (read_only, no spawn, gemini-2.5-pro) |
 | `supervisor.yaml` | DEPRECATED -- replaced by `lead.yaml` |
+| `icarus.yaml` | Icarus harness builder (runtime: icarus, effort knob via `ICARUS_EFFORT`, claude-sonnet-4-7) |
 
 ## Key Functions
 N/A -- declarative YAML, no executable functions.
@@ -29,7 +30,7 @@ N/A -- declarative YAML, no executable functions.
 name: string          # agent identifier
 capability: string    # role enum (scout|builder|reviewer|lead|merger|coordinator|supervisor|monitor)
 description: string   # human-readable purpose
-runtime: string       # AI runtime (claude|gemini|codex|pi|goose)
+runtime: string       # AI runtime (claude|gemini|codex|pi|goose|icarus)
 model: string         # model identifier
 tools:
   allowed: [string]   # tools the agent may use

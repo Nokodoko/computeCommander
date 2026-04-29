@@ -1,0 +1,45 @@
+name: icarus
+capability: builder
+description: Local-first reasoning harness with hook-bus integration and ob1 read/write.
+
+runtime: icarus
+model: claude-sonnet-4-7
+
+tools:
+  allowed:
+    - Read
+    - Write
+    - Edit
+    - Glob
+    - Grep
+    - Bash
+  blocked:
+    - WebFetch
+    - Spawn
+
+constraints:
+  - file_scope_enforced
+  - no_spawn
+  - no_git_push
+
+git:
+  allowed:
+    - add
+    - commit
+    - status
+    - diff
+    - log
+  blocked:
+    - push
+    - force-push
+    - reset --hard
+
+file_scope:
+  include:
+    - "**/*.go"
+    - "**/*.md"
+    - "**/*.yaml"
+  exclude:
+    - "**/vendor/**"
+    - "**/node_modules/**"
+    - ".git/**"
