@@ -12,11 +12,11 @@
     border-bottom: 1px solid #1a1a2e;
     display: flex; align-items: center; gap: 8px; height: 16px;
   }
-  #header h1 { font-size: 9px; color: #00ffff; font-weight: 600; letter-spacing: 1px; text-shadow: 0 0 6px #00ffff80; }
+  #header h1 { font-size: 9px; color: #00ff88; font-weight: 600; letter-spacing: 1px; }
   #header .stats { font-size: 9px; color: #555; }
   #status { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
-  #status.ok { background: #50fa7b; }
-  #status.err { background: #ff5555; }
+  #status.ok { background: #00ff88; }
+  #status.err { background: #ff4444; }
   #status.stale { background: #ffaa00; }
   #sidebar {
     position: fixed; top: 16px; right: 0; width: 120px; bottom: 0;
@@ -48,56 +48,51 @@
     svg { width: 100vw; }
   }
   .link {
-    stroke: #00ffff;
-    stroke-opacity: 0.55;
-    filter: url(#neon-glow);
+    stroke: #333;
+    stroke-opacity: 0.4;
     stroke-dasharray: 4 6;
     animation: trace 1.6s linear infinite;
     fill: none;
   }
   .axis-line {
-    stroke: #1a3a4a; stroke-width: 0.8; stroke-opacity: 0.5;
+    stroke: #333; stroke-width: 0.8; stroke-opacity: 0.5;
     stroke-dasharray: 1 3;
   }
   .axis-label {
-    font-size: 7px; fill: #00ffff; opacity: 0.6;
-    text-shadow: 0 0 3px #00ffff60;
+    font-size: 7px; fill: #888888; opacity: 0.6;
     pointer-events: none;
   }
   #expand-btn {
-    cursor: pointer; color: #00ffff; opacity: 0.9;
+    cursor: pointer; color: #ffaa00; opacity: 0.9;
     text-decoration: underline; padding: 0 4px;
   }
-  #expand-btn:hover { color: #39ff14; }
+  #expand-btn:hover { color: #FFB347; }
   .link.lewis { stroke: #ffaa00; }
   .link.monty { stroke: #00aaff; }
   /* Edges that connect two nodes referenced by the most recent prompt/event. */
   .link.active {
-    stroke: #39ff14;
+    stroke: #ffaa00;
     stroke-opacity: 0.95;
     stroke-width: 1.6;
     stroke-dasharray: 6 3;
-    animation: trace 0.8s linear infinite, pulse-glow 1.4s ease-in-out infinite;
-    filter: url(#neon-glow-strong);
+    animation: trace 0.8s linear infinite, pulse-amber 1.4s ease-in-out infinite;
   }
-  @keyframes pulse-glow {
+  @keyframes pulse-amber {
     0%, 100% { stroke-opacity: 0.6; }
     50%      { stroke-opacity: 1.0; }
   }
   /* When hovering a node, dim non-neighboring edges/nodes. */
   .dim { opacity: 0.12 !important; }
   .neighbor-edge {
-    stroke: #39ff14 !important;
+    stroke: #ffaa00 !important;
     stroke-opacity: 1 !important;
     stroke-width: 1.4 !important;
-    filter: url(#neon-glow-strong);
   }
   @keyframes trace {
     from { stroke-dashoffset: 20; }
     to   { stroke-dashoffset: 0; }
   }
-  .node { filter: url(#neon-glow); }
-  .node-label { font-size: 8px; pointer-events: none; text-anchor: middle; fill: #b8faff; text-shadow: 0 0 4px #00ffff80; }
+  .node-label { font-size: 8px; pointer-events: none; text-anchor: middle; fill: #888888; }
 </style>
 </head>
 <body>
@@ -112,28 +107,7 @@
   <div id="event-list"></div>
 </div>
 <div id="empty">Waiting for graph data...</div>
-<svg>
-  <defs>
-    <filter id="neon-glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="1.6" result="blur1"/>
-      <feGaussianBlur in="SourceGraphic" stdDeviation="0.6" result="blur2"/>
-      <feMerge>
-        <feMergeNode in="blur1"/>
-        <feMergeNode in="blur2"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-    <filter id="neon-glow-strong" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="3.2" result="blur1"/>
-      <feGaussianBlur in="SourceGraphic" stdDeviation="1.0" result="blur2"/>
-      <feMerge>
-        <feMergeNode in="blur1"/>
-        <feMergeNode in="blur2"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
-    </filter>
-  </defs>
-</svg>
+<svg></svg>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <script>
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -143,8 +117,11 @@ const POLL_MS   = 30000; // poll TG gateway as fallback every 30s
 const MAX_EVENTS_SIDEBAR = 40;
 const RECENT_PROMPTS = 5;       // # recent prompts whose entities define the visible subgraph
 const MAX_HOPS       = 2;       // BFS depth from focus when expanding the visible neighborhood
-let   TOP_K          = 250;     // semantic LOD: render up to this many nodes (most by degree)
+const TARGETED_CAP   = 30;      // hard cap on nodes in the default targeted view (prompt seeds + 1-hop)
+const PLACEHOLDER_K  = 12;      // node count when no recent prompts exist (top-degree fallback)
+let   TOP_K          = 30;      // semantic LOD: render up to this many nodes (mutated by Expand btn)
 const TOP_K_STEP     = 50;      // expand by this many on header click
+let   expandedMode   = false;   // user opted in to the larger exploded view via Expand
 const LOD_LABEL      = 1.4;     // zoom scale above which we render labels
 const LOD_HIGH_DEG   = 0.7;     // zoom scale below which we show only top-degree labels
 
@@ -257,13 +234,12 @@ function handleMemoryEvent(ev) {
   if (promptTags.size) {
     recentPromptSets.push(promptTags);
     if (recentPromptSets.length > RECENT_PROMPTS) recentPromptSets.shift();
-    // Re-render the TG graph so newly relevant nodes appear.
-    if (graphData) renderD3Graph(graphData);
+    // Re-render the TG graph so newly relevant nodes appear (debounced).
+    if (graphData) scheduleRender(graphData);
   }
 
   updateStatus();
   renderSidebar();
-  renderActivityGraph();
 }
 
 function updateStatus() {
@@ -281,11 +257,11 @@ function updateStatus() {
 
   const expandEl = document.getElementById('expand-btn');
   if (expandEl) {
-    if (dormantCount > 0) {
-      expandEl.textContent = `+${dormantCount} more  ▼`;
+    if (!expandedMode && dormantCount > 0) {
+      expandEl.textContent = `expand (+${dormantCount})  ▼`;
       expandEl.style.display = '';
-    } else if (TOP_K > 18) {
-      expandEl.textContent = `reset (showing ${TOP_K})  ▲`;
+    } else if (expandedMode) {
+      expandEl.textContent = `targeted view  ▲`;
       expandEl.style.display = '';
     } else {
       expandEl.style.display = 'none';
@@ -293,13 +269,26 @@ function updateStatus() {
   }
 }
 
-// Wire the expand button: bumps TOP_K by TOP_K_STEP, or resets if everything is shown.
+// Wire the expand button: toggles between targeted (default) and exploded view.
+// In exploded mode, repeated clicks bump TOP_K; second click after entering
+// exploded mode collapses back to targeted.
 document.addEventListener('DOMContentLoaded', () => {
   const btn = document.getElementById('expand-btn');
   if (!btn) return;
   btn.addEventListener('click', () => {
-    if (dormantCount === 0 && TOP_K > 18) TOP_K = 18;
-    else TOP_K += TOP_K_STEP;
+    if (!expandedMode) {
+      expandedMode = true;
+      TOP_K = 80;
+    } else {
+      // Already exploded — either bump higher, or collapse if we're already big.
+      if (TOP_K >= 250) {
+        expandedMode = false;
+        TOP_K = 30;
+      } else {
+        TOP_K = Math.min(250, TOP_K + TOP_K_STEP);
+      }
+    }
+    lastNodeSetKey = '';
     if (graphData) renderD3Graph(graphData);
     updateStatus();
   });
@@ -321,57 +310,14 @@ function renderSidebar() {
 
 // ── Activity Graph (from SSE tags) ────────────────────────────────────────────
 
-function renderActivityGraph() {
-  if (activityNodes.size === 0) return;
-  emptyEl.style.display = 'none';
-
-  // Build graph from activity node co-occurrence.
-  // Nodes = distinct tags. Edges = tags that appeared in the same event.
-  const nodes = [];
-  for (const [id, info] of activityNodes) {
-    nodes.push({
-      id,
-      label: id.length > 20 ? id.slice(0, 18) + '..' : id,
-      count: info.count,
-      host:  info.lastHost,
-    });
-  }
-
-  // Sort by count, keep top 80 for readability.
-  nodes.sort((a, b) => b.count - a.count);
-  const topNodes = nodes.slice(0, 80);
-  const nodeSet  = new Set(topNodes.map(n => n.id));
-
-  // Simple links: nodes from the same event that are both in topNodes.
-  // We approximate via sseEvents co-occurrence.
-  const linkMap = new Map();
-  for (const ev of sseEvents) {
-    const tags = (ev.tags || []).filter(t => nodeSet.has(t));
-    for (let i = 0; i < tags.length; i++) {
-      for (let j = i + 1; j < tags.length; j++) {
-        const key = tags[i] < tags[j] ? `${tags[i]}|${tags[j]}` : `${tags[j]}|${tags[i]}`;
-        linkMap.set(key, (linkMap.get(key) || 0) + 1);
-      }
-    }
-  }
-
-  const links = [];
-  for (const [key, weight] of linkMap) {
-    const [s, t] = key.split('|');
-    links.push({ source: s, target: t, weight });
-  }
-
-  renderD3Graph({ nodes: topNodes, links });
-}
-
 function nodeColor(d) {
   // SSE activity nodes (live multi-host events) keep host-based hues.
   if (d.host === 'lewis') return '#ffaa00'; // amber
-  if (d.host === 'monty') return '#00aaff'; // neon blue
-  // TG gateway nodes — neon palette.
-  if (d.focus) return '#39ff14';              // neon green focus
-  if (d.type === 'literal') return '#ff6ec7'; // neon pink literals
-  return '#00ffff';                           // neon cyan entities
+  if (d.host === 'monty') return '#00aaff'; // cyan secondary
+  // TG gateway nodes — amber palette.
+  if (d.focus) return '#ffaa00';              // amber focus
+  if (d.type === 'literal') return '#FFB347'; // light amber literals
+  return '#888888';                           // inactive gray entities
 }
 
 function nodeRadius(d) {
@@ -441,13 +387,15 @@ function clearHighlight(nodeSel, linkSel) {
   linkSel.classed('dim', false).classed('neighbor-edge', false);
 }
 
-// Detail-on-demand filter: keep only the TOP_K most-connected nodes,
-// preferring nodes touched by recent prompts. Edges with both endpoints
-// in the visible set are rendered. Hidden node count stored in dormantCount.
+// Default view = TARGETED: only nodes referenced by recent prompts plus their
+// immediate (1-hop) neighbors, hard-capped at TARGETED_CAP. When the user
+// clicks Expand, the view switches to the legacy exploded view (top-degree
+// up to TOP_K). When no recent prompts exist, show a tiny PLACEHOLDER_K-sized
+// top-degree set instead of the full graph.
 function filterRecentSubgraph(full) {
   if (!full || !full.nodes.length) return { nodes: [], links: [], focus: null };
 
-  // Build adjacency to compute degree.
+  // Build adjacency once; used by both modes.
   const adj = new Map();
   for (const n of full.nodes) adj.set(n.id, new Set());
   for (const l of full.links) {
@@ -459,11 +407,20 @@ function filterRecentSubgraph(full) {
     }
   }
 
-  // Candidates: prompt-touched nodes first, then top-degree fillers.
+  // Drop opaque-label nodes (hashes, UUIDs, raw hex digests) — they pollute
+  // any selection (targeted or expanded) and add no semantic value.
+  const meaningful = full.nodes.filter(n => {
+    const lbl = n.label || shortLabel(n.id);
+    return !isOpaqueLabel(lbl);
+  });
+  const meaningfulIds = new Set(meaningful.map(n => n.id));
+  const byId = new Map(meaningful.map(n => [n.id, n]));
+
+  // Resolve recent-prompt tag set to actual node ids in the graph.
   const promptIds = new Set();
   for (const s of recentPromptSets) for (const t of s) promptIds.add(t);
 
-  function isPromptNode(n) {
+  function matchesPrompt(n) {
     if (promptIds.has(n.id)) return true;
     const lbl = (n.label || shortLabel(n.id)).toLowerCase();
     for (const t of promptIds) {
@@ -475,35 +432,80 @@ function filterRecentSubgraph(full) {
     return false;
   }
 
-  // Drop opaque-label nodes (hashes, UUIDs, raw hex digests) before ranking —
-  // they pollute the top-K and add no semantic value.
-  const meaningful = full.nodes.filter(n => {
-    const lbl = n.label || shortLabel(n.id);
-    return !isOpaqueLabel(lbl);
-  });
-  const scored = meaningful.map(n => ({
-    n,
-    deg: adj.get(n.id).size,
-    prompt: isPromptNode(n),
-  }));
-  // Prompt-touched first; within each group, highest degree first.
-  scored.sort((a, b) => {
-    if (a.prompt !== b.prompt) return a.prompt ? -1 : 1;
-    return b.deg - a.deg;
-  });
+  const seedIds = new Set();
+  for (const n of meaningful) if (matchesPrompt(n)) seedIds.add(n.id);
 
-  const visibleArr = scored.slice(0, TOP_K);
-  const visible    = new Set(visibleArr.map(x => x.n.id));
+  let visibleArr;
 
-  const nodes = visibleArr.map(x => x.n);
+  if (expandedMode) {
+    // Exploded view: prompt-touched first, then top-degree fillers up to TOP_K.
+    const scored = meaningful.map(n => ({
+      n,
+      deg: adj.get(n.id).size,
+      prompt: seedIds.has(n.id),
+    }));
+    scored.sort((a, b) => {
+      if (a.prompt !== b.prompt) return a.prompt ? -1 : 1;
+      return b.deg - a.deg;
+    });
+    visibleArr = scored.slice(0, TOP_K).map(x => x.n);
+  } else if (seedIds.size === 0) {
+    // No recent prompts → tiny placeholder so we don't render the firehose.
+    const scored = meaningful.map(n => ({ n, deg: adj.get(n.id).size }));
+    scored.sort((a, b) => b.deg - a.deg);
+    visibleArr = scored.slice(0, PLACEHOLDER_K).map(x => x.n);
+  } else {
+    // Targeted view: seed set + 1-hop meaningful neighbors, capped at TARGETED_CAP.
+    const visibleSet = new Set(seedIds);
+    // Rank candidate neighbors by degree so the cap keeps the most-connected ones.
+    const candidates = [];
+    for (const sid of seedIds) {
+      const neigh = adj.get(sid);
+      if (!neigh) continue;
+      for (const nid of neigh) {
+        if (visibleSet.has(nid)) continue;
+        if (!meaningfulIds.has(nid)) continue;
+        candidates.push({ id: nid, deg: adj.get(nid).size });
+      }
+    }
+    candidates.sort((a, b) => b.deg - a.deg);
+    for (const c of candidates) {
+      if (visibleSet.size >= TARGETED_CAP) break;
+      visibleSet.add(c.id);
+    }
+    visibleArr = [];
+    for (const id of visibleSet) {
+      const n = byId.get(id);
+      if (n) visibleArr.push(n);
+    }
+  }
+
+  const visible = new Set(visibleArr.map(n => n.id));
+  const nodes = visibleArr;
   const links = full.links.filter(l => {
     const sId = (l.source && l.source.id) || l.source;
     const tId = (l.target && l.target.id) || l.target;
     return visible.has(sId) && visible.has(tId);
   });
 
-  // Focus = the highest-ranked visible node (top of the sorted list).
-  const focus = visibleArr.length ? visibleArr[0].n.id : null;
+  // Focus: prefer a seed node (highest-degree seed) so radial layout centers
+  // on the prompt; fall back to the highest-degree visible node otherwise.
+  let focus = null;
+  if (seedIds.size) {
+    let bestDeg = -1;
+    for (const id of seedIds) {
+      if (!visible.has(id)) continue;
+      const d = adj.get(id).size;
+      if (d > bestDeg) { bestDeg = d; focus = id; }
+    }
+  }
+  if (!focus && nodes.length) {
+    let bestDeg = -1;
+    for (const n of nodes) {
+      const d = adj.get(n.id).size;
+      if (d > bestDeg) { bestDeg = d; focus = n.id; }
+    }
+  }
   dormantCount = full.nodes.length - nodes.length;
   return { nodes, links, focus };
 }
@@ -574,9 +576,45 @@ function triplesToGraph(triples) {
 const svg  = d3.select('svg');
 svgG = svg.append('g');
 
+// ── Debounced render scheduler ───────────────────────────────────────────────
+// Coalesce SSE-triggered and resize-triggered render calls. If the visible
+// node set hasn't changed since the last full rebuild, skip the simulation
+// rebuild and just refresh which edges are highlighted as "active".
+let renderTimer = null;
+let lastNodeSetKey = '';
+const RENDER_DEBOUNCE_MS = 2000;
+
+function visibleNodeSetKey(gd) {
+  if (!gd || !gd.nodes) return '';
+  const filtered = filterRecentSubgraph(gd);
+  const ids = filtered.nodes.map(n => n.id);
+  ids.sort();
+  return ids.join('|');
+}
+
+function scheduleRender(gd) {
+  if (!gd) return;
+  if (renderTimer) return; // already scheduled
+  renderTimer = setTimeout(() => {
+    renderTimer = null;
+    if (!graphData) return;
+    const key = visibleNodeSetKey(graphData);
+    if (key && key === lastNodeSetKey && lastLinkSel) {
+      // Node set unchanged — skip full rebuild, just re-classify active edges.
+      refreshActiveEdges();
+      return;
+    }
+    renderD3Graph(graphData); // updates lastNodeSetKey itself
+  }, RENDER_DEBOUNCE_MS);
+}
+
 function renderD3Graph(gd) {
   emptyEl.style.display = 'none';
   if (sim) sim.stop();
+
+  // Memo the visible node-set key so scheduleRender can skip rebuilds when
+  // the next event/poll resolves to the same set of visible nodes.
+  lastNodeSetKey = visibleNodeSetKey(gd);
 
   const filtered = filterRecentSubgraph(gd);
   const focus    = filtered.focus;
@@ -630,9 +668,7 @@ function renderD3Graph(gd) {
     .attr('class', 'node')
     .attr('r', d => nodeRadius(d))
     .attr('fill', d => nodeColor(d))
-    .attr('stroke', d => nodeColor(d))
-    .attr('stroke-opacity', 0.95)
-    .attr('opacity', 0.95)
+    .attr('opacity', 0.85)
     .on('mouseover', (e, d) => highlightNeighborhood(d, nodeSel, linkSel))
     .on('mouseout',  ()    => clearHighlight(nodeSel, linkSel))
     .on('click', (e, d) => zoomToNode(d));
@@ -685,7 +721,7 @@ function renderD3Graph(gd) {
   });
 
   function applyLOD(k) {
-    // Edges become hairline at high zoom (preserve neon glow without thickening).
+    // Edges become hairline at high zoom so labels and nodes remain readable.
     linkSel.attr('stroke-width', Math.max(0.5, 1.1 / k));
     // Show labels when zoomed in; show only high-degree labels at medium zoom.
     labelSel.style('display', d => {
@@ -737,10 +773,16 @@ function renderD3Graph(gd) {
 }
 
 // Re-render on resize so sidebar/forces re-fit when the pane changes size.
+// Resize requires a full rebuild (forces depend on w/h), so invalidate the
+// node-set memo and call renderD3Graph directly (bypassing the debounce).
 let resizeT;
 window.addEventListener('resize', () => {
   clearTimeout(resizeT);
-  resizeT = setTimeout(() => { if (graphData) renderD3Graph(graphData); }, 200);
+  resizeT = setTimeout(() => {
+    if (!graphData) return;
+    lastNodeSetKey = '';
+    renderD3Graph(graphData);
+  }, 200);
 });
 
 // ── SSE Connection ────────────────────────────────────────────────────────────
@@ -795,10 +837,10 @@ async function fetchTGGraph() {
     tgConnected = true;
     graphData   = graph;
 
-    // Always re-render the TG gateway graph on poll so the viewer
-    // refreshes independently of SSE activity.
+    // Re-render the TG gateway graph on poll. Debounced + skip-rebuild
+    // when the visible node set is unchanged so the simulation can settle.
     if (graph.nodes.length > 0) {
-      renderD3Graph(graph);
+      scheduleRender(graph);
     }
     updateStatus();
   } catch (e) {
@@ -812,9 +854,6 @@ async function fetchTGGraph() {
 connectSSE();
 fetchTGGraph();
 setInterval(fetchTGGraph, POLL_MS);
-// Redraw activity graph on its own cadence so the viewer refreshes
-// even when SSE events are sparse.
-setInterval(renderActivityGraph, 5000);
 </script>
 </body>
 </html>
