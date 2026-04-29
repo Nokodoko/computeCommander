@@ -174,3 +174,41 @@ func TestGenerateLayout_ContainsTGPane(t *testing.T) {
 		t.Errorf("OB1 must appear before Event Log in the bottom row (OB1 at %d, Event Log at %d):\n%s", ob1Idx, evIdx, layout)
 	}
 }
+
+// TestGenerateLayout_EvalsPaneIsLive guards the wiring contract for the
+// bottom-row Evals pane: it MUST point at `cmdr evals --pane`, the streaming
+// long-lived handler that watches the SQLite DB via fsnotify and re-renders
+// on every write. A regression to a one-shot command (e.g., `cmdr evals`
+// without `--pane`) would freeze the pane on the first row of output and
+// hide all subsequent eval activity, which is the user-reported bug this
+// test exists to prevent.
+func TestGenerateLayout_EvalsPaneIsLive(t *testing.T) {
+	opts := LayoutOpts{
+		CmdrBinary:   "cmdr",
+		ProjectDir:   "/tmp/proj",
+		AgentCommand: "claude",
+	}
+	layout := GenerateLayout(opts)
+
+	// Evals pane must be present and named.
+	if !strings.Contains(layout, `name="Evals"`) {
+		t.Fatalf("layout must contain a named Evals pane:\n%s", layout)
+	}
+
+	// The pane must invoke the live streaming handler.
+	// Locate the Evals pane block and verify its args.
+	evalsIdx := strings.Index(layout, `name="Evals"`)
+	if evalsIdx < 0 {
+		t.Fatalf("Evals pane not found")
+	}
+	// Look at a window after the pane declaration that should contain the
+	// command + args lines for that pane.
+	endIdx := evalsIdx + 256
+	if endIdx > len(layout) {
+		endIdx = len(layout)
+	}
+	block := layout[evalsIdx:endIdx]
+	if !strings.Contains(block, `args "evals" "--pane"`) {
+		t.Errorf("Evals pane must run `cmdr evals --pane` (the streaming handler) — without --pane the pane displays a one-shot snapshot and never updates:\n%s", block)
+	}
+}

@@ -478,13 +478,26 @@ can call it from wrapper scripts to record build, test, and lint results.`,
 	return cmd
 }
 
-// runEvalsPane runs evals in long-lived pane mode, refreshing every 3 seconds.
+// runEvalsPane runs evals in long-lived pane mode (used by the zellij
+// dashboard's Evals pane). It is a streaming, in-place updating view: any
+// process that writes to the SQLite DB triggers an immediate re-render via
+// fsnotify, and a 1s ticker re-renders so the "Xs ago" column ticks live.
+//
+// The query is sorted by COALESCE(last_run_at, created_at) DESC so recent
+// eval activity (a fresh PASS/FAIL update from `cmdr evals emit` or a hook
+// predicate) bubbles to the top of the pane rather than staying frozen at
+// whatever position the row was originally created at. This is the sort
+// invariant that makes the pane act as a live activity feed instead of a
+// static registration list.
 func runEvalsPane(cmd *cobra.Command, app *App) error {
 	paneCtx, cancel := paneContext(cmd.Context())
 	defer cancel()
 	ctx := paneCtx
 	projectFilter, _ := cmd.Flags().GetString("project")
-	ticker := time.NewTicker(3 * time.Second)
+	// 1s tick: the ticker is what advances the "Xs ago" column; fsnotify
+	// remains the primary data-change signal. Mirrors the cadence used by
+	// the agents pane where freshness must read live.
+	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
 	// Watch the SQLite DB file with fsnotify for instant refresh.
@@ -497,13 +510,17 @@ func runEvalsPane(cmd *cobra.Command, app *App) error {
 	render := func() {
 		clearScreen()
 
-		query := "SELECT id, project_name, agent_task, eval_type, passed, error_detail, last_run_at FROM evals"
+		// COALESCE(last_run_at, created_at) makes the pane behave as a
+		// recency-ordered activity feed. The previous ORDER BY created_at
+		// kept rows pinned at their registration position, hiding new
+		// PASS/FAIL flips at the bottom of the pane.
+		query := "SELECT id, project_name, agent_task, eval_type, passed, error_detail, last_run_at, created_at FROM evals"
 		var queryArgs []any
 		if projectFilter != "" {
 			query += " WHERE project_name = $1"
 			queryArgs = append(queryArgs, projectFilter)
 		}
-		query += " ORDER BY created_at DESC"
+		query += " ORDER BY COALESCE(last_run_at, created_at) DESC"
 
 		rows, err := app.DB.Query(ctx, query, queryArgs...)
 		if err != nil {
@@ -522,7 +539,10 @@ func runEvalsPane(cmd *cobra.Command, app *App) error {
 			}
 		}
 
-		fmt.Printf("\033[1mEvals\033[0m\n\n")
+		// Header carries the live timestamp so the user sees the pane is
+		// updating even when no eval rows have changed.
+		now := time.Now()
+		fmt.Printf("\033[1mEvals\033[0m \033[2m· %s\033[0m\n\n", now.Format("15:04:05"))
 
 		count := 0
 		total := 0
@@ -530,7 +550,8 @@ func runEvalsPane(cmd *cobra.Command, app *App) error {
 			var id, project, task, evalType string
 			var passed *bool
 			var errorDetail, lastRunAt *string
-			if err := rows.Scan(&id, &project, &task, &evalType, &passed, &errorDetail, &lastRunAt); err != nil {
+			var createdAt string
+			if err := rows.Scan(&id, &project, &task, &evalType, &passed, &errorDetail, &lastRunAt, &createdAt); err != nil {
 				continue
 			}
 			total++
@@ -555,8 +576,22 @@ func runEvalsPane(cmd *cobra.Command, app *App) error {
 			typeColor := evalTypeANSI[evalType]
 			typeName := typeColor + evalType + ansiReset
 
+			// Relative-time freshness indicator. Falls back to created_at
+			// when the eval has never been run so the column is never blank.
+			ts := lastRunAt
+			if ts == nil || *ts == "" {
+				ts = &createdAt
+			}
+			ago := formatEvalAgo(*ts, now)
+
 			_ = project // consumed by scan but not displayed in compact view
-			fmt.Printf("  %s %-12s %s %s\n", status, typeName, truncate(id, 14), truncate(task, 30))
+			fmt.Printf("  %s %-12s %s %-18s \033[2m%s\033[0m\n",
+				status,
+				typeName,
+				truncate(id, 14),
+				truncate(task, 18),
+				ago,
+			)
 		}
 
 		if total == 0 {
@@ -587,6 +622,45 @@ func runEvalsPane(cmd *cobra.Command, app *App) error {
 			}
 			render()
 		}
+	}
+}
+
+// formatEvalAgo renders a SQL ISO-8601 timestamp ("YYYY-MM-DDTHH:MM:SSZ" or
+// "YYYY-MM-DD HH:MM:SS" — both forms appear in the evals table because some
+// writers use Go's time.Format and SQLite's datetime('now') uses a space
+// separator) as a compact relative duration suitable for the eval pane's
+// freshness column ("3s ago", "12m ago", "2h ago").
+//
+// Returns "-" when the timestamp cannot be parsed; the pane treats that as
+// "never run" (rather than a bogus age) so a parse regression cannot mask
+// stale data with a confidently-displayed "0s ago".
+func formatEvalAgo(ts string, now time.Time) string {
+	if ts == "" {
+		return "-"
+	}
+	// Accept both T-separated and space-separated forms; normalize to RFC3339.
+	cleaned := strings.Replace(ts, " ", "T", 1)
+	if !strings.HasSuffix(cleaned, "Z") && !strings.Contains(cleaned, "+") {
+		cleaned += "Z"
+	}
+	t, err := time.Parse(time.RFC3339, cleaned)
+	if err != nil {
+		return "-"
+	}
+	d := now.Sub(t)
+	if d < 0 {
+		// Clock skew between writer and reader; treat as "now".
+		d = 0
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	}
 }
 
