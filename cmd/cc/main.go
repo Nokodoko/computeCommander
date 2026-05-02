@@ -68,6 +68,30 @@ func appPreRun(cmd *cobra.Command, args []string) error {
 	if wd == "" {
 		wd, _ = os.Getwd()
 	}
+	// Last-resort fallback: mirror the cmdr-bridge.sh CMDR_PROJECT default
+	// (~/.claude/hooks/cmdr-bridge.sh) so the binary and the bridge agree on
+	// where the project DB lives when launched from an unrelated CWD with no
+	// env hint, no neighbouring binary, and no git root. Only takes effect if
+	// the canonical path actually contains a project DB.
+	//
+	// The inner predicate fires when:
+	//   - wd has no .computecommander/local.db (unrelated CWD, e.g. /tmp), OR
+	//   - wd == $HOME — because ~/.computecommander/ is the system-wide
+	//     config dir owned by LoadSystemConfig, not a legitimate project root.
+	//     Treating it as a project root because PWD happens to be $HOME is
+	//     the originating shadow-DB bug.
+	if home, herr := os.UserHomeDir(); herr == nil {
+		canon := filepath.Join(home, "Programs", "ai", "computeCommander")
+		if _, err := os.Stat(filepath.Join(canon, ".computecommander", "local.db")); err == nil {
+			wdHasDB := false
+			if _, dbErr := os.Stat(filepath.Join(wd, ".computecommander", "local.db")); dbErr == nil {
+				wdHasDB = true
+			}
+			if !wdHasDB || wd == home {
+				wd = canon
+			}
+		}
+	}
 	real, err := commands.NewAppSystemWide(wd, version)
 	if err != nil {
 		// Fallback: try loading per-project config directly
@@ -180,7 +204,7 @@ conflict resolution.`,
 				// dashboardStartTime() can use its mtime to filter out
 				// completed agents from previous sessions.
 				lockPath := filepath.Join(".computecommander", "cmdr.lock")
-				if lockErr := os.WriteFile(lockPath, []byte(fmt.Sprintf("%d\n", os.Getpid())), 0o644); lockErr != nil {
+				if lockErr := os.WriteFile(lockPath, fmt.Appendf(nil, "%d\n", os.Getpid()), 0o644); lockErr != nil {
 					fmt.Fprintf(os.Stderr, "Warning: could not write lock file: %v\n", lockErr)
 				}
 
@@ -244,6 +268,7 @@ conflict resolution.`,
 	addAppCmd(root, commands.ShutdownCmd(sharedApp))
 	addAppCmd(root, commands.ResetCmd(sharedApp))
 	addAppCmd(root, commands.RestartCmd(sharedApp))
+	addAppCmd(root, commands.RecoverCmd(sharedApp))
 
 	// Agent registration commands (multi-runtime).
 	addAppCmd(root, commands.RegisterCmd(sharedApp))
