@@ -40,21 +40,21 @@ type LayoutOpts struct {
 //
 // Each panel is a real zellij pane. The layout produces:
 //
-//	+-----------+----------------------------------------+-----------+
-//	| prompt    |                                        |           |
-//	| (1 row)   |                                        |  Agents   |
-//	+-----------+    Agent Session (borderless)          |  (64%)    |
-//	|  Cal      |         64% width                      |           |
-//	|  (25%)    |         (focused)                      +-----------+
-//	+-----------+                                        |  Jira     |
-//	|  fp       |                                        |  (36%)    |
-//	|  (rest)   |                                        |           |
-//	+-----------+----------------------------------------+-----------+
+//	+-----------+----------------------------------------+-------------+
+//	| prompt    |                                        |             |
+//	| (1 row)   |                                        |   Agents    |
+//	+-----------+    Agent Session (borderless)          |   (64%)     |
+//	|  Cal      |         59% width                      |             |
+//	|  (25%)    |         (focused)                      +-------------+
+//	+-----------+                                        |   Jira      |
+//	|  fp       |                                        |   (36%)     |
+//	|  (rest)   |                                        |             |
+//	+-----------+----------------------------------------+-------------+
 //	|   OB1   | Event Log | Evals |  TG Viz  | LazyGit |
 //	|  (28%)  |   (16%)   | (20%) |  (20%)   |  (16%)  |
 //	+---------+-----------+-------+----------+---------+
 //
-// Top row: 67% height — left column (prompt+Cal+fp, 18%) | agent (64%, borderless) | right column (Agents+Jira, 17%)
+// Top row: 67% height — left column (prompt+Cal+fp, 18%) | agent (59%, borderless) | right column (Agents+Jira, 22%)
 // Bottom row: 33% height — OB1 | Event Log | Evals | TG Viz (`cmdr tg-list` text view) | LazyGit
 //
 // The fp pane uses fp-wrapper.sh which watches the per-tab CWD file
@@ -173,7 +173,7 @@ func GenerateLayout(opts LayoutOpts) string {
                     }
                 }
 %s
-                pane split_direction="horizontal" size="17%%" {
+                pane split_direction="horizontal" size="22%%" {
                     pane name="Agents" size="64%%" {
                         command "%s"
                         args "status" "--pane"%s
@@ -400,8 +400,9 @@ done
 // unique terminal_command, allowing correct per-tab CWD file association.
 // Falls back to running agentCmd directly, or a plain shell pane if both are empty.
 //
-// The agent pane occupies the central column at 64% of the row width
-// (left column is 18% to give calcurse more breathing room; right column is 17%).
+// The agent pane occupies the central column at 59% of the row width
+// (left column is 18% to give calcurse more breathing room; right column is 22%
+// to widen the Agents/Jira stack).
 // TG Viz is placed on the bottom row alongside Event Log, Evals, OB1, and LazyGit;
 // it runs `cmdr tg-list` to render a refreshing text list of TrustGraph nodes
 // and edges (the prior Electron overlay was retired for resource reasons).
@@ -410,21 +411,21 @@ func buildAgentPane(agentCmd, wrapperPath, tabHash string) string {
 	// NOTE: The returned string is inserted via %s into GenerateLayout's Sprintf.
 	// Sprintf does NOT re-process %s substitutions, so use literal "%" (not "%%").
 	if wrapperPath != "" {
-		return fmt.Sprintf("                pane name=\"Agent\" size=\"64%%\" focus=true borderless=true {\n                    command \"bash\"\n                    args \"%s\" \"%s\"\n                }", wrapperPath, tabHash)
+		return fmt.Sprintf("                pane name=\"Agent\" size=\"59%%\" focus=true borderless=true {\n                    command \"bash\"\n                    args \"%s\" \"%s\"\n                }", wrapperPath, tabHash)
 	}
 
 	if agentCmd == "" {
-		return "                pane name=\"Agent\" size=\"64%\" focus=true borderless=true"
+		return "                pane name=\"Agent\" size=\"59%\" focus=true borderless=true"
 	}
 
 	parts := strings.Fields(agentCmd)
 	if len(parts) == 0 {
-		return "                pane name=\"Agent\" size=\"64%\" focus=true borderless=true"
+		return "                pane name=\"Agent\" size=\"59%\" focus=true borderless=true"
 	}
 
 	cmd := parts[0]
 	if len(parts) == 1 {
-		return fmt.Sprintf("                pane name=\"Agent\" size=\"64%%\" focus=true borderless=true {\n                    command \"%s\"\n                }", cmd)
+		return fmt.Sprintf("                pane name=\"Agent\" size=\"59%%\" focus=true borderless=true {\n                    command \"%s\"\n                }", cmd)
 	}
 
 	quotedArgs := make([]string, len(parts)-1)
@@ -433,7 +434,7 @@ func buildAgentPane(agentCmd, wrapperPath, tabHash string) string {
 	}
 	argsStr := strings.Join(quotedArgs, " ")
 
-	return fmt.Sprintf("                pane name=\"Agent\" size=\"64%%\" focus=true borderless=true {\n                    command \"%s\"\n                    args %s\n                }", cmd, argsStr)
+	return fmt.Sprintf("                pane name=\"Agent\" size=\"59%%\" focus=true borderless=true {\n                    command \"%s\"\n                    args %s\n                }", cmd, argsStr)
 }
 
 // homeDir returns the user's home directory, falling back to ".".
