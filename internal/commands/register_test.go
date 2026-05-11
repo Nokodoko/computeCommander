@@ -105,6 +105,7 @@ func TestHeartbeatCmd(t *testing.T) {
 
 // newTestRootCmd creates a minimal root command with --json flag and required groups.
 func newTestRootCmd(app *App) *cobra.Command {
+	_ = app // reserved: app preserved for symmetry with production *Cmd(app) handlers under test
 	root := &cobra.Command{
 		Use:           "cmdr",
 		SilenceUsage:  true,

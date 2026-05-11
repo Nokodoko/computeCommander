@@ -523,6 +523,7 @@ func syncJira(ctx context.Context, app *App, instanceName string, jsonOut bool) 
 }
 
 func generateJiraPrompt(ctx context.Context, app *App, issueKey, instanceName string, jsonOut, dryRun bool) error {
+	_ = dryRun // reserved: dry-run path not yet implemented; flag exists at CLI for forward-compat
 	inst, err := resolveInstance(app.Config, instanceName)
 	if err != nil {
 		return err
@@ -710,6 +711,7 @@ func listJiraInstances(app *App, jsonOut bool) error {
 }
 
 func startDarkFactory(ctx context.Context, app *App, project string, dryRun, jsonOut bool) error {
+	_ = ctx // reserved: ctx preserved for symmetry with sibling jira handlers; future API calls will use it
 	if !app.Config.Jira.DarkFactory.Enabled && !dryRun {
 		return fmt.Errorf("dark factory mode is disabled in config; set jira.dark_factory.enabled: true")
 	}
@@ -1552,7 +1554,7 @@ func (m *jiraPaneModel) viewIssueDetail() string {
 		lines = append(lines, strings.Repeat("─", 60))
 		lines = append(lines, "")
 		// Word-wrap description to ~56 chars with 2-char indent.
-		for _, descLine := range strings.Split(issue.Description, "\n") {
+		for descLine := range strings.SplitSeq(issue.Description, "\n") {
 			if len(descLine) > 56 {
 				for len(descLine) > 56 {
 					lines = append(lines, "  "+descLine[:56])

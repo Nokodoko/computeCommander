@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -152,8 +153,8 @@ func parseTTL(s string) (time.Duration, error) {
 		return 0, fmt.Errorf("empty TTL")
 	}
 	s = strings.TrimSpace(s)
-	if strings.HasSuffix(s, "d") {
-		days, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
+	if rest, ok := strings.CutSuffix(s, "d"); ok {
+		days, err := strconv.Atoi(rest)
 		if err != nil {
 			return 0, fmt.Errorf("invalid TTL days: %w", err)
 		}
@@ -611,16 +612,13 @@ func renderAgentActivityDimmed(entries []agentActivityEntry) {
 	}
 
 	// Show at most 3 entries in dim text.
-	max := 3
-	if len(entries) < max {
-		max = len(entries)
-	}
+	n := min(len(entries), 3)
 
 	fmt.Printf("\n\033[2m─────────────────────────────────────────────\033[0m\n")
 	fmt.Printf("\033[2m Activity \033[0m")
-	fmt.Printf(" \033[2m(%d recent)\033[0m\n", max)
+	fmt.Printf(" \033[2m(%d recent)\033[0m\n", n)
 
-	for i := 0; i < max; i++ {
+	for i := range n {
 		e := entries[i]
 		shortType := e.EventType
 		if idx := strings.LastIndex(shortType, "."); idx >= 0 {
@@ -688,6 +686,7 @@ func openBrainMemoryDirs() []string {
 
 // openBrainMemoryPaths returns all memory .md files across all projects.
 func openBrainMemoryPaths(projectDir string) []string {
+	_ = projectDir // reserved: per-project scoping not yet implemented; current behavior scans all projects
 	home, _ := os.UserHomeDir()
 	seen := make(map[string]bool)
 	var paths []string
@@ -748,7 +747,7 @@ func extractSections(path string) map[string]string {
 	var currentHeading string
 	var currentContent strings.Builder
 
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		if strings.HasPrefix(line, "# ") || strings.HasPrefix(line, "## ") || strings.HasPrefix(line, "### ") {
 			if currentHeading != "" {
 				sections[currentHeading] = currentContent.String()
@@ -892,7 +891,7 @@ func queryAgentActivity(ctx context.Context, app *App, limit int) []agentActivit
 			continue
 		}
 		// Parse runtime and capability from data field (format: "runtime=X capability=Y").
-		for _, part := range strings.Split(data, " ") {
+		for part := range strings.SplitSeq(data, " ") {
 			kv := strings.SplitN(part, "=", 2)
 			if len(kv) != 2 {
 				continue
@@ -1116,10 +1115,7 @@ func renderOBAPIPane(result obAPIResponse, status obAPIStatus) {
 	if th <= 0 {
 		th = 15 // conservative fallback for zellij pane
 	}
-	maxRows := th - 2
-	if maxRows < 1 {
-		maxRows = 1
-	}
+	maxRows := max(th-2, 1)
 	if len(entries) > maxRows {
 		entries = entries[:maxRows]
 	}
@@ -1331,14 +1327,7 @@ func processOpenBrainChange(changedFile string, paths []string, hashes map[strin
 	sections map[string]map[string]string, recentEntries *[]memoryEntry, maxRecent int) {
 
 	// Only process files we're tracking.
-	tracked := false
-	for _, p := range paths {
-		if p == changedFile {
-			tracked = true
-			break
-		}
-	}
-	if !tracked {
+	if !slices.Contains(paths, changedFile) {
 		return
 	}
 

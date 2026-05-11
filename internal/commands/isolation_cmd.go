@@ -103,6 +103,7 @@ func isolationGrantCmd(app *App) *cobra.Command {
 }
 
 func isolationRevokeCmd(app *App) *cobra.Command {
+	_ = app // reserved: app preserved for symmetry with sibling isolation handlers
 	var revokeType, value string
 
 	cmd := &cobra.Command{

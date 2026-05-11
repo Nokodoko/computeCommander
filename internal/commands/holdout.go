@@ -26,6 +26,7 @@ func HoldoutCmd(app *App) *cobra.Command {
 }
 
 func holdoutCreateCmd(app *App) *cobra.Command {
+	_ = app // reserved: app preserved for symmetry with sibling holdout handlers
 	var test []string
 	var key string
 
@@ -179,10 +180,7 @@ func holdoutBaselineCmd(app *App) *cobra.Command {
 				return fmt.Errorf("get results for baseline: %w", err)
 			}
 
-			actual := len(results)
-			if actual > samples {
-				actual = samples
-			}
+			actual := min(len(results), samples)
 
 			fmt.Printf("Building baseline for blueprint %s from %d samples (of %d available)\n",
 				blueprintID, actual, len(results))

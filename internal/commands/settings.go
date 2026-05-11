@@ -27,6 +27,7 @@ func ThemeCmd(app *App) *cobra.Command {
 }
 
 func themeListCmd(app *App) *cobra.Command {
+	_ = app // reserved: app preserved for symmetry with sibling theme handlers
 	return &cobra.Command{
 		Use:   "list",
 		Short: "List available themes",
@@ -75,6 +76,7 @@ func themeListCmd(app *App) *cobra.Command {
 }
 
 func themeSetCmd(app *App) *cobra.Command {
+	_ = app // reserved: app preserved for symmetry with sibling theme handlers
 	return &cobra.Command{
 		Use:   "set <name>",
 		Short: "Apply theme",
@@ -118,6 +120,7 @@ func themeSetCmd(app *App) *cobra.Command {
 }
 
 func themeEditCmd(app *App) *cobra.Command {
+	_ = app // reserved: app preserved for symmetry with sibling theme handlers
 	return &cobra.Command{
 		Use:   "edit",
 		Short: "Open theme file in $EDITOR",

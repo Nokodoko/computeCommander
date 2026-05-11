@@ -192,6 +192,7 @@ func jiraBoardGenerateCmd(app *App) *cobra.Command {
 }
 
 func jiraBoardValidateCmd(app *App) *cobra.Command {
+	_ = app // reserved: app preserved for symmetry with sibling jira-board handlers
 	cmd := &cobra.Command{
 		Use:   "validate [template-file]",
 		Short: "Validate a template file against schema",
@@ -354,6 +355,7 @@ func jiraBoardPreviewCmd(app *App) *cobra.Command {
 }
 
 func jiraBoardDeleteCmd(app *App) *cobra.Command {
+	_ = app // reserved: app preserved for symmetry with sibling jira-board handlers
 	cmd := &cobra.Command{
 		Use:   "delete [project-key]",
 		Short: "Delete all board tickets (destructive)",
@@ -377,6 +379,7 @@ func jiraBoardDeleteCmd(app *App) *cobra.Command {
 
 // resolveTemplateDir finds the templates/jira-board directory.
 func resolveTemplateDir(app *App) string {
+	_ = app // reserved: app preserved for future config-driven template-dir resolution
 	// Check relative to CWD first.
 	if _, err := os.Stat("templates/jira-board"); err == nil {
 		return "templates/jira-board"

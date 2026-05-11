@@ -205,6 +205,7 @@ func blockDisableCmd(app *App) *cobra.Command {
 }
 
 func blockAddCmd(app *App) *cobra.Command {
+	_ = app // reserved: app preserved for symmetry with sibling block handlers
 	var id, tool, match, action, severity, message string
 
 	cmd := &cobra.Command{
