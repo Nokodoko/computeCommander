@@ -345,6 +345,7 @@ conflict resolution.`,
 	addAppCmd(root, commands.PromptLineCmd(sharedApp))
 	addAppCmd(root, commands.TrustGraphCmd(sharedApp))
 	addAppCmd(root, commands.TGListCmd(sharedApp))
+	addAppCmd(root, commands.TGSummaryCmd(sharedApp))
 
 	// Infrastructure commands.
 	addAppCmd(root, commands.WorktreeCmd(sharedApp))
