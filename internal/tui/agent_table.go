@@ -51,12 +51,15 @@ func (t *AgentTable) Refresh(ctx context.Context) error {
 // filterLiveSessions removes sessions that should not appear in the agents pane:
 //   - Completed/zombie sessions from before the dashboard was started are hidden,
 //     since they belong to a previous run and are stale.
+//   - Completed/zombie sessions from this dashboard run are shown only within
+//     their runtime's completion-TTL window (runtimes.CompletedTTL), matching
+//     the KDL pane-mode filterPaneSessions() behavior in internal/commands/status.go.
 //   - Working/booting sessions whose last_activity is older than staleThreshold
 //     are also excluded, as they likely represent ghost entries from crashed
 //     processes where the SubagentStop hook failed to fire.
 //
-// This mirrors the filterPaneSessions() logic in internal/commands/status.go
-// so the TUI dashboard behaves consistently with the KDL pane-mode status view.
+// The completion-TTL helper (runtimes.CompletedTTL) is the single source of truth;
+// the KDL pane status view consumes the same helper so TUI and KDL views agree.
 func (t *AgentTable) filterLiveSessions(sessions []*agents.AgentSession) []*agents.AgentSession {
 	if t.dashStart.IsZero() {
 		return sessions
@@ -64,8 +67,14 @@ func (t *AgentTable) filterLiveSessions(sessions []*agents.AgentSession) []*agen
 
 	// Threshold: sessions with no activity for this long and in an active state
 	// from before the dashboard started are considered stale ghosts.
+	// NOTE: this is the GHOST-DETECTION semantic for active sessions and is
+	// intentionally not routed through runtimes.CompletedTTL (which governs
+	// post-completion visibility). Pi sessions that idle without heartbeating
+	// can still be hidden here; if that becomes a problem, lift this constant
+	// to a runtime-aware policy in a follow-up task.
 	const staleThreshold = 10 * time.Minute
 
+	now := time.Now()
 	filtered := make([]*agents.AgentSession, 0, len(sessions))
 	for _, s := range sessions {
 		// Skip filtering for sessions without a real StartedAt (e.g. in-memory mocks).
@@ -76,10 +85,15 @@ func (t *AgentTable) filterLiveSessions(sessions []*agents.AgentSession) []*agen
 
 		switch s.State {
 		case agents.StateCompleted, agents.StateZombie:
-			// Keep completed/zombie agents only if they started during this
-			// dashboard session. Old completed agents from previous runs are
-			// stale and should not clutter the pane.
+			// Hide completed/zombie agents that started before this dashboard
+			// run -- they belong to a previous session and are stale.
 			if s.StartedAt.Before(t.dashStart) {
+				continue
+			}
+			// Within this dashboard run, hide completed agents past their
+			// runtime's completion-TTL so finished entries do not accumulate.
+			// Mirrors filterPaneSessions() in internal/commands/status.go.
+			if !s.LastActivity.IsZero() && now.Sub(s.LastActivity) > runtimes.CompletedTTL(s.Runtime) {
 				continue
 			}
 		case agents.StateWorking, agents.StateBooting:

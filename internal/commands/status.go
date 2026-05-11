@@ -340,14 +340,14 @@ func dashboardStartTime() time.Time {
 
 // filterPaneSessions removes stale completed agents from the pane display.
 // Active agents (working, booting, stalled, zombie) are always shown.
-// Completed agents are shown only if they finished within the last 5 minutes,
-// preventing indefinite accumulation of done entries in the pane.
+// Completed agents are shown only if they finished within their runtime's
+// completion-TTL window (see runtimes.CompletedTTL), preventing indefinite
+// accumulation of done entries in the pane.
 // Agents from before dashStart are always excluded.
 func filterPaneSessions(sessions []*agents.AgentSession, dashStart time.Time) []*agents.AgentSession {
 	if dashStart.IsZero() {
 		return sessions
 	}
-	completedTTL := 5 * time.Minute
 	now := time.Now()
 	filtered := make([]*agents.AgentSession, 0, len(sessions))
 	for _, s := range sessions {
@@ -362,7 +362,7 @@ func filterPaneSessions(sessions []*agents.AgentSession, dashStart time.Time) []
 		}
 		// Show completed agents only for a brief window after they finish,
 		// so the user sees them complete but they don't accumulate as stale.
-		if now.Sub(s.LastActivity) <= completedTTL {
+		if now.Sub(s.LastActivity) <= runtimes.CompletedTTL(s.Runtime) {
 			filtered = append(filtered, s)
 		}
 	}
