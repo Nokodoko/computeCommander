@@ -261,7 +261,20 @@ func runStatusPane(cmd *cobra.Command, app *App, opts agents.ListOpts) error {
 		}
 
 		colorResolver := app.Spawner.BuildColorResolver(ctx)
-		fmt.Printf("\033[2m%-14s %-10s %-10s %-14s %-10s %-12s\033[0m\n", "NAME", "CAPABILITY", "STATE", "MODEL", "SESSION", "TASK")
+
+		// Width-adaptive: when the pane is narrower than the wide-view
+		// requirement (~80 cols), switch to a compact 3-column view
+		// (name | state | task) so content actually renders. Without this,
+		// the 7-column row gets clipped to invisibility in a ~28-col
+		// dashboard pane (post-6886f35 regression).
+		width := terminalWidth()
+		compact := width > 0 && width < compactPaneWidthThreshold
+
+		if compact {
+			fmt.Printf("\033[2m%-12s %-8s %-12s\033[0m\n", "NAME", "STATE", "TASK")
+		} else {
+			fmt.Printf("\033[2m%-14s %-10s %-10s %-14s %-10s %-12s\033[0m\n", "NAME", "CAPABILITY", "STATE", "MODEL", "SESSION", "TASK")
+		}
 		for _, s := range sessions {
 			stateColor := "\033[32m" // green for working
 			switch s.State {
@@ -274,6 +287,18 @@ func runStatusPane(cmd *cobra.Command, app *App, opts agents.ListOpts) error {
 			case agents.StateBooting:
 				stateColor = "\033[36m" // cyan
 			}
+
+			if compact {
+				agentName := colorizeAgent(truncate(s.AgentName, 12), colorResolver(s.AgentName))
+				fmt.Printf("%-12s %s%-8s\033[0m %-12s\n",
+					agentName,
+					stateColor,
+					truncate(string(s.State), 8),
+					truncate(s.TaskID, 12),
+				)
+				continue
+			}
+
 			agentName := colorizeAgent(truncate(s.AgentName, 14), colorResolver(s.AgentName))
 			modelDisplay := formatModelShort(s.Model)
 			sessionDisplay := formatSessionShort(s.SessionName)
@@ -397,9 +422,21 @@ func printAgentsPane(sessions []*agents.AgentSession, colorResolver func(string)
 		return nil
 	}
 
+	// Width-adaptive: the wide 7-column view needs ~84 cols. Below the
+	// threshold (e.g., when the dashboard right column is narrow), switch
+	// to a compact 3-column view (name | state | task) so the content
+	// actually renders instead of being truncated to invisibility.
+	width := terminalWidth()
+	compact := width > 0 && width < compactPaneWidthThreshold
+
 	// Table header.
-	fmt.Printf(" %s%-14s %-10s %-10s %-8s %-14s %-10s %-12s%s\n",
-		ansiDim, "Name", "Capability", "State", "Duration", "Model", "Session", "Task", ansiReset)
+	if compact {
+		fmt.Printf(" %s%-12s %-8s %-12s%s\n",
+			ansiDim, "Name", "State", "Task", ansiReset)
+	} else {
+		fmt.Printf(" %s%-14s %-10s %-10s %-8s %-14s %-10s %-12s%s\n",
+			ansiDim, "Name", "Capability", "State", "Duration", "Model", "Session", "Task", ansiReset)
+	}
 
 	// Detect terminal height to show only what fits.
 	// Reserve 4 lines: header, column header, footer, + zellij pane border.
@@ -407,10 +444,7 @@ func printAgentsPane(sessions []*agents.AgentSession, colorResolver func(string)
 	if termHeight <= 0 {
 		termHeight = 15 // conservative fallback for zellij pane
 	}
-	maxRows := termHeight - 4
-	if maxRows < 1 {
-		maxRows = 1
-	}
+	maxRows := max(termHeight-4, 1)
 
 	// Show only the most recent agents (tail of list).
 	start := 0
@@ -420,19 +454,32 @@ func printAgentsPane(sessions []*agents.AgentSession, colorResolver func(string)
 
 	for _, s := range sessions[start:] {
 		stateIcon, stateColor := stateStyle(s.State)
-		dur := formatAgentDuration(s)
 
 		// Color agent name using their assigned palette color.
-		agentName := truncate(s.AgentName, 14)
+		// In compact mode, narrow the name column to 12 chars.
+		nameWidth := 14
+		if compact {
+			nameWidth = 12
+		}
+		agentName := truncate(s.AgentName, nameWidth)
 		if colorResolver != nil {
 			agentName = colorizeAgent(agentName, colorResolver(s.AgentName))
 		} else {
 			agentName = ansiBold + agentName + ansiReset
 		}
 
+		if compact {
+			fmt.Printf(" %-12s %s%s%-7s%s %-12s\n",
+				agentName,
+				stateColor, stateIcon, truncate(string(s.State), 6), ansiReset,
+				truncate(s.TaskID, 12),
+			)
+			continue
+		}
+
+		dur := formatAgentDuration(s)
 		// Format model name: strip "claude-" prefix for brevity.
 		modelDisplay := formatModelShort(s.Model)
-
 		// Format session name: use last 8 chars of session ID for brevity.
 		sessionDisplay := formatSessionShort(s.SessionName)
 
@@ -474,10 +521,7 @@ func formatAgentDuration(s *agents.AgentSession) string {
 	if s.StartedAt.IsZero() {
 		return "-"
 	}
-	d := time.Since(s.StartedAt)
-	if d < 0 {
-		d = 0
-	}
+	d := max(time.Since(s.StartedAt), 0)
 	m := int(d.Minutes())
 	sec := int(d.Seconds()) % 60
 	if m > 0 {
@@ -499,6 +543,38 @@ func terminalHeight() int {
 	}
 	return int(ws.Row)
 }
+
+// terminalWidth returns the terminal width in columns, or 0 if unavailable.
+// Mirrors terminalHeight: TIOCGWINSZ ioctl on stdout. Falls back to the
+// COLUMNS environment variable when stdout is not a tty (lets callers
+// force a width via `COLUMNS=44 ./cmdr status --pane` for testing the
+// compact view from a pipe).
+func terminalWidth() int {
+	type winsize struct {
+		Row, Col, Xpixel, Ypixel uint16
+	}
+	var ws winsize
+	_, _, err := syscall.Syscall(syscall.SYS_IOCTL, uintptr(syscall.Stdout),
+		uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&ws)))
+	if err == 0 && ws.Col > 0 {
+		return int(ws.Col)
+	}
+	if col := os.Getenv("COLUMNS"); col != "" {
+		if n, err := strconv.Atoi(strings.TrimSpace(col)); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
+}
+
+// compactPaneWidthThreshold is the column count below which printAgentsPane
+// switches to a 3-column view (name | state | task). The wide layout requires
+// ~84 columns; below that, content gets truncated to invisibility. 80 is the
+// classic terminal width boundary and matches the regression observed after
+// commits 6886f35 (right column 17%→22%) and 80791fe — on a 200-col terminal,
+// 22% × ~64% (Agents pane share of right column) ≈ 28 cols, well below the
+// 84-col wide-view requirement.
+const compactPaneWidthThreshold = 80
 
 // detectUIStatus checks if the zellij UI session is running.
 func detectUIStatus(app *App) (running bool, session string, uptime int64) {

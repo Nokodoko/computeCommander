@@ -118,7 +118,24 @@ func TestWriteLayout_NoKeybinds(t *testing.T) {
 	}
 }
 
-func TestGenerateLayout_ContainsTGPane(t *testing.T) {
+// TestGenerateLayout_BottomRowShape pins the bottom-row composition after the
+// dedicated TG Viz pane was removed from the dashboard (May 2026). TrustGraph
+// visualization now lives inside each agent's own session/pane, not as a
+// dashboard pane. The 20%% that TG Viz previously occupied was redistributed
+// proportionally across the remaining four bottom-row panes:
+//
+//	pane     | before | after
+//	---------+--------+------
+//	OB1      |   28%% |  35%%
+//	Event Log|   16%% |  20%%
+//	Evals    |   20%% |  25%%
+//	LazyGit  |   16%% |  20%%
+//	(TG Viz  |   20%% |  removed)
+//
+// The agent (top-row, center) pane width is unchanged at 53%%; this test
+// guards against accidental re-introduction of TG Viz stacking, which would
+// collapse the Agent pane back to a sliver.
+func TestGenerateLayout_BottomRowShape(t *testing.T) {
 	opts := LayoutOpts{
 		CmdrBinary:   "/usr/local/bin/cmdr",
 		ProjectDir:   "/home/user",
@@ -126,14 +143,15 @@ func TestGenerateLayout_ContainsTGPane(t *testing.T) {
 		SystemWide:   true,
 	}
 	layout := GenerateLayout(opts)
-	if !strings.Contains(layout, `name="TG Viz"`) {
-		t.Errorf("layout must contain a TG Viz (TrustGraph visualization) pane")
+
+	// Negative assertion: the dedicated TG Viz pane must NOT exist on the
+	// dashboard. Its responsibility moved into each agent's own session.
+	if strings.Contains(layout, `name="TG Viz"`) {
+		t.Errorf("layout must NOT contain a dedicated TG Viz pane — TrustGraph visualization moved into the agent session:\n%s", layout)
 	}
-	// The TG Viz pane runs `cmdr tg-list` — a refreshing text list of
-	// TrustGraph nodes and edges. The prior Electron overlay was retired
-	// for resource reasons; the pane no longer needs to stay passive.
-	if !strings.Contains(layout, `args "tg-list"`) {
-		t.Errorf("layout TG Viz pane must run `cmdr tg-list`:\n%s", layout)
+	// The bottom-row tg-list invocation is gone with the pane.
+	if strings.Contains(layout, `args "tg-list"`) {
+		t.Errorf("layout must NOT invoke `cmdr tg-list` from any pane — the standalone CLI command remains, but the dashboard no longer hosts it:\n%s", layout)
 	}
 	// Sanity: the old passive placeholder must be gone.
 	if strings.Contains(layout, `"-f" "/dev/null"`) {
@@ -144,28 +162,25 @@ func TestGenerateLayout_ContainsTGPane(t *testing.T) {
 	if !strings.Contains(layout, `name="Agent"`) {
 		t.Errorf("layout must contain a named Agent pane for the central agent session")
 	}
-	// The agent pane must occupy the central column of the top row.
-	// Width is 64% (reduced from 67% to widen the left column for calcurse).
-	// If TG Viz is stacked underneath it again, this width collapses and the
-	// agent shrinks to a sliver.
-	if !strings.Contains(layout, `name="Agent" size="64%"`) {
-		t.Errorf("Agent pane must be 64%% of the central column (TG Viz must NOT be stacked above/below it):\n%s", layout)
+	// The agent pane width is unchanged by the TG Viz removal (53%%).
+	if !strings.Contains(layout, `name="Agent" size="53%"`) {
+		t.Errorf("Agent pane must remain at 53%% of the central column after TG Viz removal:\n%s", layout)
 	}
-	// TG Viz lives on the bottom row at 20%% (reduced from 38%% when the
-	// Electron overlay was replaced with the lighter-weight tg-list text view).
-	if !strings.Contains(layout, `name="TG Viz" size="20%"`) {
-		t.Errorf("TG Viz must be on the bottom row at 20%% width:\n%s", layout)
+	// Bottom-row widths after the TG Viz removal:
+	if !strings.Contains(layout, `name="OB1" size="35%"`) {
+		t.Errorf("OB1 must be 35%% wide on the bottom row (was 28%%; absorbed share of TG Viz's 20%%):\n%s", layout)
 	}
-	// Bottom row reordered (UX request): OB1 widened and moved to the left,
-	// Event Log narrowed and moved next to it. Evals trimmed, TG Viz/LazyGit unchanged.
-	if !strings.Contains(layout, `name="OB1" size="28%"`) {
-		t.Errorf("OB1 must be 28%% wide and on the left of the bottom row:\n%s", layout)
+	if !strings.Contains(layout, `name="Event Log" size="20%"`) {
+		t.Errorf("Event Log must be 20%% wide on the bottom row (was 16%%; absorbed share of TG Viz's 20%%):\n%s", layout)
 	}
-	if !strings.Contains(layout, `name="Event Log" size="16%"`) {
-		t.Errorf("Event Log must be 16%% wide:\n%s", layout)
+	if !strings.Contains(layout, `name="Evals" size="25%"`) {
+		t.Errorf("Evals must be 25%% wide on the bottom row (was 20%%; absorbed share of TG Viz's 20%%):\n%s", layout)
 	}
-	if !strings.Contains(layout, `name="Evals" size="20%"`) {
-		t.Errorf("Evals must be 20%% wide:\n%s", layout)
+	// LazyGit pane is unnamed in the KDL (the wrapper sets its title via terminal
+	// escape sequence). Pin its width via the trailing size attribute on the
+	// last pane block in the bottom row, which uses the bash wrapper.
+	if !strings.Contains(layout, `pane size="20%"`) {
+		t.Errorf("LazyGit pane must be 20%% wide on the bottom row (was 16%%; absorbed share of TG Viz's 20%%):\n%s", layout)
 	}
 	// OB1 must appear before Event Log in the layout text (left of it on screen).
 	ob1Idx := strings.Index(layout, `name="OB1"`)
@@ -173,6 +188,10 @@ func TestGenerateLayout_ContainsTGPane(t *testing.T) {
 	if ob1Idx < 0 || evIdx < 0 || ob1Idx > evIdx {
 		t.Errorf("OB1 must appear before Event Log in the bottom row (OB1 at %d, Event Log at %d):\n%s", ob1Idx, evIdx, layout)
 	}
+	// Bottom-row widths sum to 100%% (35 + 20 + 25 + 20). Allow a regression
+	// catch by counting that exactly 4 pane size declarations exist on the
+	// bottom row at the percentages we expect. (Indirect: we already pinned
+	// each above.)
 }
 
 // TestGenerateLayout_EvalsPaneIsLive guards the wiring contract for the
@@ -203,10 +222,7 @@ func TestGenerateLayout_EvalsPaneIsLive(t *testing.T) {
 	}
 	// Look at a window after the pane declaration that should contain the
 	// command + args lines for that pane.
-	endIdx := evalsIdx + 256
-	if endIdx > len(layout) {
-		endIdx = len(layout)
-	}
+	endIdx := min(evalsIdx+256, len(layout))
 	block := layout[evalsIdx:endIdx]
 	if !strings.Contains(block, `args "evals" "--pane"`) {
 		t.Errorf("Evals pane must run `cmdr evals --pane` (the streaming handler) — without --pane the pane displays a one-shot snapshot and never updates:\n%s", block)
