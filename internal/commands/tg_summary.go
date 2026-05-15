@@ -21,6 +21,11 @@ import (
 // intended to be invoked as a subprocess by claude/pi to populate an adjacent
 // "tg_viz" frame. The data path (TriplesQuery, 5s per-query timeout, color
 // palette) matches tg-list; only the rendering shape differs.
+//
+// Gateway resolution uses resolveTGGatewayURL (priority: --tg-url > TG_URL >
+// TRUSTGRAPH_URL > config.gateway_url > http://10.0.0.1:8088). The body does
+// NOT re-emit a "TG · …" banner — the embedding frame's title already conveys
+// that signal and a duplicate inside the frame body adds noise.
 func TGSummaryCmd(app *App) *cobra.Command {
 	var (
 		lines   int
@@ -34,7 +39,7 @@ func TGSummaryCmd(app *App) *cobra.Command {
 ASCII frame. Reuses the same data path as tg-list (POST /api/v1/flow/{flow}/
 service/triples, 5s timeout) but renders a fixed line count (default 5):
 
-  TG · 41 nodes · 89 edges
+  ── connected · 41 nodes · 89 edges
   top: alice(d=12) bob(d=9) carol(d=7)
   edge: alice --owns--> repo:cmdr
   edge: bob --merged--> branch:codeviewer
@@ -42,23 +47,32 @@ service/triples, 5s timeout) but renders a fixed line count (default 5):
 
 Edge budget = --lines - 3 (header + top-nodes + trailer). With --lines < 3,
 only header + trailer are emitted. On TG client error or empty result, a
-disconnected header + dim hint is emitted, padded to --lines so the embedded
-frame size is preserved. Honours NO_COLOR per https://no-color.org.`,
+diagnostic hint line + padded body + "updated HH:MM:SS" trailer are emitted;
+the embedded frame size is preserved. Honours NO_COLOR per https://no-color.org.
+
+Gateway URL resolution priority (first non-empty wins): --tg-url, TG_URL env,
+TRUSTGRAPH_URL env, trustgraph.gateway_url config, fallback http://10.0.0.1:8088.`,
 		GroupID: "OBSERVABILITY",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTGSummary(cmd.Context(), app, lines, width, noColor)
+			gatewayURL := resolveTGGatewayURL(cmd, app.Config.TrustGraph.GatewayURL)
+			return runTGSummary(cmd.Context(), app, gatewayURL, lines, width, noColor)
 		},
 	}
 	cmd.Flags().IntVar(&lines, "lines", 5, "total output lines including header and trailer")
 	cmd.Flags().IntVar(&width, "width", 60, "inner width hint, used for label truncation")
 	cmd.Flags().BoolVar(&noColor, "no-color", false, "suppress all ANSI colour codes (also honours $NO_COLOR)")
+	cmd.Flags().String("tg-url", "", "TrustGraph gateway URL (overrides TG_URL/TRUSTGRAPH_URL env and config)")
 	return cmd
 }
 
 // runTGSummary fetches once, formats to exactly `lines` lines, and exits.
 // On any failure it still emits exactly `lines` lines of padded output so the
 // embedded frame size does not shift.
-func runTGSummary(ctx context.Context, app *App, lines, width int, noColor bool) error {
+//
+// gatewayURL is the effective gateway address resolved by the caller via
+// resolveTGGatewayURL — empty values are not expected (the resolver always
+// returns at least the fallback default).
+func runTGSummary(ctx context.Context, app *App, gatewayURL string, lines, width int, noColor bool) error {
 	cfg := app.Config.TrustGraph
 
 	// NO_COLOR env var (https://no-color.org): any non-empty value disables.
@@ -73,17 +87,19 @@ func runTGSummary(ctx context.Context, app *App, lines, width int, noColor bool)
 
 	now := time.Now().Format("15:04:05")
 
-	// Disabled config => emit a stable disconnected frame (no network at all).
-	if !cfg.Enabled {
+	// Auto-enable when a gateway URL is resolvable. The pane should "just
+	// work" without forcing trustgraph.enabled in config — mirrors the
+	// behaviour of runTGPane (`cmdr tg --pane`).
+	if gatewayURL == "" {
 		emitDisconnected(lines, pal, "trustgraph disabled in config", now)
 		return nil
 	}
 
-	client := trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
+	client := trustgraph.New(gatewayURL, cfg.Token, cfg.FlowID)
 	defer client.Close()
 
 	if !client.Available() {
-		emitDisconnected(lines, pal, "tg gateway unreachable", now)
+		emitDisconnected(lines, pal, "gateway unreachable: "+gatewayURL, now)
 		return nil
 	}
 
@@ -145,8 +161,13 @@ func runTGSummary(ctx context.Context, app *App, lines, width int, noColor bool)
 	// Render to exactly `lines` lines.
 	out := make([]string, 0, lines)
 
-	// Line 1: header.
-	header := pal.bold + pal.cyan + "TG" + pal.reset +
+	// Line 1: substantive detail. The embedding frame's title already conveys
+	// "tg · connected · <host>" so we do NOT re-emit a "TG · …" banner here;
+	// we keep only the diagnostic detail (node/edge counts) that the title
+	// cannot convey. The leading "──" matches the user-requested shape and
+	// visually anchors the line as a detail row, not a banner.
+	header := pal.dim + "── " + pal.reset +
+		pal.green + "connected" + pal.reset +
 		pal.dim + fmt.Sprintf(" · %d nodes · %d edges", len(nodes), len(triples)) + pal.reset
 	out = append(out, truncateVisible(header, width))
 
@@ -261,23 +282,25 @@ func renderEdgeLine(tr trustgraph.Triple, width int, pal palette) string {
 }
 
 // emitDisconnected writes a disconnected/error frame padded to `lines` lines.
-//   line 1: "TG · disconnected"   (cyan TG, red disconnected)
-//   line 2: dim hint (truncated)
+//
+// The embedding frame's title (rendered by the harness, e.g. zellij or
+// claude/pi UI) already shows "tg · disconnected · <host>"; emitting a second
+// "TG · disconnected" banner inside the body duplicates that signal. We emit
+// only the diagnostic hint (which the frame title cannot convey) on line 1,
+// pad to lines-1, and place the "updated HH:MM:SS" trailer last.
+//
+//   line 1: red diagnostic hint (e.g. "gateway unreachable: http://...")
 //   ...    : empty padding
 //   line N: dim "updated HH:MM:SS" trailer
 func emitDisconnected(lines int, pal palette, hint, now string) {
 	out := make([]string, 0, lines)
-	header := pal.bold + pal.cyan + "TG" + pal.reset + pal.dim + " · " + pal.reset + pal.red + "disconnected" + pal.reset
-	out = append(out, header)
+	// Truncate hint defensively to a reasonable inner width (60 chars visible).
+	hintLine := pal.red + truncateVisible(hint, 60) + pal.reset
+	out = append(out, hintLine)
 
-	if lines >= 3 {
-		// Truncate hint defensively to a reasonable inner width (60 chars visible).
-		hintLine := pal.dim + truncateVisible(hint, 60) + pal.reset
-		out = append(out, hintLine)
-		// Pad with empty lines up to lines-1, the trailer fills the last slot.
-		for i := len(out); i < lines-1; i++ {
-			out = append(out, "")
-		}
+	// Pad with empty lines up to lines-1; trailer fills the last slot.
+	for i := len(out); i < lines-1; i++ {
+		out = append(out, "")
 	}
 
 	trailer := pal.dim + "updated " + now + pal.reset

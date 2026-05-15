@@ -28,18 +28,23 @@ func TGListCmd(app *App) *cobra.Command {
 		Long: `Periodically poll the TrustGraph gateway and print a text list of
 the top nodes (by degree) and edges (triples). Designed to run in a long-lived
 zellij pane as a lightweight replacement for the Electron trustgraph-viewer
-overlay. Refreshes roughly every 10 seconds; honours Ctrl+C / context cancel.`,
+overlay. Refreshes roughly every 10 seconds; honours Ctrl+C / context cancel.
+
+Gateway URL resolution priority (first non-empty wins): --tg-url, TG_URL env,
+TRUSTGRAPH_URL env, trustgraph.gateway_url config, fallback http://10.0.0.1:8088.`,
 		GroupID: "OBSERVABILITY",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runTGList(cmd.Context(), app)
+			gatewayURL := resolveTGGatewayURL(cmd, app.Config.TrustGraph.GatewayURL)
+			return runTGList(cmd.Context(), app, gatewayURL)
 		},
 	}
+	cmd.Flags().String("tg-url", "", "TrustGraph gateway URL (overrides TG_URL/TRUSTGRAPH_URL env and config)")
 	return cmd
 }
 
 // runTGList is the long-running render loop for tg-list.
 // It exits cleanly when ctx is cancelled (Ctrl+C / pane close).
-func runTGList(ctx context.Context, app *App) error {
+func runTGList(ctx context.Context, app *App, gatewayURL string) error {
 	cfg := app.Config.TrustGraph
 
 	// Fixed 10s refresh per the user-requested cadence; ignore RefreshSecs
@@ -68,15 +73,16 @@ func runTGList(ctx context.Context, app *App) error {
 		queryLimit = 200
 	}
 
-	// If TrustGraph is disabled we still keep the pane alive — print a
-	// hint and idle on the refresh tick so closing the pane is clean.
-	if !cfg.Enabled {
+	// If neither config nor env nor flag yielded a gateway URL (resolveTG
+	// returns a non-empty fallback, so this only triggers when the caller
+	// passed in an explicitly empty URL), keep the pane alive with a hint.
+	if gatewayURL == "" {
 		for {
 			fmt.Fprint(os.Stdout, clearSc)
 			fmt.Fprintln(os.Stdout, dim+" TG  disabled"+reset)
 			fmt.Fprintln(os.Stdout, dim+strings.Repeat("─", 40)+reset)
-			fmt.Fprintln(os.Stdout, dim+"  Enable in config:"+reset)
-			fmt.Fprintln(os.Stdout, dim+"  trustgraph.enabled: true"+reset)
+			fmt.Fprintln(os.Stdout, dim+"  Configure trustgraph.gateway_url"+reset)
+			fmt.Fprintln(os.Stdout, dim+"  or set TG_URL / TRUSTGRAPH_URL"+reset)
 			select {
 			case <-ctx.Done():
 				return nil
@@ -85,7 +91,7 @@ func runTGList(ctx context.Context, app *App) error {
 		}
 	}
 
-	client := trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
+	client := trustgraph.New(gatewayURL, cfg.Token, cfg.FlowID)
 	defer client.Close()
 
 	for {
@@ -100,7 +106,7 @@ func runTGList(ctx context.Context, app *App) error {
 
 		if !client.Available() {
 			buf.WriteString(bold + cyan + " TG" + reset + "  " + red + "disconnected" + reset + "\n")
-			buf.WriteString(dim + "  Gateway: " + cfg.GatewayURL + reset + "\n")
+			buf.WriteString(dim + "  Gateway: " + gatewayURL + reset + "\n")
 			buf.WriteString(dim + "  last update: " + time.Now().Format("15:04:05") + reset + "\n")
 			fmt.Fprint(os.Stdout, buf.String())
 			select {
