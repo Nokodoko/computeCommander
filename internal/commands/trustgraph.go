@@ -30,33 +30,68 @@ func TrustGraphCmd(app *App) *cobra.Command {
 			paneMode, _ := cmd.Flags().GetBool("pane")
 			jsonOut, _ := cmd.Root().Flags().GetBool("json")
 
+			gatewayURL := resolveTGGatewayURL(cmd, app.Config.TrustGraph.GatewayURL)
+
 			if paneMode {
-				return runTGPane(cmd.Context(), app)
+				return runTGPane(cmd.Context(), app, gatewayURL)
 			}
 
-			return printTGSummary(app, jsonOut)
+			return printTGSummary(app, gatewayURL, jsonOut)
 		},
 	}
 
 	cmd.Flags().Bool("pane", false, "Run in long-lived pane mode (for zellij dashboard)")
+	cmd.Flags().String("tg-url", "", "TrustGraph gateway URL (overrides TG_URL/TRUSTGRAPH_URL env and config)")
 
 	return cmd
 }
 
+// resolveTGGatewayURL returns the effective TrustGraph gateway URL using
+// the following priority (first non-empty wins):
+//  1. --tg-url CLI flag
+//  2. TG_URL environment variable
+//  3. TRUSTGRAPH_URL environment variable
+//  4. configured GatewayURL (if non-empty)
+//  5. fallback default http://10.0.0.1:8088 (monty's WG address)
+//
+// The fallback is intentionally NOT localhost: cmdr is most often run on a
+// dev host whose local TG stack is dead, while the canonical gateway lives
+// on monty (10.0.0.1:8088 over WireGuard). Passing --tg-url or setting
+// TG_URL trivially redirects to another host.
+func resolveTGGatewayURL(cmd *cobra.Command, configURL string) string {
+	if cmd != nil {
+		if v, _ := cmd.Flags().GetString("tg-url"); v != "" {
+			return v
+		}
+	}
+	if v := os.Getenv("TG_URL"); v != "" {
+		return v
+	}
+	if v := os.Getenv("TRUSTGRAPH_URL"); v != "" {
+		return v
+	}
+	if configURL != "" {
+		return configURL
+	}
+	return "http://10.0.0.1:8088"
+}
+
 // ─── One-shot summary ────────────────────────────────────────────────────────
 
-func printTGSummary(app *App, jsonOut bool) error {
+func printTGSummary(app *App, gatewayURL string, jsonOut bool) error {
 	cfg := app.Config.TrustGraph
-	if !cfg.Enabled {
+	// Auto-enable when a gateway URL is resolvable. The pane should "just
+	// work" without requiring the user to flip trustgraph.enabled in config.
+	if !cfg.Enabled && gatewayURL == "" {
 		fmt.Println("TrustGraph is disabled. Enable in config: trustgraph.enabled: true")
 		return nil
 	}
 
-	client := trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
+	client := trustgraph.New(gatewayURL, cfg.Token, cfg.FlowID)
 	defer client.Close()
 
 	if !client.Available() {
-		fmt.Printf("TrustGraph gateway unreachable: %s\n", cfg.GatewayURL)
+		fmt.Printf("TrustGraph gateway unreachable: %s\n", gatewayURL)
 		return nil
 	}
 
@@ -97,9 +132,14 @@ func printTGSummary(app *App, jsonOut bool) error {
 
 // ─── Long-lived pane mode ────────────────────────────────────────────────────
 
-func runTGPane(ctx context.Context, app *App) error {
+func runTGPane(ctx context.Context, app *App, gatewayURL string) error {
 	cfg := app.Config.TrustGraph
 	relayCfg := app.Config.SSERelay
+
+	// The TG gateway section is active whenever a URL is resolvable
+	// (flag/env/config/fallback), even if cfg.Enabled is false. This lets
+	// the pane "just work" without forcing a config edit.
+	tgEnabled := gatewayURL != ""
 
 	refreshInterval := time.Duration(cfg.RefreshSecs) * time.Second
 	if refreshInterval < 2*time.Second {
@@ -144,7 +184,7 @@ func runTGPane(ctx context.Context, app *App) error {
 		var buf strings.Builder
 		buf.WriteString(clearSc)
 
-		hasSource := relayClient != nil || cfg.Enabled
+		hasSource := relayClient != nil || tgEnabled
 
 		if !hasSource {
 			// Neither source configured.
@@ -221,15 +261,20 @@ func runTGPane(ctx context.Context, app *App) error {
 		}
 
 		// ── TG Gateway section (secondary) ───────────────────────────────────
-		if cfg.Enabled {
+		//
+		// The zellij pane frame already shows the connection state in its
+		// title bar, so we deliberately omit the body status banner here
+		// (e.g. "TG  disconnected") to avoid duplicating that signal.
+		// We keep the diagnostic detail line (Gateway URL, error message, or
+		// "N nodes M edges") that the frame title cannot convey.
+		if tgEnabled {
 			// Lazily create client.
 			if tgClient == nil {
-				tgClient = trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
+				tgClient = trustgraph.New(gatewayURL, cfg.Token, cfg.FlowID)
 			}
 
 			if !tgClient.Available() {
-				buf.WriteString(bold + cyan + " TG" + reset + "  " + dim + "disconnected" + reset + "\n")
-				buf.WriteString(dim + "  Gateway: " + cfg.GatewayURL + reset + "\n")
+				buf.WriteString(dim + "  Gateway: " + gatewayURL + reset + "\n")
 			} else {
 				queryCtx, queryCancel := context.WithTimeout(ctx, 5*time.Second)
 				limit := cfg.MaxTriples
@@ -244,14 +289,12 @@ func runTGPane(ctx context.Context, app *App) error {
 					if len(errMsg) > 60 {
 						errMsg = errMsg[:58] + ".."
 					}
-					buf.WriteString(bold + cyan + " TG" + reset + "  " + red + "error" + reset + "\n")
 					buf.WriteString(dim + "  " + errMsg + reset + "\n")
 				} else {
 					nodes, _ := deriveTGStats(resp.Response, cfg.MaxNodes)
 					nodeCount := len(nodes)
 					edgeCount := len(resp.Response)
 
-					buf.WriteString(bold + cyan + " TG" + reset + "  " + green + "connected" + reset)
 					buf.WriteString(dim + fmt.Sprintf("  %d nodes  %d edges", nodeCount, edgeCount) + reset + "\n")
 				}
 			}

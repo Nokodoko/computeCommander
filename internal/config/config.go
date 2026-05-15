@@ -47,7 +47,7 @@ type OpenBrainConfig struct {
 // TrustGraphConfig holds the configuration for the TrustGraph knowledge graph integration.
 type TrustGraphConfig struct {
 	Enabled     bool   `yaml:"enabled"`
-	GatewayURL  string `yaml:"gateway_url"`  // TrustGraph REST gateway address (default: http://localhost:8088)
+	GatewayURL  string `yaml:"gateway_url"`  // TrustGraph REST gateway address (default: http://10.0.0.1:8088; overridable via --tg-url, $TG_URL, $TRUSTGRAPH_URL)
 	Token       string `yaml:"token"`        // API key for gateway auth (supports ${TG_TOKEN})
 	FlowID      string `yaml:"flow_id"`      // TrustGraph flow ID for service queries (default: default)
 	MaxNodes    int    `yaml:"max_nodes"`    // max nodes to display (default: 100)
@@ -485,7 +485,7 @@ func DefaultConfig() *Config {
 		},
 		TrustGraph: TrustGraphConfig{
 			Enabled:     false,
-			GatewayURL:  "http://localhost:8088",
+			GatewayURL:  "http://10.0.0.1:8088",
 			Token:       "",
 			FlowID:      "default",
 			MaxNodes:    100,
