@@ -74,6 +74,26 @@ func (c TrustGraphConfig) TGQueryTimeout() time.Duration {
 	return DefaultTGQueryTimeoutSecs * time.Second
 }
 
+// TGGatewayEnvVar is the environment variable that, when set, overrides the
+// configured TrustGraph gateway URL. It exists as a deterministic escape hatch
+// so the gateway can be repointed (e.g. localhost:8088 -> WireGuard 10.0.0.1:8088)
+// without editing YAML and regardless of which config overlay or CWD a long-lived
+// pane process resolved at startup.
+const TGGatewayEnvVar = "CMDR_TG_GATEWAY"
+
+// ResolveGatewayURL returns the TrustGraph gateway URL that every TG client
+// MUST be constructed from. Callers (cmdr tg, cmdr tg-list, cmdr tg --pane, and
+// the dashboard TG pane) MUST funnel through this helper so the dialled gateway
+// is resolved identically across the one-shot and long-lived code paths.
+//
+// Precedence: CMDR_TG_GATEWAY env override (if non-empty) > config GatewayURL.
+func (c TrustGraphConfig) ResolveGatewayURL() string {
+	if v := strings.TrimSpace(os.Getenv(TGGatewayEnvVar)); v != "" {
+		return v
+	}
+	return c.GatewayURL
+}
+
 // SSERelayConfig holds configuration for the OpenBrain SSE relay connection.
 // The relay aggregates memory events from multiple hosts (lewis, monty).
 type SSERelayConfig struct {

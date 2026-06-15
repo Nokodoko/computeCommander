@@ -52,11 +52,12 @@ func printTGSummary(app *App, jsonOut bool) error {
 		return nil
 	}
 
-	client := trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
+	gatewayURL := cfg.ResolveGatewayURL()
+	client := trustgraph.New(gatewayURL, cfg.Token, cfg.FlowID)
 	defer client.Close()
 
 	if !client.Available() {
-		fmt.Printf("TrustGraph gateway unreachable: %s\n", cfg.GatewayURL)
+		fmt.Printf("TrustGraph gateway unreachable: %s\n", gatewayURL)
 		return nil
 	}
 
@@ -223,13 +224,14 @@ func runTGPane(ctx context.Context, app *App) error {
 		// ── TG Gateway section (secondary) ───────────────────────────────────
 		if cfg.Enabled {
 			// Lazily create client.
+			gatewayURL := cfg.ResolveGatewayURL()
 			if tgClient == nil {
-				tgClient = trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
+				tgClient = trustgraph.New(gatewayURL, cfg.Token, cfg.FlowID)
 			}
 
 			if !tgClient.Available() {
 				buf.WriteString(bold + cyan + " TG" + reset + "  " + dim + "disconnected" + reset + "\n")
-				buf.WriteString(dim + "  Gateway: " + cfg.GatewayURL + reset + "\n")
+				buf.WriteString(dim + "  Gateway: " + gatewayURL + reset + "\n")
 			} else {
 				queryCtx, queryCancel := context.WithTimeout(ctx, cfg.TGQueryTimeout())
 				limit := cfg.MaxTriples

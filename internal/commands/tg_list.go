@@ -85,7 +85,8 @@ func runTGList(ctx context.Context, app *App) error {
 		}
 	}
 
-	client := trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
+	gatewayURL := cfg.ResolveGatewayURL()
+	client := trustgraph.New(gatewayURL, cfg.Token, cfg.FlowID)
 	defer client.Close()
 
 	for {
@@ -100,7 +101,7 @@ func runTGList(ctx context.Context, app *App) error {
 
 		if !client.Available() {
 			buf.WriteString(bold + cyan + " TG" + reset + "  " + red + "disconnected" + reset + "\n")
-			buf.WriteString(dim + "  Gateway: " + cfg.GatewayURL + reset + "\n")
+			buf.WriteString(dim + "  Gateway: " + gatewayURL + reset + "\n")
 			buf.WriteString(dim + "  last update: " + time.Now().Format("15:04:05") + reset + "\n")
 			fmt.Fprint(os.Stdout, buf.String())
 			select {

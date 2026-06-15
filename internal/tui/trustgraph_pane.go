@@ -77,8 +77,8 @@ func NewTrustGraphPane(theme *Theme, cfg config.TrustGraphConfig) *TrustGraphPan
 		cfg:   cfg,
 	}
 
-	if cfg.Enabled && cfg.GatewayURL != "" {
-		p.client = trustgraph.New(cfg.GatewayURL, cfg.Token, cfg.FlowID)
+	if cfg.Enabled && cfg.ResolveGatewayURL() != "" {
+		p.client = trustgraph.New(cfg.ResolveGatewayURL(), cfg.Token, cfg.FlowID)
 	}
 
 	return p
@@ -270,7 +270,7 @@ func (tg *TrustGraphPane) View() string {
 		if !tg.cfg.Enabled {
 			lines = append(lines, dimStyle.Render("  Enable in config: trustgraph.enabled: true"))
 		} else {
-			lines = append(lines, dimStyle.Render(fmt.Sprintf("  Gateway URL: %s", tg.cfg.GatewayURL)))
+			lines = append(lines, dimStyle.Render(fmt.Sprintf("  Gateway URL: %s", tg.cfg.ResolveGatewayURL())))
 		}
 		lines = append(lines, "")
 		lines = append(lines, dimStyle.Render("  Waiting for connection..."))
@@ -288,7 +288,7 @@ func (tg *TrustGraphPane) View() string {
 			lines = append(lines, redStyle.Render("  "+errMsg))
 		}
 		lines = append(lines, "")
-		lines = append(lines, dimStyle.Render(fmt.Sprintf("  Gateway URL: %s", tg.cfg.GatewayURL)))
+		lines = append(lines, dimStyle.Render(fmt.Sprintf("  Gateway URL: %s", tg.cfg.ResolveGatewayURL())))
 		return strings.Join(lines, "\n")
 	}
 
