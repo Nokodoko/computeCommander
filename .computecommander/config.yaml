@@ -99,3 +99,7 @@ trustgraph:
     max_nodes: 100
     max_triples: 200
     refresh_secs: 5
+openbrain:
+    enabled: true
+    mcp_sse_url: http://10.0.0.1:8200
+    api_key: ${OB_API_KEY}
