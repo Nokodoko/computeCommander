@@ -9,4 +9,7 @@ if ! command -v carbonyl &>/dev/null; then
     sleep infinity
 fi
 
-exec carbonyl "file://${VIZ_HTML}" --no-sandbox
+# Resolve the TG gateway from the env contract; default matches the Go const
+# config.DefaultMontyGateway (single source of truth) = http://10.0.0.1:8088 (monty).
+GW="${CMDR_TG_GATEWAY:-http://10.0.0.1:8088}"
+exec carbonyl "file://${VIZ_HTML}?gw=${GW}" --no-sandbox

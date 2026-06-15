@@ -112,7 +112,7 @@
 <script>
 // ── Config ────────────────────────────────────────────────────────────────────
 const SSE_URL   = 'http://monty:8202/events/memories?api_key=54c6862ad97a750e8743ab904e5abf14';
-const GATEWAY   = 'http://localhost:8088/api/v1/flow/default/service/triples';
+const GATEWAY   = (new URLSearchParams(location.search).get('gw') || 'http://localhost:8088') + '/api/v1/flow/default/service/triples';
 const POLL_MS   = 30000; // poll TG gateway as fallback every 30s
 const MAX_EVENTS_SIDEBAR = 40;
 const RECENT_PROMPTS = 5;       // # recent prompts whose entities define the visible subgraph
