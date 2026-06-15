@@ -153,7 +153,7 @@ func (tg *TrustGraphPane) Refresh() error {
 	tg.mu.Unlock()
 
 	// Fetch triples with a timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), tg.cfg.TGQueryTimeout())
 	defer cancel()
 
 	limit := tg.cfg.MaxTriples

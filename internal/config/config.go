@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -46,13 +47,31 @@ type OpenBrainConfig struct {
 
 // TrustGraphConfig holds the configuration for the TrustGraph knowledge graph integration.
 type TrustGraphConfig struct {
-	Enabled     bool   `yaml:"enabled"`
-	GatewayURL  string `yaml:"gateway_url"`  // TrustGraph REST gateway address (default: http://localhost:8088)
-	Token       string `yaml:"token"`        // API key for gateway auth (supports ${TG_TOKEN})
-	FlowID      string `yaml:"flow_id"`      // TrustGraph flow ID for service queries (default: default)
-	MaxNodes    int    `yaml:"max_nodes"`    // max nodes to display (default: 100)
-	MaxTriples  int    `yaml:"max_triples"`  // max triples per query (default: 200)
-	RefreshSecs int    `yaml:"refresh_secs"` // override refresh interval (default: 5)
+	Enabled          bool   `yaml:"enabled"`
+	GatewayURL       string `yaml:"gateway_url"`        // TrustGraph REST gateway address (default: http://localhost:8088)
+	Token            string `yaml:"token"`              // API key for gateway auth (supports ${TG_TOKEN})
+	FlowID           string `yaml:"flow_id"`            // TrustGraph flow ID for service queries (default: default)
+	MaxNodes         int    `yaml:"max_nodes"`          // max nodes to display (default: 100)
+	MaxTriples       int    `yaml:"max_triples"`        // max triples per query (default: 200)
+	RefreshSecs      int    `yaml:"refresh_secs"`       // override refresh interval (default: 5)
+	QueryTimeoutSecs int    `yaml:"query_timeout_secs"` // per-TriplesQuery context deadline; must be larger than the realistic round-trip for MaxTriples (default: 30)
+}
+
+// DefaultTGQueryTimeoutSecs is the fallback per-query TriplesQuery context
+// deadline used when TrustGraphConfig.QueryTimeoutSecs is unset or non-positive.
+// 30s comfortably exceeds the observed ~8.5s round-trip for 25000 triples over
+// WireGuard while staying well under the http.Client backstop (60s).
+const DefaultTGQueryTimeoutSecs = 30
+
+// TGQueryTimeout returns the resolved per-query context deadline for a
+// TriplesQuery call. Callers (cmdr tg, cmdr tg-list, cmdr tg-summary, the
+// dashboard TG pane) MUST funnel through this helper so the timeout is
+// uniformly config-driven and bounded by a sane default.
+func (c TrustGraphConfig) TGQueryTimeout() time.Duration {
+	if c.QueryTimeoutSecs > 0 {
+		return time.Duration(c.QueryTimeoutSecs) * time.Second
+	}
+	return DefaultTGQueryTimeoutSecs * time.Second
 }
 
 // SSERelayConfig holds configuration for the OpenBrain SSE relay connection.
@@ -484,13 +503,14 @@ func DefaultConfig() *Config {
 			DefaultSince:   "72h",
 		},
 		TrustGraph: TrustGraphConfig{
-			Enabled:     false,
-			GatewayURL:  "http://localhost:8088",
-			Token:       "",
-			FlowID:      "default",
-			MaxNodes:    100,
-			MaxTriples:  200,
-			RefreshSecs: 5,
+			Enabled:          false,
+			GatewayURL:       "http://localhost:8088",
+			Token:            "",
+			FlowID:           "default",
+			MaxNodes:         100,
+			MaxTriples:       200,
+			RefreshSecs:      5,
+			QueryTimeoutSecs: DefaultTGQueryTimeoutSecs,
 		},
 		SSERelay: SSERelayConfig{
 			URL:    "",

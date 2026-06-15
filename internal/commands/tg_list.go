@@ -23,8 +23,8 @@ import (
 // existing "TG Viz" zellij pane.
 func TGListCmd(app *App) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "tg-list",
-		Short:   "List TrustGraph nodes and edges in a refreshing pane",
+		Use:   "tg-list",
+		Short: "List TrustGraph nodes and edges in a refreshing pane",
 		Long: `Periodically poll the TrustGraph gateway and print a text list of
 the top nodes (by degree) and edges (triples). Designed to run in a long-lived
 zellij pane as a lightweight replacement for the Electron trustgraph-viewer
@@ -111,7 +111,7 @@ func runTGList(ctx context.Context, app *App) error {
 			continue
 		}
 
-		queryCtx, queryCancel := context.WithTimeout(ctx, 5*time.Second)
+		queryCtx, queryCancel := context.WithTimeout(ctx, cfg.TGQueryTimeout())
 		resp, err := client.TriplesQuery(queryCtx, trustgraph.TriplesQueryRequest{Limit: queryLimit})
 		queryCancel()
 

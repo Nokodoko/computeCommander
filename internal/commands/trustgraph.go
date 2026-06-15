@@ -60,7 +60,7 @@ func printTGSummary(app *App, jsonOut bool) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.TGQueryTimeout())
 	defer cancel()
 
 	limit := cfg.MaxTriples
@@ -231,7 +231,7 @@ func runTGPane(ctx context.Context, app *App) error {
 				buf.WriteString(bold + cyan + " TG" + reset + "  " + dim + "disconnected" + reset + "\n")
 				buf.WriteString(dim + "  Gateway: " + cfg.GatewayURL + reset + "\n")
 			} else {
-				queryCtx, queryCancel := context.WithTimeout(ctx, 5*time.Second)
+				queryCtx, queryCancel := context.WithTimeout(ctx, cfg.TGQueryTimeout())
 				limit := cfg.MaxTriples
 				if limit <= 0 {
 					limit = 200
