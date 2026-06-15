@@ -114,6 +114,21 @@ Use --agent-cmd to override the default agent command in the center pane.`,
 			c.Stdin = os.Stdin
 			c.Stdout = os.Stdout
 			c.Stderr = os.Stderr
+			// Inject resolved endpoints/auth into the spawned environment so
+			// every pane subprocess (cmdr openbrain --pane, cmdr tg --pane, ...)
+			// dials the correct endpoints regardless of whether the launching
+			// shell was interactive. A non-interactive launch otherwise lacks
+			// CMDR_TG_GATEWAY (interactive-only) and OB_API_KEY (login-only),
+			// causing OB1 401 / TG localhost failures in the pane processes.
+			c.Env = os.Environ()
+			if app.Config != nil {
+				if gw := app.Config.TrustGraph.ResolveGatewayURL(); gw != "" {
+					c.Env = append(c.Env, "CMDR_TG_GATEWAY="+gw)
+				}
+			}
+			if key := os.Getenv("OB_API_KEY"); key != "" {
+				c.Env = append(c.Env, "OB_API_KEY="+key)
+			}
 			if err := c.Run(); err != nil {
 				return err
 			}
