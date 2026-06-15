@@ -50,6 +50,12 @@ func New(baseURL string, token string, flowID ...string) *Client {
 		flowID:  fid,
 		httpClient: &http.Client{
 			Transport: transport,
+			// Defensive backstop so a stalled read cannot outlive a sane
+			// bound regardless of caller context. Intentionally larger than
+			// the default per-query context deadline (TGQueryTimeout, 30s)
+			// — callers should still set their own context deadline; this
+			// only fires if they neglect to.
+			Timeout: 60 * time.Second,
 		},
 	}
 
