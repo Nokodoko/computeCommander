@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/noko/computecommander/internal/config"
 )
 
 // generateTabHash creates a unique 8-char hex ID for a dashboard tab instance.
@@ -146,6 +148,15 @@ func GenerateLayout(opts LayoutOpts) string {
         }`, focusWatcherPath, opts.TabHash)
 	}
 
+	// Build the TG Viz pane. It runs `cmdr tg-list`, but with CMDR_TG_GATEWAY
+	// baked into the pane's environment so the TrustGraph client dials monty
+	// (10.0.0.1:8088 over WireGuard) regardless of the CWD-dependent config
+	// overlay the long-lived pane process would otherwise resolve at startup.
+	// Zellij KDL has no per-pane env block, so we export through `bash -c`
+	// (the same pattern other panes use to set CMDR_TAB_HASH in their wrappers).
+	// ResolveGatewayURL precedence: CMDR_TG_GATEWAY env override > config GatewayURL.
+	tgVizPane := buildTGVizPane(cmdrBin, opts.ProjectID)
+
 	return fmt.Sprintf(`layout {
     cwd "%s"
     default_tab_template {
@@ -197,10 +208,7 @@ func GenerateLayout(opts LayoutOpts) string {
                     command "%s"
                     args "evals" "--pane"%s
                 }
-                pane name="TG Viz" size="20%%" {
-                    command "%s"
-                    args "tg-list"%s
-                }
+%s
                 pane size="16%%" {
                     command "bash"
                     args "%s" "%s" "%s"
@@ -209,7 +217,7 @@ func GenerateLayout(opts LayoutOpts) string {
         }
     }
 }
-`, projectDir, tabName, focusWatcherPane, cmdrBin, calcurseWrapperPath, calcurseConf, calcurseDir, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, lazygitWrapperPath, projectDir, opts.TabHash)
+`, projectDir, tabName, focusWatcherPane, cmdrBin, calcurseWrapperPath, calcurseConf, calcurseDir, fpWrapperPath, projectDir, opts.TabHash, agentPane, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, cmdrBin, projectFlag, tgVizPane, lazygitWrapperPath, projectDir, opts.TabHash)
 }
 
 
@@ -435,6 +443,30 @@ func buildAgentPane(agentCmd, wrapperPath, tabHash string) string {
 	argsStr := strings.Join(quotedArgs, " ")
 
 	return fmt.Sprintf("                pane name=\"Agent\" size=\"59%%\" focus=true borderless=true {\n                    command \"%s\"\n                    args %s\n                }", cmd, argsStr)
+}
+
+// buildTGVizPane returns the KDL block for the bottom-row TG Viz pane.
+// The pane runs `cmdr tg-list`, but launches it through `bash -c` so it can
+// export CMDR_TG_GATEWAY into the pane's environment before exec'ing the binary.
+// This bakes monty's WireGuard gateway (config.DefaultMontyGateway) into the
+// pane so the TrustGraph client dials monty regardless of the CWD-dependent
+// config overlay the long-lived pane process would otherwise resolve at startup.
+// ResolveGatewayURL precedence guarantees this env override wins over config.
+//
+// NOTE: The returned string is inserted via %s into GenerateLayout's Sprintf.
+// Sprintf does NOT re-process %s substitutions, so use literal "%" (not "%%").
+func buildTGVizPane(cmdrBin, projectID string) string {
+	// Build the inner command: export the gateway, then exec tg-list.
+	// Args are quoted defensively; projectID is appended when set.
+	inner := fmt.Sprintf(`export %s=%q; exec %q tg-list`, config.TGGatewayEnvVar, config.DefaultMontyGateway, cmdrBin)
+	if projectID != "" {
+		inner += fmt.Sprintf(` --project %q`, projectID)
+	}
+
+	return fmt.Sprintf(`                pane name="TG Viz" size="20%%" {
+                    command "bash"
+                    args "-c" %q
+                }`, inner)
 }
 
 // homeDir returns the user's home directory, falling back to ".".

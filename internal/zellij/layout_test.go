@@ -132,8 +132,17 @@ func TestGenerateLayout_ContainsTGPane(t *testing.T) {
 	// The TG Viz pane runs `cmdr tg-list` — a refreshing text list of
 	// TrustGraph nodes and edges. The prior Electron overlay was retired
 	// for resource reasons; the pane no longer needs to stay passive.
-	if !strings.Contains(layout, `args "tg-list"`) {
+	// The invocation now flows through `bash -c` so it can export
+	// CMDR_TG_GATEWAY before exec'ing the binary (zellij KDL has no per-pane
+	// env block), so assert the tg-list subcommand is present in the command line.
+	if !strings.Contains(layout, `tg-list`) {
 		t.Errorf("layout TG Viz pane must run `cmdr tg-list`:\n%s", layout)
+	}
+	// The TG Viz pane MUST bake monty's WireGuard gateway into CMDR_TG_GATEWAY
+	// so the TrustGraph client dials monty (10.0.0.1:8088) regardless of the
+	// CWD-dependent config overlay the long-lived pane would otherwise resolve.
+	if !strings.Contains(layout, `CMDR_TG_GATEWAY=`) || !strings.Contains(layout, `http://10.0.0.1:8088`) {
+		t.Errorf("layout TG Viz pane must export CMDR_TG_GATEWAY=http://10.0.0.1:8088:\n%s", layout)
 	}
 	// Sanity: the old passive placeholder must be gone.
 	if strings.Contains(layout, `"-f" "/dev/null"`) {
@@ -145,11 +154,11 @@ func TestGenerateLayout_ContainsTGPane(t *testing.T) {
 		t.Errorf("layout must contain a named Agent pane for the central agent session")
 	}
 	// The agent pane must occupy the central column of the top row.
-	// Width is 64% (reduced from 67% to widen the left column for calcurse).
-	// If TG Viz is stacked underneath it again, this width collapses and the
-	// agent shrinks to a sliver.
-	if !strings.Contains(layout, `name="Agent" size="64%"`) {
-		t.Errorf("Agent pane must be 64%% of the central column (TG Viz must NOT be stacked above/below it):\n%s", layout)
+	// Width is 59% (the central column between the 18% left and 22% right
+	// columns; see buildAgentPane). If TG Viz is stacked underneath it again,
+	// this width collapses and the agent shrinks to a sliver.
+	if !strings.Contains(layout, `name="Agent" size="59%"`) {
+		t.Errorf("Agent pane must be 59%% of the central column (TG Viz must NOT be stacked above/below it):\n%s", layout)
 	}
 	// TG Viz lives on the bottom row at 20%% (reduced from 38%% when the
 	// Electron overlay was replaced with the lighter-weight tg-list text view).

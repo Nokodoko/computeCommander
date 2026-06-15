@@ -81,6 +81,13 @@ func (c TrustGraphConfig) TGQueryTimeout() time.Duration {
 // pane process resolved at startup.
 const TGGatewayEnvVar = "CMDR_TG_GATEWAY"
 
+// DefaultMontyGateway is the canonical TrustGraph REST gateway address: monty's
+// WireGuard IP. The TG service runs on monty (10.0.0.1:8088 over wg0); localhost
+// is wrong on every host but monty. The dashboard layout bakes this into the TG
+// pane's CMDR_TG_GATEWAY env so the pane dials monty regardless of the CWD-dependent
+// config overlay it would otherwise resolve at startup.
+const DefaultMontyGateway = "http://10.0.0.1:8088"
+
 // ResolveGatewayURL returns the TrustGraph gateway URL that every TG client
 // MUST be constructed from. Callers (cmdr tg, cmdr tg-list, cmdr tg --pane, and
 // the dashboard TG pane) MUST funnel through this helper so the dialled gateway
