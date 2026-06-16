@@ -159,18 +159,14 @@ func makeChainTriples(n int) []trustgraph.Triple {
 // every call, never frozen. 903 triples in => 903 edges + 1806 nodes out.
 func TestSummarizeTriples_CountsFromLiveResult(t *testing.T) {
 	triples := makeChainTriples(903)
-	const countLimit = 25000
 
-	nodeCount, edgeCount, capped, top := summarizeTriples(triples, countLimit)
+	nodeCount, edgeCount, top := summarizeTriples(triples)
 
 	if got, want := edgeCount, 903; got != want {
 		t.Errorf("edgeCount: got %d, want %d (must reflect FULL live result)", got, want)
 	}
 	if got, want := nodeCount, 1806; got != want {
 		t.Errorf("nodeCount: got %d, want %d (each chain triple contributes 2 fresh nodes)", got, want)
-	}
-	if capped {
-		t.Errorf("capped: got true, want false (903 < countLimit=%d, so the result is not capped)", countLimit)
 	}
 	if len(top) != 1806 {
 		t.Errorf("top slice length: got %d, want 1806 (one entry per distinct node)", len(top))
@@ -187,45 +183,33 @@ func TestSummarizeTriples_CountsFromLiveResult(t *testing.T) {
 	}
 }
 
-// TestSummarizeTriples_CappedSuffix pins the "+" suffix contract: when the
-// gateway returned exactly countLimit triples the underlying graph may be
-// larger, so the header MUST flag the counts as a lower bound.
-func TestSummarizeTriples_CappedSuffix(t *testing.T) {
-	const countLimit = 50
-	triples := makeChainTriples(countLimit)
+// TestSummarizeTriples_ExactCountsNoSuffix is the regression guard for the
+// lewis dynamic-counts fix: even when the query result reaches the configured
+// Limit, summarizeTriples reports the EXACT counts from the live result — there
+// is no bucketing, floor, or "+" suffix. This matches tg-list, which prints
+// len(nodes)/len(triples) verbatim, so the two commands agree on totals.
+func TestSummarizeTriples_ExactCountsNoSuffix(t *testing.T) {
+	const limit = 50
+	triples := makeChainTriples(limit)
 
-	nodeCount, edgeCount, capped, _ := summarizeTriples(triples, countLimit)
+	nodeCount, edgeCount, _ := summarizeTriples(triples)
 
-	if got, want := edgeCount, countLimit; got != want {
-		t.Errorf("edgeCount: got %d, want %d", got, want)
+	if got, want := edgeCount, limit; got != want {
+		t.Errorf("edgeCount: got %d, want %d (EXACT live total, no floor/cap)", got, want)
 	}
-	if got, want := nodeCount, 2*countLimit; got != want {
-		t.Errorf("nodeCount: got %d, want %d", got, want)
-	}
-	if !capped {
-		t.Errorf("capped: got false, want true (len(triples)==countLimit==%d)", countLimit)
-	}
-}
-
-// TestSummarizeTriples_BelowCeiling pins the negative case: result strictly
-// below countLimit must NOT trigger the "+" suffix.
-func TestSummarizeTriples_BelowCeiling(t *testing.T) {
-	const countLimit = 100
-	triples := makeChainTriples(99)
-
-	_, _, capped, _ := summarizeTriples(triples, countLimit)
-	if capped {
-		t.Errorf("capped: got true, want false (99 < countLimit=%d)", countLimit)
+	if got, want := nodeCount, 2*limit; got != want {
+		t.Errorf("nodeCount: got %d, want %d (EXACT live total, no floor/cap)", got, want)
 	}
 }
 
-// TestSummarizeTriples_ZeroCountLimit guards the edge case where the caller
-// passes a non-positive ceiling (defensive — runTGSummary normalises this to
-// the configured limit, but the helper itself MUST NOT report "capped=true" on
-// an empty input, which would render a misleading "0+ edges" header).
-func TestSummarizeTriples_ZeroCountLimit(t *testing.T) {
-	_, _, capped, _ := summarizeTriples(nil, 0)
-	if capped {
-		t.Errorf("capped: got true on (nil triples, countLimit=0); helper must guard against non-positive ceiling")
+// TestSummarizeTriples_Empty pins the empty-input case: zero triples report
+// zero nodes and zero edges with no panic and no degenerate suffix.
+func TestSummarizeTriples_Empty(t *testing.T) {
+	nodeCount, edgeCount, top := summarizeTriples(nil)
+	if nodeCount != 0 || edgeCount != 0 {
+		t.Errorf("empty input: got %d nodes / %d edges, want 0 / 0", nodeCount, edgeCount)
+	}
+	if len(top) != 0 {
+		t.Errorf("empty input: got %d top-nodes, want 0", len(top))
 	}
 }

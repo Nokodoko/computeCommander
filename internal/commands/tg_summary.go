@@ -136,13 +136,11 @@ func runTGSummary(ctx context.Context, app *App, lines, width int, noColor bool)
 	}
 
 	// Compute aggregate counts + sorted top-nodes from the LIVE result set.
-	// If the gateway returned exactly queryLimit triples the underlying graph
-	// may be larger and our counts are a lower bound — flag with a "+" suffix.
-	nodeCount, edgeCount, capped, topNodes := summarizeTriples(triples, queryLimit)
-	suffix := ""
-	if capped {
-		suffix = "+"
-	}
+	// Counts are the EXACT live node/edge totals from this invocation's query —
+	// identical data path AND display format to tg-list (which prints
+	// "%d nodes  %d edges" with no bucketing/floor/"+" suffix). The query Limit
+	// matches tg-list, so the two commands report the same totals.
+	nodeCount, edgeCount, topNodes := summarizeTriples(triples)
 
 	// Render to exactly `lines` lines.
 	out := make([]string, 0, lines)
@@ -153,7 +151,7 @@ func runTGSummary(ctx context.Context, app *App, lines, width int, noColor bool)
 	// cannot convey. The leading "──" anchors the line as a detail row.
 	header := pal.dim + "── " + pal.reset +
 		pal.green + "connected" + pal.reset +
-		pal.dim + fmt.Sprintf(" · %d%s nodes · %d%s edges", nodeCount, suffix, edgeCount, suffix) + pal.reset
+		pal.dim + fmt.Sprintf(" · %d nodes · %d edges", nodeCount, edgeCount) + pal.reset
 	out = append(out, truncateVisible(header, width))
 
 	if lines >= 3 {
@@ -192,18 +190,19 @@ func runTGSummary(ctx context.Context, app *App, lines, width int, noColor bool)
 // of runTGSummary; isolated so unit tests can pin the counts-from-live-result
 // contract without spinning up a TG gateway.
 //
+// Counts are the EXACT live totals from the input slice — no bucketing, no
+// floor, no "+" suffix. This matches tg-list's display exactly (it prints
+// len(nodes)/len(triples) verbatim), so tg-summary and tg-list report the
+// same node/edge totals when given the same query Limit.
+//
 // Inputs:
 //   - triples: the full result slice from TriplesQuery (no truncation here).
-//   - countLimit: the ceiling the caller passed to the query. When the result
-//     length equals this ceiling we assume the gateway may have capped it, so
-//     the header should render a "+" suffix on both counts.
 //
 // Returns:
 //   - nodeCount: number of distinct nodes (subjects + entity-typed objects).
 //   - edgeCount: number of triples in the input slice.
-//   - capped: true iff len(triples) == countLimit AND countLimit > 0.
 //   - topNodes: descending-degree, label-ascending tie-break; safe to render.
-func summarizeTriples(triples []trustgraph.Triple, countLimit int) (nodeCount, edgeCount int, capped bool, topNodes []summaryNode) {
+func summarizeTriples(triples []trustgraph.Triple) (nodeCount, edgeCount int, topNodes []summaryNode) {
 	nodes := make(map[string]*summaryNode)
 	touchNode := func(t trustgraph.Term) {
 		id := t.DisplayValue()
@@ -237,7 +236,7 @@ func summarizeTriples(triples []trustgraph.Triple, countLimit int) (nodeCount, e
 		return topNodes[i].label < topNodes[j].label
 	})
 
-	return len(nodes), len(triples), countLimit > 0 && len(triples) == countLimit, topNodes
+	return len(nodes), len(triples), topNodes
 }
 
 // summaryNode carries the per-node display label and aggregated degree used
