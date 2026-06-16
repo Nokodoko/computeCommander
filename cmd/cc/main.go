@@ -346,6 +346,14 @@ conflict resolution.`,
 	addAppCmd(root, commands.TrustGraphCmd(sharedApp))
 	addAppCmd(root, commands.TGListCmd(sharedApp))
 
+	// Embeddable single-shot summary subcommands consumed by the claude/pi
+	// sessionbanner (work-row + memory-row cells). Each emits exactly --lines
+	// lines, honours --width / --no-color, and exits 0 on every failure path.
+	addAppCmd(root, commands.TGSummaryCmd(sharedApp))
+	addAppCmd(root, commands.AgentsSummaryCmd(sharedApp))
+	addAppCmd(root, commands.EvalsSummaryCmd(sharedApp))
+	addAppCmd(root, commands.LazygitSummaryCmd(sharedApp))
+
 	// Infrastructure commands.
 	addAppCmd(root, commands.WorktreeCmd(sharedApp))
 	addAppCmd(root, commands.WatchCmd(sharedApp))
