@@ -14,6 +14,10 @@ build-focus-watcher:
 	@command -v cargo >/dev/null 2>&1 || { echo "ERROR: cargo (Rust toolchain) is required to build focus-watcher"; exit 1; }
 	cargo build --release --manifest-path $(FOCUS_WATCHER_DIR)/Cargo.toml
 
+# install: cmdr lives ONLY in ~/.local/bin (and the project ./cmdr).
+# Do NOT add ~/go/bin / $(GOBIN) / $(GOPATH)/bin targets here, and do NOT use
+# `go install` for cmdr: ~/go/bin precedes ~/.local/bin on PATH, so a stray
+# install there shadows the canonical binary with a stale copy.
 install: build
 	@mkdir -p $(HOME)/.local/bin
 	cp cmdr $(HOME)/.local/bin/cmdr
