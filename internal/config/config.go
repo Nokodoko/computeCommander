@@ -52,7 +52,8 @@ type TrustGraphConfig struct {
 	Token            string `yaml:"token"`              // API key for gateway auth (supports ${TG_TOKEN})
 	FlowID           string `yaml:"flow_id"`            // TrustGraph flow ID for service queries (default: default)
 	MaxNodes         int    `yaml:"max_nodes"`          // max nodes to display (default: 100)
-	MaxTriples       int    `yaml:"max_triples"`        // max triples per query (default: 200)
+	MaxTriples       int    `yaml:"max_triples"`        // max triples per query for the DISPLAY sample (default: 200)
+	MaxCountTriples  int    `yaml:"max_count_triples"`  // max triples per query used ONLY to compute aggregate node/edge counts; bounded below the gateway's ~12k break (default: 10000)
 	RefreshSecs      int    `yaml:"refresh_secs"`       // override refresh interval (default: 5)
 	QueryTimeoutSecs int    `yaml:"query_timeout_secs"` // per-TriplesQuery context deadline; must be larger than the realistic round-trip for MaxTriples (default: 30)
 }
@@ -62,6 +63,24 @@ type TrustGraphConfig struct {
 // 30s comfortably exceeds the observed ~8.5s round-trip for 25000 triples over
 // WireGuard while staying well under the http.Client backstop (60s).
 const DefaultTGQueryTimeoutSecs = 30
+
+// DefaultMaxCountTriples is the fallback triple-query limit used to compute
+// aggregate node/edge counts when TrustGraphConfig.MaxCountTriples is unset or
+// non-positive. 10000 sits safely below the gateway's observed ~12k break
+// (triples-query-error "'NoneType' object has no attribute 'close'") while a
+// 10k sample (~0.9s round-trip) covers the live graph far better than the
+// 200-triple DISPLAY sample.
+const DefaultMaxCountTriples = 10000
+
+// TGMaxCountTriples returns the resolved triple-query limit for computing
+// aggregate node/edge counts, falling back to DefaultMaxCountTriples when
+// unset or non-positive.
+func (c TrustGraphConfig) TGMaxCountTriples() int {
+	if c.MaxCountTriples > 0 {
+		return c.MaxCountTriples
+	}
+	return DefaultMaxCountTriples
+}
 
 // TGQueryTimeout returns the resolved per-query context deadline for a
 // TriplesQuery call. Callers (cmdr tg, cmdr tg-list, cmdr tg-summary, the
@@ -536,6 +555,7 @@ func DefaultConfig() *Config {
 			FlowID:           "default",
 			MaxNodes:         100,
 			MaxTriples:       200,
+			MaxCountTriples:  10000,
 			RefreshSecs:      5,
 			QueryTimeoutSecs: DefaultTGQueryTimeoutSecs,
 		},
