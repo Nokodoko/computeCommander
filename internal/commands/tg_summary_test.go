@@ -202,6 +202,38 @@ func TestSummarizeTriples_ExactCountsNoSuffix(t *testing.T) {
 	}
 }
 
+// TestFormatCount pins the decoupled-count "+" suffix contract restored after
+// the 973aff7 regression: when a count reaches the count-query ceiling the
+// query saturated (true total may be higher) so a "+" suffix is appended to
+// signal a lower bound; below the ceiling the exact count is shown verbatim.
+//
+// This is the behaviour that makes `cmdr tg-summary` render "10000+ edges"
+// against the live graph instead of a misleading exact "10000 edges", while a
+// node total under the ceiling (~3847) is shown exactly with no suffix.
+func TestFormatCount(t *testing.T) {
+	const ceiling = 10000
+	cases := []struct {
+		name    string
+		n       int
+		ceiling int
+		want    string
+	}{
+		{"under ceiling shows exact", 3847, ceiling, "3847"},
+		{"at ceiling saturates", 10000, ceiling, "10000+"},
+		{"over ceiling saturates", 10001, ceiling, "10001+"},
+		{"one below ceiling exact", 9999, ceiling, "9999"},
+		{"zero exact", 0, ceiling, "0"},
+		{"non-positive ceiling never suffixes", 10000, 0, "10000"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := formatCount(tc.n, tc.ceiling); got != tc.want {
+				t.Errorf("formatCount(%d, %d) = %q, want %q", tc.n, tc.ceiling, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestSummarizeTriples_Empty pins the empty-input case: zero triples report
 // zero nodes and zero edges with no panic and no degenerate suffix.
 func TestSummarizeTriples_Empty(t *testing.T) {

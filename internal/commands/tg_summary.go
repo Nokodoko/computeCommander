@@ -110,18 +110,19 @@ func runTGSummary(ctx context.Context, app *App, lines, width int, noColor bool)
 		return nil
 	}
 
-	// Triple-query limit (matches tg-list + the HTML viewer default). This
-	// bounds the fetched sample; the header counts are derived from whatever
-	// the gateway returns, so they grow with the live graph up to this ceiling.
-	queryLimit := cfg.MaxTriples
-	if queryLimit <= 0 {
-		queryLimit = 200
-	}
+	// Count-query limit. The header node/edge counts are DECOUPLED from the
+	// small DISPLAY sample (cfg.MaxTriples, ~200) used to pick the top-N nodes
+	// and the handful of printed edge lines. Here we fetch up to MaxCountTriples
+	// (default 10000, ~0.9s round-trip) so the counts track the live graph
+	// instead of being pinned to the 200-triple display ceiling. 10000 is the
+	// safe ceiling: the gateway errors (triples-query-error, "'NoneType' object
+	// has no attribute 'close'") for limits ≥ ~12000.
+	countLimit := cfg.TGMaxCountTriples()
 
 	// Config-driven per-query deadline (the lewis timeout fix), NOT a hardcoded
 	// 5s. Mirrors tg-list exactly.
 	queryCtx, queryCancel := context.WithTimeout(ctx, cfg.TGQueryTimeout())
-	resp, err := client.TriplesQuery(queryCtx, trustgraph.TriplesQueryRequest{Limit: queryLimit})
+	resp, err := client.TriplesQuery(queryCtx, trustgraph.TriplesQueryRequest{Limit: countLimit})
 	queryCancel()
 
 	if err != nil {
@@ -136,10 +137,11 @@ func runTGSummary(ctx context.Context, app *App, lines, width int, noColor bool)
 	}
 
 	// Compute aggregate counts + sorted top-nodes from the LIVE result set.
-	// Counts are the EXACT live node/edge totals from this invocation's query —
-	// identical data path AND display format to tg-list (which prints
-	// "%d nodes  %d edges" with no bucketing/floor/"+" suffix). The query Limit
-	// matches tg-list, so the two commands report the same totals.
+	// Counts derive from the FULL count-query result (up to MaxCountTriples), so
+	// they track the live graph rather than the 200-triple display ceiling. When
+	// a count is at/over the count ceiling the query saturated — there may be
+	// more — so it renders with a "+" suffix ("10000+ edges") to signal a lower
+	// bound; otherwise the exact count is shown with no suffix.
 	nodeCount, edgeCount, topNodes := summarizeTriples(triples)
 
 	// Render to exactly `lines` lines.
@@ -151,7 +153,8 @@ func runTGSummary(ctx context.Context, app *App, lines, width int, noColor bool)
 	// cannot convey. The leading "──" anchors the line as a detail row.
 	header := pal.dim + "── " + pal.reset +
 		pal.green + "connected" + pal.reset +
-		pal.dim + fmt.Sprintf(" · %d nodes · %d edges", nodeCount, edgeCount) + pal.reset
+		pal.dim + fmt.Sprintf(" · %s nodes · %s edges",
+			formatCount(nodeCount, countLimit), formatCount(edgeCount, countLimit)) + pal.reset
 	out = append(out, truncateVisible(header, width))
 
 	if lines >= 3 {
@@ -185,15 +188,27 @@ func runTGSummary(ctx context.Context, app *App, lines, width int, noColor bool)
 	return nil
 }
 
+// formatCount renders an aggregate count for the header. When the count is at
+// or over `ceiling` (i.e. the count-query saturated and the true total may be
+// higher) it appends a "+" suffix to signal a lower bound ("10000+"); below the
+// ceiling it shows the exact count with no suffix. This is the decoupled-count
+// behaviour that 973aff7 wrongly removed.
+func formatCount(n, ceiling int) string {
+	if ceiling > 0 && n >= ceiling {
+		return fmt.Sprintf("%d+", n)
+	}
+	return fmt.Sprintf("%d", n)
+}
+
 // summarizeTriples computes aggregate node/edge counts and a degree-sorted
 // top-nodes slice from a triples query result. It is the pure compute kernel
 // of runTGSummary; isolated so unit tests can pin the counts-from-live-result
 // contract without spinning up a TG gateway.
 //
-// Counts are the EXACT live totals from the input slice — no bucketing, no
-// floor, no "+" suffix. This matches tg-list's display exactly (it prints
-// len(nodes)/len(triples) verbatim), so tg-summary and tg-list report the
-// same node/edge totals when given the same query Limit.
+// Counts are the EXACT live totals from the input slice — no bucketing or
+// floor. The caller (runTGSummary) applies a "+" suffix at render time via
+// formatCount when a count reaches the count-query ceiling, to signal that the
+// query saturated and the true total may be higher.
 //
 // Inputs:
 //   - triples: the full result slice from TriplesQuery (no truncation here).
